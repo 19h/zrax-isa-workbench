@@ -79,7 +79,7 @@ pub fn known_extensions(isa: Isa) -> Vec<(&'static str, ExtensionCategory)> {
             ("TSX", ExtensionCategory::Transactional),
         ],
         Isa::AArch64 => vec![
-            // SIMD
+            // SIMD / Vector
             ("NEON", ExtensionCategory::Simd),
             ("SVE", ExtensionCategory::Simd),
             ("SVE2", ExtensionCategory::Simd),
@@ -89,8 +89,13 @@ pub fn known_extensions(isa: Isa) -> Vec<(&'static str, ExtensionCategory)> {
             ("FP16", ExtensionCategory::Simd),
             ("BF16", ExtensionCategory::Simd),
             ("I8MM", ExtensionCategory::Simd),
+            ("RDM", ExtensionCategory::Simd),
+            ("FHM", ExtensionCategory::Simd),
+            ("FCMA", ExtensionCategory::Simd),
+            ("FRINTTS", ExtensionCategory::Simd),
             // Crypto
             ("AES", ExtensionCategory::Crypto),
+            ("PMULL", ExtensionCategory::Crypto),
             ("SHA1", ExtensionCategory::Crypto),
             ("SHA256", ExtensionCategory::Crypto),
             ("SHA512", ExtensionCategory::Crypto),
@@ -100,16 +105,29 @@ pub fn known_extensions(isa: Isa) -> Vec<(&'static str, ExtensionCategory)> {
             // Atomics
             ("LSE", ExtensionCategory::Atomic),
             ("LSE2", ExtensionCategory::Atomic),
+            ("LRCPC", ExtensionCategory::Atomic),
+            ("LRCPC2", ExtensionCategory::Atomic),
             // Security
             ("PAC", ExtensionCategory::Security),
             ("BTI", ExtensionCategory::Security),
             ("MTE", ExtensionCategory::Security),
+            ("RNG", ExtensionCategory::Security),
+            ("SB", ExtensionCategory::Security),
+            ("SSBS", ExtensionCategory::Security),
+            ("DIT", ExtensionCategory::Security),
+            // System
+            ("DPB", ExtensionCategory::System),
+            ("DPB2", ExtensionCategory::System),
+            ("WFxT", ExtensionCategory::System),
             // Other
             ("CRC32", ExtensionCategory::Other),
-            ("RDMA", ExtensionCategory::Other),
             ("JSCVT", ExtensionCategory::Other),
-            ("FCMA", ExtensionCategory::Other),
-            ("FRINTTS", ExtensionCategory::Other),
+            ("FlagM", ExtensionCategory::Other),
+            ("FlagM2", ExtensionCategory::Other),
+            ("MOPS", ExtensionCategory::Other),
+            ("HBC", ExtensionCategory::Other),
+            ("CSSC", ExtensionCategory::Other),
+            ("LS64", ExtensionCategory::Other),
         ],
         Isa::RiscV32 | Isa::RiscV64 | Isa::RiscV128 => vec![
             // Standard
@@ -182,15 +200,39 @@ pub fn known_extensions(isa: Isa) -> Vec<(&'static str, ExtensionCategory)> {
             ("Crypto", ExtensionCategory::Crypto),
         ],
         Isa::Arm => vec![
+            // Compressed instruction sets
             ("Thumb", ExtensionCategory::Compressed),
+            ("Thumb-2", ExtensionCategory::Compressed),
+            // Floating-point
+            ("VFP", ExtensionCategory::FloatingPoint),
+            ("VFPv2", ExtensionCategory::FloatingPoint),
             ("VFPv3", ExtensionCategory::FloatingPoint),
             ("VFPv3-D32", ExtensionCategory::FloatingPoint),
+            ("VFP-D32", ExtensionCategory::FloatingPoint),
+            ("VFPv4", ExtensionCategory::FloatingPoint),
+            ("FPv4-SP", ExtensionCategory::FloatingPoint),
+            // SIMD
             ("NEON", ExtensionCategory::Simd),
+            ("DSP", ExtensionCategory::Simd),
+            ("SIMDv1", ExtensionCategory::Simd),
+            // Security
             ("Security", ExtensionCategory::Security),
             ("TrustZone", ExtensionCategory::Security),
+            // Virtualization
+            ("Virtualization", ExtensionCategory::Virtualization),
+            // Crypto
+            ("AES", ExtensionCategory::Crypto),
+            ("SHA1", ExtensionCategory::Crypto),
+            ("SHA256", ExtensionCategory::Crypto),
+            ("PMULL", ExtensionCategory::Crypto),
+            // Other
             ("IDIV", ExtensionCategory::Other),
             ("CRC32", ExtensionCategory::Other),
-            ("Crypto", ExtensionCategory::Crypto),
+            ("MOVW", ExtensionCategory::Other),
+            ("BitField", ExtensionCategory::Other),
+            ("RBIT", ExtensionCategory::Other),
+            ("Jazelle", ExtensionCategory::Other),
+            ("XScale", ExtensionCategory::Other),
         ],
         _ => Vec::new(),
     }

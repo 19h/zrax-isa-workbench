@@ -66,17 +66,93 @@ fn extensions_from_cpu(cpu_type: u32, cpu_subtype: u32) -> Vec<Extension> {
         cpu_type::ARM64 | cpu_type::ARM64_32 => {
             let mut extensions = Vec::new();
 
-            // All Apple ARM64 has these as baseline
+            // ==================== Baseline Apple ARM64 (A7+) ====================
+            // All Apple ARM64 chips have these features
+
+            // SIMD/FP - mandatory in AArch64
             extensions.push(Extension::new("NEON", ExtensionCategory::Simd));
+            extensions.push(Extension::new("FP16", ExtensionCategory::Simd));
+
+            // Crypto - all Apple ARM64 has hardware crypto
             extensions.push(Extension::new("AES", ExtensionCategory::Crypto));
+            extensions.push(Extension::new("PMULL", ExtensionCategory::Crypto));
             extensions.push(Extension::new("SHA1", ExtensionCategory::Crypto));
             extensions.push(Extension::new("SHA256", ExtensionCategory::Crypto));
+
+            // Atomics - all Apple ARM64 has LSE (A10+ has full LSE)
+            extensions.push(Extension::new("LSE", ExtensionCategory::Atomic));
+
+            // Other baseline
             extensions.push(Extension::new("CRC32", ExtensionCategory::Other));
 
-            // ARM64E adds PAC and BTI
+            // ==================== ARMv8.1+ features (A10 Fusion and later) ====================
+            // A10 Fusion (2016) introduced ARMv8.1 features
+            // All modern Apple chips have these
+
+            // RDM (SQRDMLAH, SQRDMLSH) - ARMv8.1
+            extensions.push(Extension::new("RDM", ExtensionCategory::Simd));
+
+            // LRCPC (LDAPR) - ARMv8.3 but Apple has had this for a while
+            extensions.push(Extension::new("LRCPC", ExtensionCategory::Atomic));
+
+            // ==================== ARMv8.2+ features (A11 Bionic and later) ====================
+            // A11 Bionic (2017) and later have these
+            // We assume modern binaries target at least A11
+
+            // FHM (FP16 multiply-accumulate) - ARMv8.2
+            extensions.push(Extension::new("FHM", ExtensionCategory::Simd));
+
+            // DotProd - ARMv8.2 (common in ML workloads)
+            extensions.push(Extension::new("DOTPROD", ExtensionCategory::Simd));
+
+            // SHA-512 and SHA-3 - available on A12+
+            extensions.push(Extension::new("SHA512", ExtensionCategory::Crypto));
+            extensions.push(Extension::new("SHA3", ExtensionCategory::Crypto));
+
+            // ==================== ARMv8.3+ features (A12 Bionic and later) ====================
+            // A12 Bionic (2018) introduced ARMv8.3 features
+
+            // JSCVT - JavaScript type conversion
+            extensions.push(Extension::new("JSCVT", ExtensionCategory::Other));
+
+            // FCMA - Complex number arithmetic
+            extensions.push(Extension::new("FCMA", ExtensionCategory::Simd));
+
+            // LRCPC2 - Enhanced RCpc
+            extensions.push(Extension::new("LRCPC2", ExtensionCategory::Atomic));
+
+            // ==================== ARM64E specific (A12+ with PAC) ====================
             if subtype == arm64_subtype::E {
+                // PAC (Pointer Authentication) - ARMv8.3
                 extensions.push(Extension::new("PAC", ExtensionCategory::Security));
+
+                // BTI (Branch Target Identification) - often paired with PAC
                 extensions.push(Extension::new("BTI", ExtensionCategory::Security));
+
+                // DIT (Data Independent Timing) - security feature
+                extensions.push(Extension::new("DIT", ExtensionCategory::Security));
+
+                // SSBS (Speculative Store Bypass Safe)
+                extensions.push(Extension::new("SSBS", ExtensionCategory::Security));
+
+                // SB (Speculation Barrier)
+                extensions.push(Extension::new("SB", ExtensionCategory::Security));
+
+                // FlagM - Flag manipulation
+                extensions.push(Extension::new("FlagM", ExtensionCategory::Other));
+
+                // FRINTTS - Float to int rounding
+                extensions.push(Extension::new("FRINTTS", ExtensionCategory::Simd));
+
+                // BF16 - available on M1 and later (A14+)
+                extensions.push(Extension::new("BF16", ExtensionCategory::Simd));
+
+                // I8MM - Int8 matrix multiply (A14+/M1+)
+                extensions.push(Extension::new("I8MM", ExtensionCategory::Simd));
+
+                // DPB/DPB2 - Data cache operations
+                extensions.push(Extension::new("DPB", ExtensionCategory::System));
+                extensions.push(Extension::new("DPB2", ExtensionCategory::System));
             }
 
             extensions
@@ -700,10 +776,33 @@ mod tests {
         assert!(result.extensions.iter().any(|e| e.name == "AES"));
         assert!(result.extensions.iter().any(|e| e.name == "SHA256"));
         assert!(result.extensions.iter().any(|e| e.name == "CRC32"));
+        assert!(result.extensions.iter().any(|e| e.name == "LSE"));
+        assert!(result.extensions.iter().any(|e| e.name == "FP16"));
+        assert!(result.extensions.iter().any(|e| e.name == "DOTPROD"));
 
         // Should NOT have PAC/BTI (those are ARM64E only)
         assert!(!result.extensions.iter().any(|e| e.name == "PAC"));
         assert!(!result.extensions.iter().any(|e| e.name == "BTI"));
+    }
+
+    #[test]
+    fn test_arm64e_security_extensions() {
+        // ARM64E should have all security extensions
+        let data = make_macho_header(cpu_type::ARM64, arm64_subtype::E, 64);
+        let result = parse(&data, 64, false).unwrap();
+        assert_eq!(result.isa, Isa::AArch64);
+
+        // Security extensions
+        assert!(result.extensions.iter().any(|e| e.name == "PAC"));
+        assert!(result.extensions.iter().any(|e| e.name == "BTI"));
+        assert!(result.extensions.iter().any(|e| e.name == "DIT"));
+        assert!(result.extensions.iter().any(|e| e.name == "SSBS"));
+        assert!(result.extensions.iter().any(|e| e.name == "SB"));
+
+        // Additional ARM64E features
+        assert!(result.extensions.iter().any(|e| e.name == "BF16"));
+        assert!(result.extensions.iter().any(|e| e.name == "I8MM"));
+        assert!(result.extensions.iter().any(|e| e.name == "DPB"));
     }
 
     #[test]

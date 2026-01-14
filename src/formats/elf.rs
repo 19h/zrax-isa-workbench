@@ -689,11 +689,164 @@ fn parse_arm_flags(e_flags: u32, _data: &[u8]) -> (Variant, Vec<Extension>) {
     (Variant::new(variant_name), extensions)
 }
 
+/// GNU property types for AArch64.
+mod gnu_property {
+    /// GNU property note type
+    pub const GNU_PROPERTY_AARCH64_FEATURE_1_AND: u32 = 0xc0000000;
+
+    /// AArch64 feature bits
+    pub const GNU_PROPERTY_AARCH64_FEATURE_1_BTI: u32 = 1 << 0;
+    pub const GNU_PROPERTY_AARCH64_FEATURE_1_PAC: u32 = 1 << 1;
+    pub const GNU_PROPERTY_AARCH64_FEATURE_1_GCS: u32 = 1 << 2;
+}
+
 /// Parse AArch64 ELF flags.
 fn parse_aarch64_flags(_e_flags: u32) -> (Variant, Vec<Extension>) {
     // AArch64 doesn't use many e_flags bits
-    // Extensions are typically detected from code or attributes
+    // Extensions are typically detected from GNU properties, code, or attributes
     (Variant::default(), Vec::new())
+}
+
+/// Parse GNU property notes from ELF data to extract AArch64 feature flags.
+///
+/// This looks for .note.gnu.property sections or PT_GNU_PROPERTY segments
+/// to find GNU_PROPERTY_AARCH64_FEATURE_1_AND properties.
+fn parse_aarch64_gnu_properties(data: &[u8], is_64: bool, little_endian: bool) -> Vec<Extension> {
+    let mut extensions = Vec::new();
+
+    // Try to find and parse program headers to locate PT_GNU_PROPERTY
+    let (e_phoff, e_phentsize, e_phnum) = if is_64 {
+        if data.len() < 0x40 {
+            return extensions;
+        }
+        let phoff = read_u64(data, 0x20, little_endian).unwrap_or(0) as usize;
+        let phentsize = read_u16(data, 0x36, little_endian).unwrap_or(0) as usize;
+        let phnum = read_u16(data, 0x38, little_endian).unwrap_or(0) as usize;
+        (phoff, phentsize, phnum)
+    } else {
+        if data.len() < 0x34 {
+            return extensions;
+        }
+        let phoff = read_u32(data, 0x1C, little_endian).unwrap_or(0) as usize;
+        let phentsize = read_u16(data, 0x2A, little_endian).unwrap_or(0) as usize;
+        let phnum = read_u16(data, 0x2C, little_endian).unwrap_or(0) as usize;
+        (phoff, phentsize, phnum)
+    };
+
+    // PT_GNU_PROPERTY = 0x6474e553
+    const PT_GNU_PROPERTY: u32 = 0x6474e553;
+    // PT_NOTE = 4
+    const PT_NOTE: u32 = 4;
+
+    for i in 0..e_phnum {
+        let ph_offset = e_phoff + i * e_phentsize;
+        if ph_offset + e_phentsize > data.len() {
+            break;
+        }
+
+        let p_type = read_u32(data, ph_offset, little_endian).unwrap_or(0);
+
+        if p_type == PT_GNU_PROPERTY || p_type == PT_NOTE {
+            let (p_offset, p_filesz) = if is_64 {
+                let off = read_u64(data, ph_offset + 8, little_endian).unwrap_or(0) as usize;
+                let sz = read_u64(data, ph_offset + 32, little_endian).unwrap_or(0) as usize;
+                (off, sz)
+            } else {
+                let off = read_u32(data, ph_offset + 4, little_endian).unwrap_or(0) as usize;
+                let sz = read_u32(data, ph_offset + 16, little_endian).unwrap_or(0) as usize;
+                (off, sz)
+            };
+
+            if p_offset + p_filesz <= data.len() {
+                let note_data = &data[p_offset..p_offset + p_filesz];
+                if let Some(props) = parse_gnu_property_note(note_data, is_64, little_endian) {
+                    extensions.extend(props);
+                }
+            }
+        }
+    }
+
+    extensions
+}
+
+/// Parse a GNU property note section/segment.
+fn parse_gnu_property_note(data: &[u8], is_64: bool, little_endian: bool) -> Option<Vec<Extension>> {
+    let mut extensions = Vec::new();
+    let mut offset = 0;
+
+    // Note header: namesz (4), descsz (4), type (4), name (aligned), desc (aligned)
+    while offset + 12 <= data.len() {
+        let namesz = read_u32(data, offset, little_endian).ok()? as usize;
+        let descsz = read_u32(data, offset + 4, little_endian).ok()? as usize;
+        let note_type = read_u32(data, offset + 8, little_endian).ok()?;
+
+        offset += 12;
+
+        // Align to 4 or 8 bytes
+        let align = if is_64 { 8 } else { 4 };
+        let name_aligned = (namesz + align - 1) & !(align - 1);
+        let desc_aligned = (descsz + align - 1) & !(align - 1);
+
+        if offset + name_aligned + desc_aligned > data.len() {
+            break;
+        }
+
+        // Check if this is a GNU note (name = "GNU\0")
+        if namesz == 4 && offset + 4 <= data.len() {
+            let name = &data[offset..offset + 4];
+            if name == b"GNU\0" && note_type == 5 {
+                // NT_GNU_PROPERTY_TYPE_0 = 5
+                // Parse the properties in the descriptor
+                let desc_start = offset + name_aligned;
+                let desc_end = desc_start + descsz;
+
+                if desc_end <= data.len() {
+                    let mut prop_offset = desc_start;
+                    while prop_offset + 8 <= desc_end {
+                        let pr_type = read_u32(data, prop_offset, little_endian).ok()?;
+                        let pr_datasz = read_u32(data, prop_offset + 4, little_endian).ok()? as usize;
+
+                        prop_offset += 8;
+
+                        if prop_offset + pr_datasz > desc_end {
+                            break;
+                        }
+
+                        // GNU_PROPERTY_AARCH64_FEATURE_1_AND
+                        if pr_type == gnu_property::GNU_PROPERTY_AARCH64_FEATURE_1_AND && pr_datasz >= 4 {
+                            let features = read_u32(data, prop_offset, little_endian).ok()?;
+
+                            if features & gnu_property::GNU_PROPERTY_AARCH64_FEATURE_1_BTI != 0 {
+                                extensions.push(Extension::new("BTI", ExtensionCategory::Security));
+                            }
+                            if features & gnu_property::GNU_PROPERTY_AARCH64_FEATURE_1_PAC != 0 {
+                                extensions.push(Extension::new("PAC", ExtensionCategory::Security));
+                            }
+                            if features & gnu_property::GNU_PROPERTY_AARCH64_FEATURE_1_GCS != 0 {
+                                extensions.push(Extension::new("GCS", ExtensionCategory::Security));
+                            }
+                        }
+
+                        // Align property data to 8 bytes for 64-bit
+                        let pr_aligned = if is_64 {
+                            (pr_datasz + 7) & !7
+                        } else {
+                            (pr_datasz + 3) & !3
+                        };
+                        prop_offset += pr_aligned;
+                    }
+                }
+            }
+        }
+
+        offset += name_aligned + desc_aligned;
+    }
+
+    if extensions.is_empty() {
+        None
+    } else {
+        Some(extensions)
+    }
 }
 
 /// Parse RISC-V ELF flags.
@@ -888,7 +1041,20 @@ pub fn parse(data: &[u8], ei_class: u8, ei_data: u8) -> Result<ClassificationRes
     let (isa, bitwidth) = e_machine_to_isa(e_machine, ei_class);
 
     // Parse architecture-specific flags
-    let (variant, extensions) = parse_e_flags(isa, e_flags, data);
+    let (variant, mut extensions) = parse_e_flags(isa, e_flags, data);
+
+    // For AArch64, also parse GNU property notes for BTI/PAC/GCS info
+    if isa == Isa::AArch64 {
+        let gnu_extensions = parse_aarch64_gnu_properties(data, is_64, little_endian);
+        // Merge, avoiding duplicates
+        let existing: std::collections::HashSet<String> =
+            extensions.iter().map(|e| e.name.clone()).collect();
+        for ext in gnu_extensions {
+            if !existing.contains(&ext.name) {
+                extensions.push(ext);
+            }
+        }
+    }
 
     // Build metadata
     let metadata = ClassificationMetadata {
