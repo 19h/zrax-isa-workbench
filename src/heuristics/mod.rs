@@ -190,25 +190,27 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 64,
     });
 
-    // MIPS (both endiannesses)
+    // MIPS (both endiannesses, 32-bit and 64-bit)
     let (mips_be_score, mips_le_score) = scorer::score_mips(scan_data);
-    if mips_be_score >= mips_le_score {
-        scores.push(ArchitectureScore {
-            isa: Isa::Mips,
-            raw_score: mips_be_score,
-            confidence: 0.0,
-            endianness: Endianness::Big,
-            bitwidth: 32,
-        });
+    let (mips_score, mips_endian) = if mips_be_score >= mips_le_score {
+        (mips_be_score, Endianness::Big)
     } else {
-        scores.push(ArchitectureScore {
-            isa: Isa::Mips,
-            raw_score: mips_le_score,
-            confidence: 0.0,
-            endianness: Endianness::Little,
-            bitwidth: 32,
-        });
-    }
+        (mips_le_score, Endianness::Little)
+    };
+    scores.push(ArchitectureScore {
+        isa: Isa::Mips,
+        raw_score: mips_score,
+        confidence: 0.0,
+        endianness: mips_endian,
+        bitwidth: 32,
+    });
+    scores.push(ArchitectureScore {
+        isa: Isa::Mips64,
+        raw_score: mips_score, // Same scoring logic for 64-bit
+        confidence: 0.0,
+        endianness: mips_endian,
+        bitwidth: 64,
+    });
 
     // PowerPC
     let ppc_score = scorer::score_ppc(scan_data);
@@ -229,7 +231,7 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 64,
     });
 
-    // SPARC
+    // SPARC (32-bit and 64-bit)
     let sparc_score = scorer::score_sparc(scan_data);
     scores.push(ArchitectureScore {
         isa: Isa::Sparc,
@@ -237,6 +239,13 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         confidence: 0.0,
         endianness: Endianness::Big,
         bitwidth: 32,
+    });
+    scores.push(ArchitectureScore {
+        isa: Isa::Sparc64,
+        raw_score: sparc_score, // Same scoring logic for 64-bit
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 64,
     });
 
     // s390x
