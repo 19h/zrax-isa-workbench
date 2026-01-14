@@ -302,6 +302,50 @@ pub mod features {
     }
 }
 
+/// Score likelihood of Hexagon code.
+///
+/// Analyzes raw bytes for patterns characteristic of Hexagon.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // Hexagon is little-endian, 4-byte aligned (VLIW packets)
+    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+        let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // NOP
+        if is_nop(word) {
+            score += 25;
+        }
+
+        // End of packet marker
+        if is_end_of_packet(word) {
+            score += 5;
+        }
+
+        // ALU32
+        if is_alu32(word) {
+            score += 2;
+        }
+        
+        // XTYPE/Memory
+        if is_xtype(word) {
+            score += 2;
+        }
+        
+        // ALU64/M
+        if is_alu64(word) {
+            score += 2;
+        }
+
+        // Invalid
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            score -= 5;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +413,12 @@ mod tests {
         assert!(features::has_hvx_v66(version::V66));
         assert!(features::has_hvx_v66(version::V73));
         assert!(!features::has_hvx_v66(version::V65));
+    }
+
+    #[test]
+    fn test_score() {
+        // Hexagon NOP (little-endian)
+        let nop = patterns::NOP.to_le_bytes();
+        assert!(score(&nop) > 0);
     }
 }

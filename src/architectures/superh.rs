@@ -342,6 +342,60 @@ pub fn is_likely_valid(instr: u16) -> bool {
     }
 }
 
+/// Score likelihood of SuperH code.
+///
+/// Analyzes raw bytes for patterns characteristic of SuperH.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // SuperH is 16-bit aligned
+    for i in (0..data.len().saturating_sub(1)).step_by(2) {
+        let word = u16::from_le_bytes([data[i], data[i + 1]]);
+
+        // NOP
+        if is_nop(word) {
+            score += 25;
+        }
+
+        // RTS (return)
+        if is_rts(word) {
+            score += 30;
+        }
+
+        // TRAPA
+        if is_trapa(word) {
+            score += 15;
+        }
+
+        // BRA
+        if is_bra(word) {
+            score += 8;
+        }
+
+        // BSR
+        if is_bsr(word) {
+            score += 8;
+        }
+
+        // MOV.L @(disp,PC), Rn (common pattern)
+        if get_format(word) == format::FMT_D {
+            score += 5;
+        }
+
+        // MOV Rm, Rn - check for MOV instruction
+        if is_mov(word) && (word & 0xF00F) == 0x6003 {
+            score += 3;
+        }
+
+        // Invalid
+        if word == 0x0000 || word == 0xFFFF {
+            score -= 5;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,5 +469,12 @@ mod tests {
         let instr: u16 = 0x6A53; // Example
         assert_eq!(get_rn(instr), 0xA);
         assert_eq!(get_rm(instr), 0x5);
+    }
+
+    #[test]
+    fn test_score() {
+        // SuperH NOP (little-endian)
+        let nop = patterns::NOP.to_le_bytes();
+        assert!(score(&nop) > 0);
     }
 }

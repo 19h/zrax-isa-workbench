@@ -76,6 +76,87 @@ pub fn thumb_instruction_length(first_halfword: u16) -> usize {
     }
 }
 
+/// Score likelihood of ARM32 code.
+///
+/// Analyzes raw bytes for patterns characteristic of ARM32:
+/// - Condition codes in bits [31:28]
+/// - Common instructions (NOP, BX LR, PUSH, POP)
+/// - Data processing patterns
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // ARM32 instructions are 4 bytes, aligned
+    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+        let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // Check condition code
+        let cond = get_condition(word);
+
+        // AL (always) condition is most common
+        if cond == condition::AL {
+            score += 3;
+        } else if cond <= condition::LE {
+            // Valid condition codes
+            score += 1;
+        } else if cond == condition::NV {
+            // Unconditional - less common but valid
+            score += 1;
+        }
+
+        // NOP (MOV R0, R0)
+        if word == patterns::NOP {
+            score += 20;
+        }
+
+        // NOP.W (ARMv6K+)
+        if word == patterns::NOP_HINT {
+            score += 20;
+        }
+
+        // BX LR (return)
+        if word == patterns::BX_LR {
+            score += 25;
+        }
+
+        // PUSH
+        if is_push(word) {
+            score += 15;
+        }
+
+        // POP
+        if is_pop(word) {
+            score += 15;
+        }
+
+        // BL (branch with link)
+        if is_bl(word) {
+            score += 8;
+        }
+
+        // LDR/STR
+        if (word & 0x0E000000) == 0x04000000 && cond <= condition::AL {
+            score += 3;
+        }
+
+        // Data processing (AND, EOR, SUB, ADD, etc.)
+        if (word & 0x0C000000) == 0x00000000 && cond <= condition::AL {
+            score += 2;
+        }
+
+        // SVC/SWI (system call)
+        if (word & 0x0F000000) == 0x0F000000 && cond == condition::AL {
+            score += 15;
+        }
+
+        // Invalid - all zeros or all ones
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            score -= 10;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +177,15 @@ mod tests {
     fn test_thumb_length() {
         assert_eq!(thumb_instruction_length(0xBF00), 2); // NOP.N
         assert_eq!(thumb_instruction_length(0xF3AF), 4); // NOP.W prefix
+    }
+
+    #[test]
+    fn test_score() {
+        // ARM NOP
+        let nop = 0xE1A00000u32.to_le_bytes();
+        assert!(score(&nop) > 0);
+        // BX LR (return)
+        let ret = 0xE12FFF1Eu32.to_le_bytes();
+        assert!(score(&ret) > 0);
     }
 }

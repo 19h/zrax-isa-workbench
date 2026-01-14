@@ -358,6 +358,74 @@ pub fn is_likely_valid(instr: u16) -> bool {
     false
 }
 
+/// Score likelihood of MSP430 code.
+///
+/// Analyzes raw bytes for patterns characteristic of MSP430.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // MSP430 is little-endian, 16-bit aligned
+    for i in (0..data.len().saturating_sub(1)).step_by(2) {
+        let word = u16::from_le_bytes([data[i], data[i + 1]]);
+        let opcode = get_opcode(word);
+
+        // NOP
+        if is_nop(word) {
+            score += 25;
+        }
+
+        // RET
+        if is_ret(word) {
+            score += 30;
+        }
+
+        // RETI
+        if is_reti(word) {
+            score += 25;
+        }
+
+        // Jump instructions
+        if is_jump_format(word) {
+            score += 8;
+        }
+
+        // JMP (unconditional)
+        if is_jmp(word) {
+            score += 10;
+        }
+
+        // Single-operand format
+        if is_single_op_format(word) {
+            let sub_op = get_single_op(word);
+            match sub_op {
+                o if o == single_op::PUSH => score += 8,
+                o if o == single_op::CALL => score += 8,
+                o if o == single_op::RETI => score += 5,
+                _ => score += 2,
+            }
+        }
+
+        // Two-operand format
+        if is_two_op_format(word) {
+            match opcode {
+                o if o == two_op::MOV => score += 5,
+                o if o == two_op::ADD => score += 4,
+                o if o == two_op::SUB => score += 4,
+                o if o == two_op::CMP => score += 4,
+                o if o == two_op::AND => score += 3,
+                _ => score += 2,
+            }
+        }
+
+        // Invalid
+        if word == 0x0000 || word == 0xFFFF {
+            score -= 5;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,5 +500,12 @@ mod tests {
         assert!(get_bw(0x4540));
         // MOV.W = bit 6 clear
         assert!(!get_bw(0x4500));
+    }
+
+    #[test]
+    fn test_score() {
+        // MSP430 RET (little-endian)
+        let ret = patterns::RET.to_le_bytes();
+        assert!(score(&ret) > 0);
     }
 }

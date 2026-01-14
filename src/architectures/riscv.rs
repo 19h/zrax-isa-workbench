@@ -137,6 +137,120 @@ pub fn uses_v_extension(instr: u32) -> bool {
     get_opcode(instr) == opcode::OP_V
 }
 
+/// Score likelihood of RISC-V code.
+///
+/// Analyzes raw bytes for patterns characteristic of RISC-V:
+/// - Instruction length encoding (bits [1:0])
+/// - Standard opcodes
+/// - Compressed instructions
+pub fn score(data: &[u8], bits: u8) -> i64 {
+    let mut score: i64 = 0;
+    let is_64 = bits == 64;
+    let mut i = 0;
+
+    while i < data.len() {
+        let instr_len = instruction_length(&data[i..]);
+        
+        if instr_len == 2 {
+            // Compressed instruction (16-bit)
+            if i + 2 > data.len() {
+                break;
+            }
+
+            let half = u16::from_le_bytes([data[i], data[i + 1]]);
+
+            // C.NOP
+            if half == patterns::C_NOP {
+                score += 20;
+            }
+
+            // C.RET
+            if half == patterns::C_RET {
+                score += 25;
+            }
+
+            // C.EBREAK
+            if half == patterns::C_EBREAK {
+                score += 15;
+            }
+
+            // C.ADDI16SP
+            if (half & 0xEF83) == 0x6101 {
+                score += 10;
+            }
+
+            // Valid compressed quadrants
+            let quadrant = half & 0x03;
+            if quadrant <= 2 {
+                score += 2;
+            }
+
+            i += 2;
+        } else {
+            // 32-bit instruction
+            if i + 4 > data.len() {
+                break;
+            }
+
+            let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+            let op = get_opcode(word);
+
+            // NOP
+            if word == patterns::NOP {
+                score += 25;
+            }
+
+            // RET
+            if word == patterns::RET {
+                score += 30;
+            }
+
+            // ECALL
+            if word == patterns::ECALL {
+                score += 20;
+            }
+
+            // EBREAK
+            if word == patterns::EBREAK {
+                score += 15;
+            }
+
+            // Check for valid standard opcodes
+            match op {
+                o if o == opcode::LOAD => score += 5,
+                o if o == opcode::OP_IMM => score += 5,
+                o if o == opcode::AUIPC => score += 5,
+                o if o == opcode::STORE => score += 5,
+                o if o == opcode::OP => score += 5,
+                o if o == opcode::LUI => score += 5,
+                o if o == opcode::BRANCH => score += 5,
+                o if o == opcode::JALR => score += 5,
+                o if o == opcode::JAL => score += 5,
+                o if o == opcode::SYSTEM => score += 5,
+                // 64-bit specific
+                o if o == opcode::OP_IMM_32 && is_64 => score += 5,
+                o if o == opcode::OP_32 && is_64 => score += 5,
+                // Extensions
+                o if o == opcode::LOAD_FP => score += 3,
+                o if o == opcode::STORE_FP => score += 3,
+                o if o == opcode::AMO => score += 3,
+                o if o == opcode::OP_FP => score += 3,
+                o if o == opcode::OP_V => score += 3,
+                _ => {}
+            }
+
+            // Check for M extension
+            if uses_m_extension(word) {
+                score += 5;
+            }
+
+            i += 4;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +271,15 @@ mod tests {
     fn test_ret_detection() {
         assert!(is_ret(patterns::RET));
         assert!(!is_ret(patterns::NOP));
+    }
+
+    #[test]
+    fn test_score() {
+        // RISC-V NOP
+        let nop = patterns::NOP.to_le_bytes();
+        assert!(score(&nop, 64) > 0);
+        // RET
+        let ret = patterns::RET.to_le_bytes();
+        assert!(score(&ret, 64) > 0);
     }
 }

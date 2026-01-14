@@ -359,6 +359,61 @@ pub const VALID_MEM_OP3: &[u8] = &[
     op3_mem::STF, op3_mem::STDF,
 ];
 
+/// Score likelihood of SPARC code.
+///
+/// Analyzes raw bytes for patterns characteristic of SPARC.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // SPARC is big-endian, 4-byte aligned
+    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+        let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        let fmt = get_format(word);
+
+        // NOP
+        if is_nop(word) {
+            score += 25;
+        }
+
+        // RETL/RET
+        if is_return(word) {
+            score += 30;
+        }
+
+        // CALL
+        if is_call(word) {
+            score += 10;
+        }
+
+        // Arithmetic (format 10)
+        if fmt == format::ARITHMETIC {
+            score += 3;
+        }
+
+        // Load/Store (format 11)
+        if fmt == format::LOAD_STORE {
+            score += 3;
+        }
+
+        // Branch/SETHI (format 00)
+        if fmt == format::BRANCH_SETHI {
+            let op2_val = get_op2(word);
+            if op2_val == op2::SETHI {
+                score += 5;
+            } else if op2_val == op2::BICC || op2_val == op2::FBFCC {
+                score += 5;
+            }
+        }
+
+        // Invalid
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            score -= 5;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,5 +481,12 @@ mod tests {
         let add_imm: u32 = 0x84007FFF;
         assert!(get_i_bit(add_imm));
         assert_eq!(get_simm13(add_imm), -1);
+    }
+
+    #[test]
+    fn test_score() {
+        // SPARC NOP (big-endian)
+        let nop = patterns::NOP.to_be_bytes();
+        assert!(score(&nop) > 0);
     }
 }

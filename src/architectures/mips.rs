@@ -143,6 +143,89 @@ pub fn is_syscall(instr: u32) -> bool {
 /// MIPS has a branch delay slot.
 pub const HAS_DELAY_SLOT: bool = true;
 
+/// Score a single MIPS word.
+fn score_word(word: u32) -> i64 {
+    let mut score: i64 = 0;
+    let op = get_opcode(word);
+
+    // NOP (sll $0, $0, 0)
+    if word == patterns::NOP {
+        score += 15;
+    }
+
+    // JR $ra (return)
+    if is_ret(word) {
+        score += 30;
+    }
+
+    // SYSCALL
+    if is_syscall(word) {
+        score += 20;
+    }
+
+    // BREAK
+    if op == opcode::SPECIAL && get_funct(word) == funct::BREAK {
+        score += 15;
+    }
+
+    // Check common opcodes
+    match op {
+        o if o == opcode::SPECIAL => score += 3,
+        o if o == opcode::REGIMM => score += 3,
+        o if o == opcode::J => score += 5,
+        o if o == opcode::JAL => score += 5,
+        o if o == opcode::BEQ => score += 4,
+        o if o == opcode::BNE => score += 4,
+        o if o == opcode::BLEZ => score += 3,
+        o if o == opcode::BGTZ => score += 3,
+        o if o == opcode::ADDI => score += 3,
+        o if o == opcode::ADDIU => score += 3,
+        o if o == opcode::SLTI => score += 3,
+        o if o == opcode::SLTIU => score += 3,
+        o if o == opcode::ANDI => score += 3,
+        o if o == opcode::ORI => score += 3,
+        o if o == opcode::XORI => score += 3,
+        o if o == opcode::LUI => score += 5,
+        o if o == opcode::LB => score += 4,
+        o if o == opcode::LH => score += 4,
+        o if o == opcode::LW => score += 5,
+        o if o == opcode::LBU => score += 4,
+        o if o == opcode::LHU => score += 4,
+        o if o == opcode::SB => score += 4,
+        o if o == opcode::SH => score += 4,
+        o if o == opcode::SW => score += 5,
+        _ => {}
+    }
+
+    // Invalid
+    if word == 0xFFFFFFFF {
+        score -= 10;
+    }
+
+    score
+}
+
+/// Score likelihood of MIPS code.
+///
+/// Returns (big_endian_score, little_endian_score)
+pub fn score(data: &[u8]) -> (i64, i64) {
+    let mut score_be: i64 = 0;
+    let mut score_le: i64 = 0;
+
+    // MIPS instructions are 4 bytes, aligned
+    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+        // Big-endian
+        let word_be = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        score_be += score_word(word_be);
+
+        // Little-endian
+        let word_le = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        score_le += score_word(word_le);
+    }
+
+    (score_be.max(0), score_le.max(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +245,13 @@ mod tests {
     #[test]
     fn test_syscall_detection() {
         assert!(is_syscall(patterns::SYSCALL));
+    }
+
+    #[test]
+    fn test_score() {
+        // MIPS NOP (big-endian)
+        let nop = patterns::NOP.to_be_bytes();
+        let (be, _le) = score(&nop);
+        assert!(be > 0);
     }
 }

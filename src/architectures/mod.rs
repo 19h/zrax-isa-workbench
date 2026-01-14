@@ -5,19 +5,26 @@
 //! architecture-specific constants.
 
 pub mod aarch64;
+pub mod alpha;
+pub mod arc;
 pub mod arm;
 pub mod avr;
 pub mod hexagon;
 pub mod loongarch;
 pub mod m68k;
+pub mod microblaze;
 pub mod mips;
 pub mod msp430;
+pub mod nios2;
+pub mod openrisc;
+pub mod parisc;
 pub mod ppc;
 pub mod riscv;
 pub mod s390x;
 pub mod sparc;
 pub mod superh;
 pub mod x86;
+pub mod xtensa;
 
 use crate::types::{Endianness, Isa};
 

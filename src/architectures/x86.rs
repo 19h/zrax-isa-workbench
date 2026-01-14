@@ -100,6 +100,112 @@ pub fn is_epilogue(data: &[u8]) -> bool {
     false
 }
 
+/// Score likelihood of x86/x86-64 code.
+///
+/// Analyzes raw bytes for patterns characteristic of x86/x86-64:
+/// - Common opcodes (NOP, RET, CALL, JMP, PUSH)
+/// - Prefix bytes (REX for 64-bit, VEX/EVEX for extensions)
+/// - Prologue patterns
+/// - System calls
+pub fn score(data: &[u8], bits: u8) -> i64 {
+    let mut score: i64 = 0;
+    let is_64 = bits == 64;
+
+    let mut i = 0;
+    while i < data.len() {
+        let b = data[i];
+
+        // Single-byte patterns using architecture constants
+        match b {
+            b if b == opcodes::NOP => score += 5,
+            b if b == opcodes::RET => score += 10,
+            b if b == opcodes::INT3 => score += 8,
+            b if b == opcodes::PUSH_EBP => score += 10,
+            b if b == opcodes::CALL_REL32 => score += 8,
+            b if b == opcodes::JMP_REL32 => score += 5,
+            b if b == opcodes::JMP_REL8 => score += 3,
+            0x8D => score += 3, // LEA
+            0xB8..=0xBF => score += 2, // MOV immediate
+            0x70..=0x7F => score += 3, // Conditional jumps
+            _ => {}
+        }
+
+        // REX prefix (64-bit indicator)
+        if is_64 && (opcodes::REX_BASE..=opcodes::REX_MAX).contains(&b) {
+            score += 8;
+        }
+
+        // Legacy prefixes (not great for 64-bit code but common)
+        if !is_64 && b == 0x66 {
+            score += 2;
+        }
+
+        // Two-byte patterns
+        if i + 1 < data.len() {
+            let next = data[i + 1];
+
+            // SYSCALL (64-bit)
+            if [b, next] == opcodes::SYSCALL {
+                if is_64 {
+                    score += 20;
+                } else {
+                    score -= 10;
+                }
+            }
+            // INT 0x80 (32-bit syscall)
+            else if b == opcodes::INT && next == 0x80 {
+                if is_64 {
+                    score -= 10;
+                } else {
+                    score += 20;
+                }
+            }
+            // UD2 (undefined instruction, often used as trap)
+            else if [b, next] == opcodes::UD2 {
+                score += 5;
+            }
+            // Multi-byte NOP (0F 1F)
+            else if b == opcodes::TWO_BYTE && next == 0x1F {
+                score += 8;
+            }
+            // MOV r/m, r (common)
+            else if matches!(b, 0x89 | 0x8B) {
+                score += 2;
+            }
+            // TEST r/m, r
+            else if matches!(b, 0x85 | 0x84) {
+                score += 2;
+            }
+            // CMP r/m, r
+            else if matches!(b, 0x39 | 0x3B) {
+                score += 2;
+            }
+        }
+
+        // VEX prefix (AVX)
+        if b == opcodes::VEX2 && i + 2 < data.len() {
+            score += 15;
+        }
+        if b == opcodes::VEX3 && i + 3 < data.len() {
+            score += 15;
+        }
+
+        // EVEX prefix (AVX-512)
+        if b == opcodes::EVEX && i + 4 < data.len() {
+            score += 20;
+        }
+
+        // Check for prologue patterns
+        if i + 3 < data.len() && is_prologue(&data[i..]) {
+            score += 25;
+        }
+
+        i += 1;
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +221,15 @@ mod tests {
     fn test_prologue_detection() {
         assert!(is_prologue(&[0x55, 0x89, 0xE5]));
         assert!(is_prologue(&[0x55, 0x48, 0x89, 0xE5]));
+    }
+
+    #[test]
+    fn test_score() {
+        // x86 prologue
+        assert!(score(&[0x55, 0x89, 0xE5], 32) > 0);
+        // x86-64 with REX prefix
+        assert!(score(&[0x48, 0x89, 0xE5], 64) > 0);
+        // NOP sled
+        assert!(score(&[0x90, 0x90, 0x90, 0x90], 32) > 0);
     }
 }

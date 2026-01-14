@@ -340,6 +340,72 @@ pub const VALID_4B_OPCODES: &[u8] = &[
     opcode_rx::STD, opcode_rx::LD, opcode_rx::STE, opcode_rx::LE,
 ];
 
+/// Score likelihood of s390x code.
+///
+/// Analyzes raw bytes for patterns characteristic of s390x.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+    let mut i = 0;
+
+    while i < data.len() {
+        let first = data[i];
+        let len = length::from_first_byte(first);
+
+        if i + len > data.len() {
+            break;
+        }
+
+        // 2-byte instructions
+        if len == 2 && i + 2 <= data.len() {
+            let half = u16::from_be_bytes([data[i], data[i + 1]]);
+
+            // NOP (BCR 0,0)
+            if half == patterns::NOP_2B {
+                score += 20;
+            }
+
+            // BR r14 (return)
+            if is_return(half) {
+                score += 30;
+            }
+
+            // SVC
+            if is_svc(half) {
+                score += 15;
+            }
+
+            // Common RR instructions
+            let op = get_opcode_2b(half);
+            if VALID_2B_OPCODES.contains(&op) {
+                score += 3;
+            }
+        }
+
+        // 4-byte instructions
+        if len == 4 && i + 4 <= data.len() {
+            let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+            // NOP (BC 0,0)
+            if word == patterns::NOP_4B {
+                score += 20;
+            }
+
+            let op = get_opcode_4b(word);
+            match op {
+                o if o == opcode_rx::LA => score += 5,
+                o if o == opcode_rx::BC => score += 5,
+                o if o == opcode_rx::ST => score += 5,
+                o if o == opcode_rx::L => score += 5,
+                _ => {}
+            }
+        }
+
+        i += len;
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,5 +466,12 @@ mod tests {
         assert_eq!(get_x2_rx(instr), 0);
         assert_eq!(get_b2_rx(instr), 15);
         assert_eq!(get_d2_rx(instr), 4);
+    }
+
+    #[test]
+    fn test_score() {
+        // s390x NOP (big-endian)
+        let nop = patterns::NOP_2B.to_be_bytes();
+        assert!(score(&nop) > 0);
     }
 }

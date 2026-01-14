@@ -339,6 +339,64 @@ pub const VALID_OPCODE_PREFIXES: &[u32] = &[
     0x5C000000, // BNE
 ];
 
+/// Score likelihood of LoongArch code.
+///
+/// Analyzes raw bytes for patterns characteristic of LoongArch.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // LoongArch is little-endian, 4-byte aligned
+    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+        let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // NOP
+        if is_nop(word) {
+            score += 25;
+        }
+
+        // RET
+        if is_ret(word) {
+            score += 30;
+        }
+
+        // SYSCALL
+        if is_syscall(word) {
+            score += 20;
+        }
+
+        // BREAK
+        if is_break(word) {
+            score += 15;
+        }
+
+        // Check for valid instruction patterns
+        if is_branch(word) {
+            score += 3;
+        }
+
+        if is_load(word) || is_store(word) {
+            score += 3;
+        }
+
+        // BL (call)
+        if is_bl(word) {
+            score += 5;
+        }
+
+        // B (unconditional branch)
+        if is_b(word) {
+            score += 5;
+        }
+
+        // Invalid
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            score -= 5;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,5 +462,12 @@ mod tests {
     fn test_syscall_break() {
         assert!(is_syscall(patterns::SYSCALL_0));
         assert!(is_break(patterns::BREAK_0));
+    }
+
+    #[test]
+    fn test_score() {
+        // LoongArch NOP (little-endian)
+        let nop = patterns::NOP.to_le_bytes();
+        assert!(score(&nop) > 0);
     }
 }

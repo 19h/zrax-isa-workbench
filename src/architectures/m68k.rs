@@ -359,6 +359,70 @@ pub const STRONG_INDICATORS: &[u16] = &[
     patterns::TRAPV,
 ];
 
+/// Score likelihood of m68k code.
+///
+/// Analyzes raw bytes for patterns characteristic of m68k.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // m68k is big-endian
+    for i in (0..data.len().saturating_sub(1)).step_by(2) {
+        let word = u16::from_be_bytes([data[i], data[i + 1]]);
+
+        // NOP
+        if is_nop(word) {
+            score += 25;
+        }
+
+        // RTS (return)
+        if is_rts(word) {
+            score += 30;
+        }
+
+        // RTE (return from exception)
+        if word == patterns::RTE {
+            score += 15;
+        }
+
+        // TRAP
+        if is_trap(word) {
+            score += 15;
+        }
+
+        // JSR
+        if is_jsr(word) {
+            score += 10;
+        }
+
+        // JMP
+        if is_jmp(word) {
+            score += 8;
+        }
+
+        // MOVE.L (most common)
+        if get_opcode_group(word) == opcode_group::MOVE_LONG {
+            score += 3;
+        }
+
+        // MOVEQ
+        if is_moveq(word) {
+            score += 5;
+        }
+
+        // LEA
+        if is_lea(word) {
+            score += 5;
+        }
+
+        // Invalid
+        if word == 0x0000 || word == 0xFFFF {
+            score -= 5;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,5 +494,12 @@ mod tests {
         assert_eq!(base_instruction_length(patterns::RTS), 2);
         assert_eq!(base_instruction_length(0x6000), 4); // BRA.W (disp=0)
         assert_eq!(base_instruction_length(0x6002), 2); // BRA.S (disp=2)
+    }
+
+    #[test]
+    fn test_score() {
+        // m68k NOP (big-endian)
+        let nop = patterns::NOP.to_be_bytes();
+        assert!(score(&nop) > 0);
     }
 }

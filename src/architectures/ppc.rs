@@ -158,6 +158,90 @@ pub fn is_nop(instr: u32) -> bool {
     instr == patterns::NOP
 }
 
+/// Score likelihood of PowerPC code.
+///
+/// Analyzes raw bytes for patterns characteristic of PowerPC.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // PowerPC is big-endian, 4-byte aligned
+    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+        let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        let op = get_opcode(word);
+
+        // NOP (ori 0,0,0)
+        if is_nop(word) {
+            score += 25;
+        }
+
+        // BLR (return)
+        if is_blr(word) {
+            score += 30;
+        }
+
+        // SC (system call)
+        if word == patterns::SC {
+            score += 20;
+        }
+
+        // TRAP
+        if word == patterns::TRAP {
+            score += 15;
+        }
+
+        // MFLR r0 (save link register)
+        if word == patterns::MFLR_R0 {
+            score += 25;
+        }
+
+        // MTLR r0 (restore link register)
+        if word == patterns::MTLR_R0 {
+            score += 20;
+        }
+
+        // Check common opcodes
+        match op {
+            o if o == opcode::ADDI || o == opcode::ADDIS => score += 5,
+            o if o == opcode::BC => score += 5,
+            o if o == opcode::B => score += 5,
+            o if o == opcode::XL_FORM => score += 3,
+            o if o == opcode::X_FORM => score += 3,
+            o if o == opcode::LWZ => score += 4,
+            o if o == opcode::LWZU => score += 4,
+            o if o == opcode::LBZ => score += 4,
+            o if o == opcode::LBZU => score += 4,
+            o if o == opcode::STW => score += 4,
+            o if o == opcode::STWU => score += 4,
+            o if o == opcode::STB => score += 4,
+            o if o == opcode::STBU => score += 4,
+            o if o == opcode::LHZ => score += 4,
+            o if o == opcode::LHZU => score += 4,
+            o if o == opcode::LHA => score += 4,
+            o if o == opcode::LHAU => score += 4,
+            o if o == opcode::STH => score += 4,
+            o if o == opcode::STHU => score += 4,
+            o if o == opcode::LMW => score += 4,
+            o if o == opcode::STMW => score += 4,
+            o if o == opcode::LFS => score += 3,
+            o if o == opcode::LFSU => score += 3,
+            o if o == opcode::LFD => score += 3,
+            o if o == opcode::LFDU => score += 3,
+            o if o == opcode::STFS => score += 3,
+            o if o == opcode::STFSU => score += 3,
+            o if o == opcode::STFD => score += 3,
+            o if o == opcode::STFDU => score += 3,
+            _ => {}
+        }
+
+        // Invalid
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            score -= 5;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +261,15 @@ mod tests {
     #[test]
     fn test_nop_detection() {
         assert!(is_nop(patterns::NOP));
+    }
+
+    #[test]
+    fn test_score() {
+        // PPC NOP (big-endian)
+        let nop = patterns::NOP.to_be_bytes();
+        assert!(score(&nop) > 0);
+        // BLR
+        let blr = patterns::BLR.to_be_bytes();
+        assert!(score(&blr) > 0);
     }
 }

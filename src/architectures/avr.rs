@@ -368,6 +368,109 @@ pub fn is_likely_valid(instr: u16) -> bool {
     }
 }
 
+/// Score likelihood of AVR code.
+///
+/// Analyzes raw bytes for patterns characteristic of AVR.
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+    let mut i = 0;
+
+    // AVR is little-endian, mostly 16-bit instructions (some 32-bit)
+    while i + 2 <= data.len() {
+        let word = u16::from_le_bytes([data[i], data[i + 1]]);
+
+        // NOP
+        if is_nop(word) {
+            score += 15;
+        }
+
+        // RET (return from subroutine)
+        if is_ret(word) {
+            score += 30;
+        }
+
+        // RETI (return from interrupt)
+        if is_reti(word) {
+            score += 25;
+        }
+
+        // SLEEP
+        if word == patterns::SLEEP {
+            score += 15;
+        }
+
+        // BREAK
+        if word == patterns::BREAK {
+            score += 15;
+        }
+
+        // CLI (disable interrupts)
+        if word == patterns::CLI {
+            score += 10;
+        }
+
+        // SEI (enable interrupts)
+        if word == patterns::SEI {
+            score += 10;
+        }
+
+        // RJMP (relative jump)
+        if is_rjmp(word) {
+            score += 8;
+        }
+
+        // RCALL (relative call)
+        if is_rcall(word) {
+            score += 8;
+        }
+
+        // LDI (load immediate)
+        if is_ldi(word) {
+            score += 5;
+        }
+
+        // PUSH
+        if is_push(word) {
+            score += 8;
+        }
+
+        // POP
+        if is_pop(word) {
+            score += 8;
+        }
+
+        // IN (I/O read)
+        if is_in(word) {
+            score += 3;
+        }
+
+        // OUT (I/O write)
+        if is_out(word) {
+            score += 3;
+        }
+
+        // MOV (register copy)
+        if is_mov(word) {
+            score += 3;
+        }
+
+        // Check if 32-bit instruction
+        if is_two_word(word) {
+            score += 5;
+            i += 2; // Skip extra word
+        }
+
+        // Invalid (all Fs)
+        if word == 0xFFFF {
+            score -= 5;
+        }
+
+        i += 2;
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +556,12 @@ mod tests {
         
         // POP R0 = 0x900F
         assert!(is_pop(0x900F));
+    }
+
+    #[test]
+    fn test_score() {
+        // AVR RET (little-endian)
+        let ret = patterns::RET.to_le_bytes();
+        assert!(score(&ret) > 0);
     }
 }

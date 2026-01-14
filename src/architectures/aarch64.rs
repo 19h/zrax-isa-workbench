@@ -110,6 +110,113 @@ pub fn is_bti(instr: u32) -> bool {
     (instr & 0xFFFFFF3F) == system::BTI
 }
 
+/// Score likelihood of AArch64 code.
+///
+/// Analyzes raw bytes for patterns characteristic of AArch64:
+/// - Fixed 32-bit instructions
+/// - Encoding groups in bits [28:25]
+/// - Common patterns (NOP, RET, SVC)
+pub fn score(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+
+    // AArch64 instructions are 4 bytes, aligned
+    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+        let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // NOP
+        if word == system::NOP {
+            score += 25;
+        }
+
+        // RET
+        if word == ret::RET {
+            score += 30;
+        }
+
+        // RETAA (PAC return)
+        if word == ret::RETAA {
+            score += 25;
+        }
+
+        // RETAB
+        if word == ret::RETAB {
+            score += 25;
+        }
+
+        // BL (branch with link)
+        if is_bl(word) {
+            score += 10;
+        }
+
+        // B (unconditional branch)
+        if is_branch(word) && !is_bl(word) {
+            score += 8;
+        }
+
+        // SVC (system call)
+        if (word & 0xFFE0001F) == 0xD4000001 {
+            score += 20;
+        }
+
+        // BRK (breakpoint)
+        if (word & 0xFFE0001F) == 0xD4200000 {
+            score += 15;
+        }
+
+        // BTI (branch target identification)
+        if is_bti(word) {
+            score += 20;
+        }
+
+        // PACIASP (pointer authentication)
+        if word == system::PACIASP {
+            score += 20;
+        }
+
+        // AUTIASP
+        if word == system::AUTIASP {
+            score += 20;
+        }
+
+        // STP (store pair - common in prologue)
+        if is_stp(word) {
+            score += 10;
+        }
+
+        // LDP (load pair - common in epilogue)
+        if is_ldp(word) {
+            score += 10;
+        }
+
+        // MOV (wide immediate)
+        if (word >> 23) & 0x1FF == 0x1A5 {
+            score += 5;
+        }
+
+        // ADD/SUB immediate
+        if (word >> 24) & 0x1F == 0x11 {
+            score += 3;
+        }
+
+        // Check encoding groups
+        let group = get_encoding_group(word);
+        match group {
+            EncodingGroup::DataProcessingImmediate => score += 2,
+            EncodingGroup::BranchExceptionSystem => score += 2,
+            EncodingGroup::LoadStore => score += 2,
+            EncodingGroup::DataProcessingRegister => score += 2,
+            _ => {}
+        }
+
+        // Invalid patterns
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            score -= 10;
+        }
+    }
+
+    score.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +240,15 @@ mod tests {
     fn test_pac_detection() {
         assert!(uses_pac(system::PACIASP));
         assert!(uses_pac(system::AUTIASP));
+    }
+
+    #[test]
+    fn test_score() {
+        // AArch64 NOP
+        let nop = system::NOP.to_le_bytes();
+        assert!(score(&nop) > 0);
+        // RET
+        let ret_bytes = ret::RET.to_le_bytes();
+        assert!(score(&ret_bytes) > 0);
     }
 }
