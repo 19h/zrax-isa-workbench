@@ -196,11 +196,27 @@ pub fn classify_bytes_with_options(
         }
     };
 
-    // Detect extensions if requested and not already done
-    if options.detect_extensions && result.extensions.is_empty() {
+    // Detect extensions if requested
+    if options.detect_extensions {
         let code_extensions =
             extensions::detect_from_code(data, result.isa, result.endianness);
-        result.extensions = code_extensions;
+
+        // Merge code-detected extensions with format-detected extensions
+        if result.extensions.is_empty() {
+            result.extensions = code_extensions;
+        } else if !code_extensions.is_empty() {
+            // Merge, avoiding duplicates by name
+            let existing: std::collections::HashSet<String> = result
+                .extensions
+                .iter()
+                .map(|e| e.name.clone())
+                .collect();
+            for ext in code_extensions {
+                if !existing.contains(&ext.name) {
+                    result.extensions.push(ext);
+                }
+            }
+        }
     }
 
     Ok(result)

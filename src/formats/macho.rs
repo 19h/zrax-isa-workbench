@@ -6,7 +6,8 @@
 use crate::error::{ClassifierError, Result};
 use crate::formats::{read_u32};
 use crate::types::{
-    ClassificationMetadata, ClassificationResult, Endianness, FileFormat, Isa, Variant,
+    ClassificationMetadata, ClassificationResult, Endianness, Extension, ExtensionCategory,
+    FileFormat, Isa, Variant,
 };
 
 /// Mach-O CPU type constants.
@@ -53,7 +54,183 @@ pub mod arm_subtype {
 pub mod arm64_subtype {
     pub const ALL: u32 = 0;
     pub const V8: u32 = 1;
+    /// ARM64E - ARMv8.3+ with PAC (Pointer Authentication)
     pub const E: u32 = 2;
+}
+
+/// Extract extensions from CPU type and subtype.
+fn extensions_from_cpu(cpu_type: u32, cpu_subtype: u32) -> Vec<Extension> {
+    let subtype = cpu_subtype & 0xFF;
+
+    match cpu_type {
+        cpu_type::ARM64 | cpu_type::ARM64_32 => {
+            let mut extensions = Vec::new();
+
+            // All Apple ARM64 has these as baseline
+            extensions.push(Extension::new("NEON", ExtensionCategory::Simd));
+            extensions.push(Extension::new("AES", ExtensionCategory::Crypto));
+            extensions.push(Extension::new("SHA1", ExtensionCategory::Crypto));
+            extensions.push(Extension::new("SHA256", ExtensionCategory::Crypto));
+            extensions.push(Extension::new("CRC32", ExtensionCategory::Other));
+
+            // ARM64E adds PAC and BTI
+            if subtype == arm64_subtype::E {
+                extensions.push(Extension::new("PAC", ExtensionCategory::Security));
+                extensions.push(Extension::new("BTI", ExtensionCategory::Security));
+            }
+
+            extensions
+        }
+
+        cpu_type::ARM => {
+            let mut extensions = Vec::new();
+
+            match subtype {
+                arm_subtype::V4T => {
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                }
+                arm_subtype::V5TEJ => {
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("Jazelle", ExtensionCategory::Other));
+                }
+                arm_subtype::V6 => {
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("VFPv2", ExtensionCategory::FloatingPoint));
+                }
+                arm_subtype::V6M => {
+                    // Cortex-M0/M0+/M1 - Thumb only, no VFP
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                }
+                arm_subtype::V7 | arm_subtype::V7F | arm_subtype::V7K => {
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("Thumb-2", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("VFPv3", ExtensionCategory::FloatingPoint));
+                    extensions.push(Extension::new("NEON", ExtensionCategory::Simd));
+                }
+                arm_subtype::V7S => {
+                    // Apple A6 chip - VFPv4
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("Thumb-2", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("VFPv4", ExtensionCategory::FloatingPoint));
+                    extensions.push(Extension::new("NEON", ExtensionCategory::Simd));
+                }
+                arm_subtype::V7M => {
+                    // Cortex-M3 - Thumb-2, no NEON/VFP
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("Thumb-2", ExtensionCategory::Compressed));
+                }
+                arm_subtype::V7EM => {
+                    // Cortex-M4/M7 - Thumb-2 + optional FPv4-SP
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("Thumb-2", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("FPv4-SP", ExtensionCategory::FloatingPoint));
+                    extensions.push(Extension::new("DSP", ExtensionCategory::Simd));
+                }
+                arm_subtype::V8 => {
+                    // ARMv8 in AArch32 mode
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("Thumb-2", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("VFPv4", ExtensionCategory::FloatingPoint));
+                    extensions.push(Extension::new("NEON", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("CRC32", ExtensionCategory::Other));
+                    extensions.push(Extension::new("Crypto", ExtensionCategory::Crypto));
+                }
+                arm_subtype::XSCALE => {
+                    extensions.push(Extension::new("Thumb", ExtensionCategory::Compressed));
+                    extensions.push(Extension::new("XScale", ExtensionCategory::Other));
+                }
+                _ => {}
+            }
+
+            extensions
+        }
+
+        cpu_type::X86 => {
+            let mut extensions = Vec::new();
+
+            match subtype {
+                x86_subtype::PENT => {
+                    extensions.push(Extension::new("MMX", ExtensionCategory::Simd));
+                }
+                x86_subtype::PENTPRO | x86_subtype::PENTII_M3 | x86_subtype::PENTII_M5 => {
+                    extensions.push(Extension::new("MMX", ExtensionCategory::Simd));
+                }
+                x86_subtype::PENTIUM_3 | x86_subtype::PENTIUM_3_M | x86_subtype::PENTIUM_3_XEON => {
+                    extensions.push(Extension::new("MMX", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE", ExtensionCategory::Simd));
+                }
+                x86_subtype::PENTIUM_4 | x86_subtype::PENTIUM_4_M => {
+                    extensions.push(Extension::new("MMX", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE2", ExtensionCategory::Simd));
+                }
+                x86_subtype::PENTIUM_M => {
+                    extensions.push(Extension::new("MMX", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE2", ExtensionCategory::Simd));
+                }
+                x86_subtype::XEON | x86_subtype::XEON_MP => {
+                    extensions.push(Extension::new("MMX", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE2", ExtensionCategory::Simd));
+                }
+                _ => {}
+            }
+
+            extensions
+        }
+
+        cpu_type::X86_64 => {
+            let mut extensions = Vec::new();
+
+            // x86-64 baseline includes SSE, SSE2, SSE3
+            extensions.push(Extension::new("SSE", ExtensionCategory::Simd));
+            extensions.push(Extension::new("SSE2", ExtensionCategory::Simd));
+            extensions.push(Extension::new("SSE3", ExtensionCategory::Simd));
+
+            match subtype {
+                x86_64_subtype::H => {
+                    // Haswell and later
+                    extensions.push(Extension::new("SSSE3", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE4.1", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("SSE4.2", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("AVX", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("AVX2", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("FMA", ExtensionCategory::Simd));
+                    extensions.push(Extension::new("BMI1", ExtensionCategory::BitManip));
+                    extensions.push(Extension::new("BMI2", ExtensionCategory::BitManip));
+                    extensions.push(Extension::new("POPCNT", ExtensionCategory::BitManip));
+                    extensions.push(Extension::new("LZCNT", ExtensionCategory::BitManip));
+                    extensions.push(Extension::new("AES-NI", ExtensionCategory::Crypto));
+                }
+                _ => {
+                    // Generic x86-64 on macOS typically has at least SSSE3
+                    extensions.push(Extension::new("SSSE3", ExtensionCategory::Simd));
+                }
+            }
+
+            extensions
+        }
+
+        cpu_type::POWERPC | cpu_type::POWERPC64 => {
+            // Most PowerPC Macs had AltiVec (G4, G5)
+            // Can't reliably detect from subtype, but it's a reasonable assumption
+            let mut extensions = Vec::new();
+            extensions.push(Extension::new("AltiVec", ExtensionCategory::Simd));
+            extensions
+        }
+
+        // No meaningful extensions can be inferred from subtypes for these
+        cpu_type::VAX
+        | cpu_type::MC680X0
+        | cpu_type::SPARC
+        | cpu_type::I860
+        | cpu_type::HPPA
+        | cpu_type::MC88000
+        | cpu_type::MC98000 => Vec::new(),
+
+        _ => Vec::new(),
+    }
 }
 
 /// Mach-O x86 subtypes.
@@ -223,6 +400,9 @@ pub fn parse(data: &[u8], bits: u8, big_endian: bool) -> Result<ClassificationRe
         None => Variant::default(),
     };
 
+    // Extract extensions from CPU type/subtype
+    let extensions = extensions_from_cpu(cpu_type, cpu_subtype);
+
     // Build metadata
     let metadata = ClassificationMetadata {
         raw_machine: Some(cpu_type),
@@ -236,6 +416,7 @@ pub fn parse(data: &[u8], bits: u8, big_endian: bool) -> Result<ClassificationRe
     let mut result =
         ClassificationResult::from_format(isa, actual_bits, endianness, FileFormat::MachO);
     result.variant = variant;
+    result.extensions = extensions;
     result.metadata = metadata;
 
     Ok(result)
@@ -315,6 +496,9 @@ pub fn parse_fat(data: &[u8], big_endian: bool) -> Result<ClassificationResult> 
         None => Variant::default(),
     };
 
+    // Extract extensions from CPU type/subtype
+    let extensions = extensions_from_cpu(cpu_type, cpu_subtype);
+
     // Build metadata
     let metadata = ClassificationMetadata {
         raw_machine: Some(cpu_type),
@@ -328,6 +512,7 @@ pub fn parse_fat(data: &[u8], big_endian: bool) -> Result<ClassificationResult> 
     let mut result =
         ClassificationResult::from_format(isa, slice_bits, endianness, FileFormat::MachOFat);
     result.variant = variant;
+    result.extensions = extensions;
     result.metadata = metadata;
 
     Ok(result)
@@ -403,9 +588,13 @@ pub fn parse_fat_all(data: &[u8]) -> Result<Vec<FatArchEntry>> {
             None => Variant::default(),
         };
 
+    // Extract extensions from CPU type/subtype
+    let extensions = extensions_from_cpu(cpu_type, cpu_subtype);
+
         let mut classification =
             ClassificationResult::from_format(isa, bits, endianness, FileFormat::MachO);
         classification.variant = variant;
+        classification.extensions = extensions;
 
         entries.push(FatArchEntry {
             cpu_type,
@@ -492,6 +681,29 @@ mod tests {
         let result = parse(&data, 64, false).unwrap();
         assert_eq!(result.isa, Isa::AArch64);
         assert!(result.variant.name.contains("PAC"));
+        // ARM64E should have PAC extension detected from subtype
+        assert!(
+            result.extensions.iter().any(|e| e.name == "PAC"),
+            "ARM64E should have PAC extension"
+        );
+    }
+
+    #[test]
+    fn test_arm64_baseline_extensions() {
+        // Regular ARM64 should have baseline extensions but not PAC/BTI
+        let data = make_macho_header(cpu_type::ARM64, arm64_subtype::V8, 64);
+        let result = parse(&data, 64, false).unwrap();
+        assert_eq!(result.isa, Isa::AArch64);
+
+        // Should have baseline Apple ARM64 extensions
+        assert!(result.extensions.iter().any(|e| e.name == "NEON"));
+        assert!(result.extensions.iter().any(|e| e.name == "AES"));
+        assert!(result.extensions.iter().any(|e| e.name == "SHA256"));
+        assert!(result.extensions.iter().any(|e| e.name == "CRC32"));
+
+        // Should NOT have PAC/BTI (those are ARM64E only)
+        assert!(!result.extensions.iter().any(|e| e.name == "PAC"));
+        assert!(!result.extensions.iter().any(|e| e.name == "BTI"));
     }
 
     #[test]
@@ -500,6 +712,72 @@ mod tests {
         let result = parse(&data, 32, false).unwrap();
         assert_eq!(result.isa, Isa::Arm);
         assert!(result.variant.name.contains("ARMv7"));
+
+        // ARMv7 should have Thumb, NEON, VFP
+        assert!(result.extensions.iter().any(|e| e.name == "Thumb"));
+        assert!(result.extensions.iter().any(|e| e.name == "NEON"));
+        assert!(result.extensions.iter().any(|e| e.name == "VFPv3"));
+    }
+
+    #[test]
+    fn test_x86_64_extensions() {
+        // Generic x86-64
+        let data = make_macho_header(cpu_type::X86_64, x86_64_subtype::ALL, 64);
+        let result = parse(&data, 64, false).unwrap();
+        assert_eq!(result.isa, Isa::X86_64);
+
+        // x86-64 baseline
+        assert!(result.extensions.iter().any(|e| e.name == "SSE"));
+        assert!(result.extensions.iter().any(|e| e.name == "SSE2"));
+        assert!(result.extensions.iter().any(|e| e.name == "SSE3"));
+    }
+
+    #[test]
+    fn test_x86_64_haswell_extensions() {
+        let data = make_macho_header(cpu_type::X86_64, x86_64_subtype::H, 64);
+        let result = parse(&data, 64, false).unwrap();
+        assert_eq!(result.isa, Isa::X86_64);
+
+        // Haswell has AVX2, BMI, FMA, etc.
+        assert!(result.extensions.iter().any(|e| e.name == "AVX"));
+        assert!(result.extensions.iter().any(|e| e.name == "AVX2"));
+        assert!(result.extensions.iter().any(|e| e.name == "FMA"));
+        assert!(result.extensions.iter().any(|e| e.name == "BMI1"));
+        assert!(result.extensions.iter().any(|e| e.name == "BMI2"));
+        assert!(result.extensions.iter().any(|e| e.name == "AES-NI"));
+    }
+
+    #[test]
+    fn test_powerpc_extensions() {
+        let data = make_macho_header(cpu_type::POWERPC, 0, 32);
+        let result = parse(&data, 32, false).unwrap();
+        assert_eq!(result.isa, Isa::Ppc);
+
+        // PowerPC Macs had AltiVec
+        assert!(result.extensions.iter().any(|e| e.name == "AltiVec"));
+    }
+
+    #[test]
+    fn test_arm_v7s_extensions() {
+        // V7S (Apple A6) has VFPv4
+        let data = make_macho_header(cpu_type::ARM, arm_subtype::V7S, 32);
+        let result = parse(&data, 32, false).unwrap();
+        assert_eq!(result.isa, Isa::Arm);
+
+        assert!(result.extensions.iter().any(|e| e.name == "VFPv4"));
+        assert!(result.extensions.iter().any(|e| e.name == "NEON"));
+    }
+
+    #[test]
+    fn test_arm_v6m_extensions() {
+        // Cortex-M0 - Thumb only, no VFP/NEON
+        let data = make_macho_header(cpu_type::ARM, arm_subtype::V6M, 32);
+        let result = parse(&data, 32, false).unwrap();
+        assert_eq!(result.isa, Isa::Arm);
+
+        assert!(result.extensions.iter().any(|e| e.name == "Thumb"));
+        assert!(!result.extensions.iter().any(|e| e.name == "NEON"));
+        assert!(!result.extensions.iter().any(|e| e.name.contains("VFP")));
     }
 
     #[test]
