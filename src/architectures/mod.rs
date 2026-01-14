@@ -9,7 +9,12 @@ pub mod alpha;
 pub mod arc;
 pub mod arm;
 pub mod avr;
+pub mod blackfin;
+pub mod cellspu;
+pub mod dalvik;
 pub mod hexagon;
+pub mod i860;
+pub mod ia64;
 pub mod jvm;
 pub mod loongarch;
 pub mod m68k;
@@ -24,6 +29,7 @@ pub mod riscv;
 pub mod s390x;
 pub mod sparc;
 pub mod superh;
+pub mod vax;
 pub mod wasm;
 pub mod x86;
 pub mod xtensa;
@@ -54,6 +60,11 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::McstElbrus => Endianness::Big,
         Isa::Jvm => Endianness::Big,     // JVM is big-endian
         Isa::Dalvik => Endianness::Little, // DEX is little-endian
+        Isa::Blackfin => Endianness::Little, // Blackfin is little-endian
+        Isa::Ia64 => Endianness::Little, // Itanium is little-endian
+        Isa::Vax => Endianness::Little,  // VAX is little-endian
+        Isa::I860 => Endianness::Little, // i860 is little-endian
+        Isa::CellSpu => Endianness::Big, // Cell SPU is big-endian
 
         // Bi-endian (default to little)
         Isa::Arm => Endianness::Little,
@@ -85,6 +96,8 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Jvm => 1,     // JVM bytecode is byte-aligned
         Isa::Wasm => 1,    // WASM bytecode is byte-aligned
         Isa::Dalvik => 2,  // DEX bytecode is 2-byte aligned
+        Isa::Vax => 1,     // VAX is byte-aligned (variable 1-37 bytes)
+        Isa::Blackfin => 2, // Blackfin is 16-bit aligned (variable 16/32/64-bit)
 
         // Fixed 32-bit, 4-byte aligned
         Isa::Arm => 4,
@@ -94,6 +107,9 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Sparc | Isa::Sparc64 => 4,
         Isa::Alpha => 4,
         Isa::Parisc => 4,
+        Isa::I860 => 4,    // i860 is 32-bit fixed
+        Isa::CellSpu => 4, // Cell SPU is 32-bit fixed
+        Isa::Ia64 => 16,   // IA-64 bundles are 128-bit (16-byte) aligned
         Isa::LoongArch32 | Isa::LoongArch64 => 4,
         Isa::Hexagon => 4,
 
@@ -130,6 +146,8 @@ pub fn supports_compressed(isa: Isa) -> bool {
             | Isa::Jvm     // JVM has variable-length bytecode
             | Isa::Wasm    // WASM has variable-length bytecode (LEB128)
             | Isa::Dalvik  // DEX has variable-length bytecode
+            | Isa::Vax     // VAX has variable-length CISC (1-37 bytes)
+            | Isa::Blackfin // Blackfin has variable-length (16/32/64-bit)
     )
 }
 

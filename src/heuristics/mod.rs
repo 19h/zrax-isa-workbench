@@ -43,6 +43,12 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::OpenRisc, "OpenRISC"),
     (Isa::Jvm, "JVM Bytecode"),
     (Isa::Wasm, "WebAssembly"),
+    (Isa::Dalvik, "Dalvik Bytecode"),
+    (Isa::Blackfin, "Blackfin DSP"),
+    (Isa::Ia64, "IA-64/Itanium"),
+    (Isa::Vax, "DEC VAX"),
+    (Isa::I860, "Intel i860"),
+    (Isa::CellSpu, "Cell SPU"),
 ];
 
 /// Result of heuristic scoring for a single architecture.
@@ -393,6 +399,66 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 32, // WASM 1.0 is 32-bit memory addressing
     });
 
+    // Dalvik Bytecode
+    let dalvik_score = scorer::score_dalvik(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Dalvik,
+        raw_score: dalvik_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
+    // Blackfin DSP
+    let blackfin_score = scorer::score_blackfin(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Blackfin,
+        raw_score: blackfin_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
+    // IA-64/Itanium
+    let ia64_score = scorer::score_ia64(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Ia64,
+        raw_score: ia64_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 64,
+    });
+
+    // DEC VAX
+    let vax_score = scorer::score_vax(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Vax,
+        raw_score: vax_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
+    // Intel i860
+    let i860_score = scorer::score_i860(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::I860,
+        raw_score: i860_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
+    // Cell SPU
+    let cellspu_score = scorer::score_cellspu(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::CellSpu,
+        raw_score: cellspu_score,
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 32,
+    });
+
     // Calculate normalized confidence
     let total_positive: i64 = scores.iter().map(|s| s.raw_score.max(0)).sum();
     if total_positive > 0 {
@@ -455,8 +521,12 @@ mod tests {
             0xC0, 0x03, 0x5F, 0xD6, // ret
         ];
 
-        // Use thorough options with 20% threshold for heuristic detection
-        let options = ClassifierOptions::thorough();
+        // Use thorough options with 15% threshold for heuristic detection
+        // (lowered from 20% due to more architectures being scored)
+        let options = ClassifierOptions {
+            min_confidence: 0.15,
+            ..ClassifierOptions::thorough()
+        };
         let result = analyze(&data, &options).unwrap();
         assert_eq!(result.isa, Isa::AArch64);
     }

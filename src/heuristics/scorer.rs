@@ -9,8 +9,9 @@
 //! The actual scoring logic is implemented in `crate::architectures::*::score()`.
 
 use crate::architectures::{
-    aarch64, alpha, arc, arm, avr, hexagon, jvm, loongarch, m68k, microblaze, mips, msp430, nios2,
-    openrisc, parisc, ppc, riscv, s390x, sparc, superh, wasm, x86, xtensa,
+    aarch64, alpha, arc, arm, avr, blackfin, cellspu, dalvik, hexagon, i860, ia64, jvm, loongarch,
+    m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv, s390x, sparc, superh, vax,
+    wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -210,6 +211,58 @@ pub fn score_wasm(data: &[u8]) -> i64 {
     wasm::score(data)
 }
 
+/// Score likelihood of Dalvik bytecode.
+///
+/// Delegates to `crate::architectures::dalvik::score()`.
+#[inline]
+pub fn score_dalvik(data: &[u8]) -> i64 {
+    dalvik::score(data)
+}
+
+// =============================================================================
+// Additional legacy/specialized architecture scoring
+// =============================================================================
+
+/// Score likelihood of Blackfin DSP code.
+///
+/// Delegates to `crate::architectures::blackfin::score()`.
+#[inline]
+pub fn score_blackfin(data: &[u8]) -> i64 {
+    blackfin::score(data)
+}
+
+/// Score likelihood of IA-64/Itanium code.
+///
+/// Delegates to `crate::architectures::ia64::score()`.
+#[inline]
+pub fn score_ia64(data: &[u8]) -> i64 {
+    ia64::score(data)
+}
+
+/// Score likelihood of VAX code.
+///
+/// Delegates to `crate::architectures::vax::score()`.
+#[inline]
+pub fn score_vax(data: &[u8]) -> i64 {
+    vax::score(data)
+}
+
+/// Score likelihood of Intel i860 code.
+///
+/// Delegates to `crate::architectures::i860::score()`.
+#[inline]
+pub fn score_i860(data: &[u8]) -> i64 {
+    i860::score(data)
+}
+
+/// Score likelihood of Cell SPU code.
+///
+/// Delegates to `crate::architectures::cellspu::score()`.
+#[inline]
+pub fn score_cellspu(data: &[u8]) -> i64 {
+    cellspu::score(data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,5 +439,57 @@ mod tests {
             0x0B,       // end
         ];
         assert!(score_wasm(&code) > 0);
+    }
+
+    #[test]
+    fn test_dalvik_scoring() {
+        // Simple Dalvik: const/4, return-void
+        let code = [
+            0x12, 0x00, // const/4 v0, #0
+            0x0E, 0x00, // return-void
+        ];
+        assert!(score_dalvik(&code) > 0);
+    }
+
+    #[test]
+    fn test_blackfin_scoring() {
+        // Blackfin: NOP, NOP, RTS
+        let code = [
+            0x00, 0x00, // NOP
+            0x00, 0x00, // NOP
+            0x10, 0x00, // RTS
+        ];
+        assert!(score_blackfin(&code) > 0);
+    }
+
+    #[test]
+    fn test_ia64_scoring() {
+        // IA-64: MMI bundle with template 0x08
+        let mut bundle = [0u8; 16];
+        bundle[0] = 0x08; // MMI template
+        assert!(score_ia64(&bundle) > 0);
+    }
+
+    #[test]
+    fn test_vax_scoring() {
+        // VAX: NOP, NOP, RSB
+        let code = [0x01, 0x01, 0x05]; // NOP, NOP, RSB
+        assert!(score_vax(&code) > 0);
+    }
+
+    #[test]
+    fn test_i860_scoring() {
+        // i860: NOP pattern
+        let code = [0x00, 0x00, 0x00, 0xA0]; // NOP (0xA0000000 little-endian)
+        assert!(score_i860(&code) > 0);
+    }
+
+    #[test]
+    fn test_cellspu_scoring() {
+        // Cell SPU: NOP (big-endian)
+        let mut code = Vec::new();
+        let nop: u32 = 0x201 << 21; // NOP opcode
+        code.extend_from_slice(&nop.to_be_bytes());
+        assert!(score_cellspu(&code) > 0);
     }
 }
