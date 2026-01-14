@@ -173,19 +173,9 @@ pub fn classify_bytes_with_options(
         formats::DetectedFormat::MachOFat { big_endian } => {
             formats::macho::parse_fat(data, big_endian)?
         }
-        formats::DetectedFormat::Xcoff { bits } => {
-            let isa = if bits == 64 { Isa::Ppc64 } else { Isa::Ppc };
-            ClassificationResult::from_format(isa, bits, Endianness::Big, FileFormat::Xcoff)
-        }
-        formats::DetectedFormat::Ecoff { variant } => {
-            let (isa, endian) = match variant {
-                formats::EcoffVariant::MipsLe => (Isa::Mips, Endianness::Little),
-                formats::EcoffVariant::MipsBe => (Isa::Mips, Endianness::Big),
-                formats::EcoffVariant::Alpha => (Isa::Alpha, Endianness::Little),
-            };
-            let bits = if matches!(isa, Isa::Alpha) { 64 } else { 32 };
-            ClassificationResult::from_format(isa, bits, endian, FileFormat::Ecoff)
-        }
+        formats::DetectedFormat::Coff { machine: _ } => formats::coff::parse(data)?,
+        formats::DetectedFormat::Xcoff { bits } => formats::xcoff::parse(data, bits)?,
+        formats::DetectedFormat::Ecoff { variant } => formats::ecoff::parse(data, variant)?,
         formats::DetectedFormat::Raw => {
             // Fall back to heuristic analysis
             heuristics::analyze(data, options)?

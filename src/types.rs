@@ -318,6 +318,8 @@ pub enum FileFormat {
     MachO,
     /// Universal/Fat binary (macOS)
     MachOFat,
+    /// Standalone COFF (Windows object files)
+    Coff,
     /// XCOFF (AIX)
     Xcoff,
     /// ECOFF (older MIPS/Alpha)
@@ -333,6 +335,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Pe => write!(f, "PE/COFF"),
             FileFormat::MachO => write!(f, "Mach-O"),
             FileFormat::MachOFat => write!(f, "Mach-O Fat"),
+            FileFormat::Coff => write!(f, "COFF"),
             FileFormat::Xcoff => write!(f, "XCOFF"),
             FileFormat::Ecoff => write!(f, "ECOFF"),
             FileFormat::Raw => write!(f, "Raw"),
@@ -613,6 +616,8 @@ pub struct ClassificationMetadata {
     pub entry_point: Option<u64>,
     /// Number of sections/segments
     pub section_count: Option<usize>,
+    /// Number of symbols
+    pub symbol_count: Option<usize>,
     /// Code section size in bytes
     pub code_size: Option<u64>,
     /// ELF e_flags or equivalent

@@ -4,15 +4,21 @@
 //! - ELF (Executable and Linkable Format)
 //! - PE/COFF (Portable Executable)
 //! - Mach-O (Mach Object)
+//! - COFF (Standalone Common Object File Format)
+//! - XCOFF (AIX Extended COFF)
+//! - ECOFF (Extended COFF for MIPS/Alpha)
 //! - Raw binary analysis
 
+pub mod coff;
+pub mod ecoff;
 pub mod elf;
 pub mod macho;
 pub mod pe;
 pub mod raw;
+pub mod xcoff;
 
 use crate::error::{ClassifierError, Result};
-use crate::types::{ClassificationResult, FileFormat};
+use crate::types::ClassificationResult;
 
 /// Magic byte signatures for format detection.
 pub mod magic {
@@ -49,14 +55,14 @@ pub mod magic {
     /// XCOFF 64-bit (AIX)
     pub const XCOFF_64: [u8; 2] = [0x01, 0xF7];
 
-    /// ECOFF MIPS little-endian
-    pub const ECOFF_MIPS_LE: [u8; 2] = [0x01, 0x60];
+    /// ECOFF MIPS little-endian (magic 0x0160 stored as LE)
+    pub const ECOFF_MIPS_LE: [u8; 2] = [0x60, 0x01];
 
-    /// ECOFF MIPS big-endian
-    pub const ECOFF_MIPS_BE: [u8; 2] = [0x60, 0x01];
+    /// ECOFF MIPS big-endian (magic 0x0160 stored as BE)
+    pub const ECOFF_MIPS_BE: [u8; 2] = [0x01, 0x60];
 
-    /// ECOFF Alpha
-    pub const ECOFF_ALPHA: [u8; 2] = [0x01, 0x83];
+    /// ECOFF Alpha (magic 0x0183 stored as LE)
+    pub const ECOFF_ALPHA: [u8; 2] = [0x83, 0x01];
 }
 
 /// Detected file format with parsing context.
@@ -70,20 +76,14 @@ pub enum DetectedFormat {
     MachO { bits: u8, big_endian: bool },
     /// Mach-O fat/universal binary
     MachOFat { big_endian: bool },
+    /// Standalone COFF (Windows object files)
+    Coff { machine: u16 },
     /// XCOFF (AIX)
     Xcoff { bits: u8 },
     /// ECOFF
-    Ecoff { variant: EcoffVariant },
+    Ecoff { variant: ecoff::EcoffVariant },
     /// Unknown/raw format
     Raw,
-}
-
-/// ECOFF variants
-#[derive(Debug, Clone, Copy)]
-pub enum EcoffVariant {
-    MipsLe,
-    MipsBe,
-    Alpha,
 }
 
 /// Detect the file format from magic bytes.
@@ -157,23 +157,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         }
     }
 
-    // ECOFF
-    if data.len() >= 2 {
-        if data[..2] == magic::ECOFF_MIPS_LE {
-            return DetectedFormat::Ecoff {
-                variant: EcoffVariant::MipsLe,
-            };
-        }
-        if data[..2] == magic::ECOFF_MIPS_BE {
-            return DetectedFormat::Ecoff {
-                variant: EcoffVariant::MipsBe,
-            };
-        }
-        if data[..2] == magic::ECOFF_ALPHA {
-            return DetectedFormat::Ecoff {
-                variant: EcoffVariant::Alpha,
-            };
-        }
+    // ECOFF (check before standalone COFF since ECOFF has specific magic)
+    if let Some(variant) = ecoff::detect(data) {
+        return DetectedFormat::Ecoff { variant };
+    }
+
+    // Standalone COFF (Windows object files)
+    // Must be checked after other formats since COFF detection is heuristic-based
+    if let Some(machine) = coff::detect(data) {
+        return DetectedFormat::Coff { machine };
     }
 
     DetectedFormat::Raw
@@ -188,35 +180,9 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::Pe { pe_offset } => pe::parse(data, pe_offset),
         DetectedFormat::MachO { bits, big_endian } => macho::parse(data, bits, big_endian),
         DetectedFormat::MachOFat { big_endian } => macho::parse_fat(data, big_endian),
-        DetectedFormat::Xcoff { bits } => {
-            // Basic XCOFF support - report as PowerPC
-            use crate::types::{Endianness, Isa};
-            let isa = if bits == 64 { Isa::Ppc64 } else { Isa::Ppc };
-            Ok(ClassificationResult::from_format(
-                isa,
-                bits,
-                Endianness::Big,
-                FileFormat::Xcoff,
-            ))
-        }
-        DetectedFormat::Ecoff { variant } => {
-            use crate::types::{Endianness, Isa};
-            let (isa, endian) = match variant {
-                EcoffVariant::MipsLe => (Isa::Mips, Endianness::Little),
-                EcoffVariant::MipsBe => (Isa::Mips, Endianness::Big),
-                EcoffVariant::Alpha => (Isa::Alpha, Endianness::Little),
-            };
-            Ok(ClassificationResult::from_format(
-                isa,
-                if matches!(variant, EcoffVariant::Alpha) {
-                    64
-                } else {
-                    32
-                },
-                endian,
-                FileFormat::Ecoff,
-            ))
-        }
+        DetectedFormat::Coff { machine: _ } => coff::parse(data),
+        DetectedFormat::Xcoff { bits } => xcoff::parse(data, bits),
+        DetectedFormat::Ecoff { variant } => ecoff::parse(data, variant),
         DetectedFormat::Raw => raw::analyze(data),
     }
 }
