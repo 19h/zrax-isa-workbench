@@ -878,6 +878,456 @@ impl ClassifierOptions {
     }
 }
 
+// =============================================================================
+// Detection Payload Types - Structured output for formatters
+// =============================================================================
+
+/// Complete detection payload containing all analysis results.
+///
+/// This is the primary structured output from detection/parsing operations.
+/// Main iterates over this payload and passes components to formatters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DetectionPayload {
+    /// Detected file format with context
+    pub format: FormatDetection,
+    /// Primary ISA classification result
+    pub primary: IsaClassification,
+    /// Alternative ISA candidates (populated for heuristic analysis)
+    pub candidates: Vec<IsaCandidate>,
+    /// Detected ISA extensions
+    pub extensions: Vec<ExtensionDetection>,
+    /// Extracted metadata items
+    pub metadata: Vec<MetadataEntry>,
+    /// Analysis notes and warnings
+    pub notes: Vec<Note>,
+}
+
+impl DetectionPayload {
+    /// Create a new empty payload with the given format and primary classification.
+    pub fn new(format: FormatDetection, primary: IsaClassification) -> Self {
+        Self {
+            format,
+            primary,
+            candidates: Vec::new(),
+            extensions: Vec::new(),
+            metadata: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+
+    /// Add an ISA candidate.
+    pub fn with_candidate(mut self, candidate: IsaCandidate) -> Self {
+        self.candidates.push(candidate);
+        self
+    }
+
+    /// Add candidates from a vector.
+    pub fn with_candidates(mut self, candidates: Vec<IsaCandidate>) -> Self {
+        self.candidates = candidates;
+        self
+    }
+
+    /// Add an extension detection.
+    pub fn with_extension(mut self, ext: ExtensionDetection) -> Self {
+        self.extensions.push(ext);
+        self
+    }
+
+    /// Add extensions from a vector.
+    pub fn with_extensions(mut self, extensions: Vec<ExtensionDetection>) -> Self {
+        self.extensions = extensions;
+        self
+    }
+
+    /// Add a metadata entry.
+    pub fn with_metadata(mut self, entry: MetadataEntry) -> Self {
+        self.metadata.push(entry);
+        self
+    }
+
+    /// Add a note.
+    pub fn with_note(mut self, note: Note) -> Self {
+        self.notes.push(note);
+        self
+    }
+
+    /// Convert to legacy ClassificationResult for backwards compatibility.
+    pub fn to_classification_result(&self) -> ClassificationResult {
+        ClassificationResult {
+            isa: self.primary.isa,
+            bitwidth: self.primary.bitwidth,
+            endianness: self.primary.endianness,
+            format: self.format.format,
+            variant: self.primary.variant.clone().unwrap_or_default(),
+            extensions: self.extensions.iter().map(|e| e.to_extension()).collect(),
+            confidence: self.primary.confidence,
+            source: self.primary.source,
+            metadata: self.to_classification_metadata(),
+        }
+    }
+
+    /// Convert metadata entries to legacy ClassificationMetadata.
+    fn to_classification_metadata(&self) -> ClassificationMetadata {
+        let mut meta = ClassificationMetadata::default();
+        for entry in &self.metadata {
+            match &entry.key {
+                MetadataKey::EntryPoint => {
+                    if let MetadataValue::Address(addr) = entry.value {
+                        meta.entry_point = Some(addr);
+                    }
+                }
+                MetadataKey::SectionCount => {
+                    if let MetadataValue::Integer(n) = entry.value {
+                        meta.section_count = Some(n as usize);
+                    }
+                }
+                MetadataKey::SymbolCount => {
+                    if let MetadataValue::Integer(n) = entry.value {
+                        meta.symbol_count = Some(n as usize);
+                    }
+                }
+                MetadataKey::CodeSize => {
+                    if let MetadataValue::Integer(n) = entry.value {
+                        meta.code_size = Some(n);
+                    }
+                }
+                MetadataKey::Flags => {
+                    if let MetadataValue::Hex(h) = entry.value {
+                        meta.flags = Some(h);
+                    }
+                }
+                MetadataKey::RawMachine => {
+                    if let MetadataValue::Hex(h) = entry.value {
+                        meta.raw_machine = Some(h);
+                    }
+                }
+                MetadataKey::Custom(_) => {}
+            }
+        }
+        meta.notes = self.notes.iter().map(|n| n.message.clone()).collect();
+        meta
+    }
+}
+
+/// Format detection result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormatDetection {
+    /// Detected file format
+    pub format: FileFormat,
+    /// Detection confidence (1.0 for magic-based detection)
+    pub confidence: f64,
+    /// Offset where magic bytes were found
+    pub magic_offset: Option<usize>,
+    /// Format variant description (e.g., "NE" for MZ files)
+    pub variant_name: Option<String>,
+}
+
+impl FormatDetection {
+    /// Create a new format detection with high confidence.
+    pub fn new(format: FileFormat) -> Self {
+        Self {
+            format,
+            confidence: 1.0,
+            magic_offset: Some(0),
+            variant_name: None,
+        }
+    }
+
+    /// Create with variant name.
+    pub fn with_variant(format: FileFormat, variant: impl Into<String>) -> Self {
+        Self {
+            format,
+            confidence: 1.0,
+            magic_offset: Some(0),
+            variant_name: Some(variant.into()),
+        }
+    }
+
+    /// Create for raw/unknown format.
+    pub fn raw() -> Self {
+        Self {
+            format: FileFormat::Raw,
+            confidence: 0.0,
+            magic_offset: None,
+            variant_name: None,
+        }
+    }
+}
+
+/// Primary ISA classification result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsaClassification {
+    /// Detected ISA
+    pub isa: Isa,
+    /// Register width in bits
+    pub bitwidth: u8,
+    /// Byte ordering
+    pub endianness: Endianness,
+    /// Classification confidence (0.0 - 1.0)
+    pub confidence: f64,
+    /// How the classification was determined
+    pub source: ClassificationSource,
+    /// Architecture variant/profile
+    pub variant: Option<Variant>,
+}
+
+impl IsaClassification {
+    /// Create from format header parsing (high confidence).
+    pub fn from_format(isa: Isa, bitwidth: u8, endianness: Endianness) -> Self {
+        Self {
+            isa,
+            bitwidth,
+            endianness,
+            confidence: 1.0,
+            source: ClassificationSource::FileFormat,
+            variant: None,
+        }
+    }
+
+    /// Create from heuristic analysis.
+    pub fn from_heuristics(isa: Isa, bitwidth: u8, endianness: Endianness, confidence: f64) -> Self {
+        Self {
+            isa,
+            bitwidth,
+            endianness,
+            confidence,
+            source: ClassificationSource::Heuristic,
+            variant: None,
+        }
+    }
+
+    /// Set variant.
+    pub fn with_variant(mut self, variant: Variant) -> Self {
+        self.variant = Some(variant);
+        self
+    }
+}
+
+/// ISA candidate from heuristic analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsaCandidate {
+    /// The ISA
+    pub isa: Isa,
+    /// Register width
+    pub bitwidth: u8,
+    /// Byte ordering
+    pub endianness: Endianness,
+    /// Raw score from pattern matching
+    pub raw_score: i64,
+    /// Normalized confidence (0.0 - 1.0)
+    pub confidence: f64,
+}
+
+impl IsaCandidate {
+    /// Create a new candidate.
+    pub fn new(isa: Isa, bitwidth: u8, endianness: Endianness, raw_score: i64, confidence: f64) -> Self {
+        Self {
+            isa,
+            bitwidth,
+            endianness,
+            raw_score,
+            confidence,
+        }
+    }
+}
+
+/// Extension detection result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionDetection {
+    /// Extension name (e.g., "AVX2", "SVE")
+    pub name: String,
+    /// Extension category
+    pub category: ExtensionCategory,
+    /// Detection confidence
+    pub confidence: f64,
+    /// How it was detected
+    pub source: ExtensionSource,
+}
+
+impl ExtensionDetection {
+    /// Create from code pattern detection.
+    pub fn from_code(name: impl Into<String>, category: ExtensionCategory, confidence: f64) -> Self {
+        Self {
+            name: name.into(),
+            category,
+            confidence,
+            source: ExtensionSource::CodePattern,
+        }
+    }
+
+    /// Create from format attributes (e.g., ELF notes).
+    pub fn from_format(name: impl Into<String>, category: ExtensionCategory) -> Self {
+        Self {
+            name: name.into(),
+            category,
+            confidence: 1.0,
+            source: ExtensionSource::FormatAttribute,
+        }
+    }
+
+    /// Convert to legacy Extension type.
+    pub fn to_extension(&self) -> Extension {
+        Extension::with_confidence(&self.name, self.category, self.confidence)
+    }
+}
+
+/// Source of extension detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionSource {
+    /// Detected from instruction patterns in code
+    CodePattern,
+    /// Extracted from format attributes (ELF notes, PE flags, etc.)
+    FormatAttribute,
+    /// Inferred from ISA variant
+    VariantImplied,
+}
+
+/// Metadata entry with typed key and value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataEntry {
+    /// Metadata key
+    pub key: MetadataKey,
+    /// Metadata value
+    pub value: MetadataValue,
+    /// Human-readable label
+    pub label: String,
+}
+
+impl MetadataEntry {
+    /// Create a new metadata entry.
+    pub fn new(key: MetadataKey, value: MetadataValue, label: impl Into<String>) -> Self {
+        Self {
+            key,
+            value,
+            label: label.into(),
+        }
+    }
+
+    /// Create entry point metadata.
+    pub fn entry_point(addr: u64) -> Self {
+        Self::new(MetadataKey::EntryPoint, MetadataValue::Address(addr), "Entry Point")
+    }
+
+    /// Create section count metadata.
+    pub fn section_count(count: usize) -> Self {
+        Self::new(MetadataKey::SectionCount, MetadataValue::Integer(count as u64), "Sections")
+    }
+
+    /// Create flags metadata.
+    pub fn flags(flags: u32) -> Self {
+        Self::new(MetadataKey::Flags, MetadataValue::Hex(flags), "Flags")
+    }
+
+    /// Create raw machine type metadata.
+    pub fn raw_machine(machine: u32) -> Self {
+        Self::new(MetadataKey::RawMachine, MetadataValue::Hex(machine), "Machine Type")
+    }
+}
+
+/// Metadata key types.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetadataKey {
+    /// Entry point address
+    EntryPoint,
+    /// Number of sections/segments
+    SectionCount,
+    /// Number of symbols
+    SymbolCount,
+    /// Code section size
+    CodeSize,
+    /// Architecture flags (e.g., ELF e_flags)
+    Flags,
+    /// Raw machine type value
+    RawMachine,
+    /// Custom key
+    Custom(String),
+}
+
+/// Metadata value types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MetadataValue {
+    /// Memory address
+    Address(u64),
+    /// Integer value
+    Integer(u64),
+    /// String value
+    String(String),
+    /// Hex value (for flags, machine types)
+    Hex(u32),
+}
+
+impl fmt::Display for MetadataValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MetadataValue::Address(addr) => write!(f, "0x{:X}", addr),
+            MetadataValue::Integer(n) => write!(f, "{}", n),
+            MetadataValue::String(s) => write!(f, "{}", s),
+            MetadataValue::Hex(h) => write!(f, "0x{:08X}", h),
+        }
+    }
+}
+
+/// Analysis note or warning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    /// Severity level
+    pub level: NoteLevel,
+    /// Note message
+    pub message: String,
+    /// Optional context (e.g., "ELF parsing")
+    pub context: Option<String>,
+}
+
+impl Note {
+    /// Create an info note.
+    pub fn info(message: impl Into<String>) -> Self {
+        Self {
+            level: NoteLevel::Info,
+            message: message.into(),
+            context: None,
+        }
+    }
+
+    /// Create a warning note.
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self {
+            level: NoteLevel::Warning,
+            message: message.into(),
+            context: None,
+        }
+    }
+
+    /// Create an error note.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            level: NoteLevel::Error,
+            message: message.into(),
+            context: None,
+        }
+    }
+
+    /// Add context to the note.
+    pub fn with_context(mut self, context: impl Into<String>) -> Self {
+        self.context = Some(context.into());
+        self
+    }
+}
+
+/// Note severity level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoteLevel {
+    /// Informational
+    Info,
+    /// Warning (non-fatal issue)
+    Warning,
+    /// Error (fatal issue handled gracefully)
+    Error,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

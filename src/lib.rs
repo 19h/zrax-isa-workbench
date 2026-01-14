@@ -64,13 +64,19 @@ pub mod architectures;
 pub mod error;
 pub mod extensions;
 pub mod formats;
+pub mod formatter;
 pub mod heuristics;
 pub mod types;
 
 pub use error::{ClassifierError, Result};
+pub use formatter::{
+    CandidatesFormatter, HumanFormatter, JsonFormatter, PayloadFormatter, ShortFormatter,
+};
 pub use types::{
     ClassificationMetadata, ClassificationResult, ClassificationSource, ClassifierOptions,
-    Endianness, Extension, ExtensionCategory, FileFormat, Isa, Variant,
+    DetectionPayload, Endianness, Extension, ExtensionCategory, ExtensionDetection,
+    ExtensionSource, FileFormat, FormatDetection, Isa, IsaCandidate, IsaClassification,
+    MetadataEntry, MetadataKey, MetadataValue, Note, NoteLevel, Variant,
 };
 
 use std::path::Path;
@@ -220,6 +226,427 @@ pub fn classify_bytes_with_options(
     }
 
     Ok(result)
+}
+
+/// Detect and analyze a binary file, returning a structured payload.
+///
+/// This is the primary entry point for the new payload-based API.
+/// Returns a `DetectionPayload` containing all detection results
+/// that can be passed to formatters for rendering.
+///
+/// # Arguments
+///
+/// * `path` - Path to the binary file
+///
+/// # Returns
+///
+/// * `Ok(DetectionPayload)` - Successful detection with all results
+/// * `Err(ClassifierError)` - If the file cannot be read or analyzed
+pub fn detect_file<P: AsRef<Path>>(path: P) -> Result<DetectionPayload> {
+    let data = std::fs::read(path)?;
+    detect_payload(&data, &ClassifierOptions::new())
+}
+
+/// Detect and analyze binary data, returning a structured payload.
+///
+/// # Arguments
+///
+/// * `data` - Raw binary data
+///
+/// # Returns
+///
+/// * `Ok(DetectionPayload)` - Successful detection with all results
+/// * `Err(ClassifierError)` - If analysis fails
+pub fn detect_bytes(data: &[u8]) -> Result<DetectionPayload> {
+    detect_payload(data, &ClassifierOptions::new())
+}
+
+/// Detect and analyze binary data with custom options, returning a structured payload.
+///
+/// This is the most flexible entry point, returning comprehensive structured data
+/// suitable for rendering by any formatter.
+///
+/// # Arguments
+///
+/// * `data` - Raw binary data
+/// * `options` - Classification options
+///
+/// # Returns
+///
+/// * `Ok(DetectionPayload)` - Complete detection payload with:
+///   - Format detection result
+///   - Primary ISA classification
+///   - Alternative candidates (for heuristic analysis)
+///   - Detected extensions
+///   - Metadata entries
+///   - Analysis notes
+pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<DetectionPayload> {
+    use types::{
+        DetectionPayload, ExtensionDetection, ExtensionSource,
+        IsaCandidate, IsaClassification,
+    };
+
+    // Detect file format
+    let detected = formats::detect_format(data);
+    let format_detection = detected_to_format(&detected);
+
+    // Parse based on format
+    let (primary, initial_extensions, metadata) = match detected {
+        formats::DetectedFormat::Elf { class, endian } => {
+            let result = formats::elf::parse(data, class, endian)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness)
+                    .with_variant(result.variant.clone()),
+                result.extensions.iter().map(|e| {
+                    ExtensionDetection {
+                        name: e.name.clone(),
+                        category: e.category,
+                        confidence: e.confidence,
+                        source: ExtensionSource::FormatAttribute,
+                    }
+                }).collect::<Vec<_>>(),
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Pe { pe_offset } => {
+            let result = formats::pe::parse(data, pe_offset)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::MachO { bits, big_endian } => {
+            let result = formats::macho::parse(data, bits, big_endian)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::MachOFat { big_endian } => {
+            let result = formats::macho::parse_fat(data, big_endian)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Coff { machine: _ } => {
+            let result = formats::coff::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Xcoff { bits } => {
+            let result = formats::xcoff::parse(data, bits)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Ecoff { variant } => {
+            let result = formats::ecoff::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Aout { variant } => {
+            let result = formats::aout::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Mz { variant } => {
+            let result = formats::mz::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Pef => {
+            let result = formats::pef::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Wasm => {
+            let result = formats::wasm::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::JavaClass => {
+            let result = formats::java::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Dex { variant } => {
+            let result = formats::dex::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Bflt => {
+            let result = formats::bflt::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Console { variant } => {
+            let result = formats::console::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Kernel { variant } => {
+            let result = formats::kernel::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Ar { variant } => {
+            let result = formats::ar::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Hex { variant } => {
+            let result = formats::hex::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Goff => {
+            let result = formats::goff::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::LlvmBc { variant } => {
+            let result = formats::llvm_bc::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::FatElf => {
+            let result = formats::fatelf::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Raw => {
+            // Heuristic analysis - get all candidates
+            let candidates = heuristics::score_all_architectures(data, options);
+            let best = candidates
+                .iter()
+                .max_by(|a, b| a.raw_score.cmp(&b.raw_score));
+
+            match best {
+                Some(b) if b.confidence >= options.min_confidence => {
+                    let primary = IsaClassification::from_heuristics(
+                        b.isa,
+                        b.bitwidth,
+                        b.endianness,
+                        b.confidence,
+                    );
+                    let candidate_list: Vec<IsaCandidate> = candidates
+                        .iter()
+                        .filter(|c| c.raw_score > 0)
+                        .take(10)
+                        .map(|c| IsaCandidate::new(c.isa, c.bitwidth, c.endianness, c.raw_score, c.confidence))
+                        .collect();
+
+                    let mut payload = DetectionPayload::new(format_detection, primary)
+                        .with_candidates(candidate_list);
+
+                    // Add code-detected extensions
+                    if options.detect_extensions {
+                        let code_exts = extensions::detect_from_code(data, b.isa, b.endianness);
+                        payload.extensions = code_exts
+                            .into_iter()
+                            .map(|e| ExtensionDetection {
+                                name: e.name,
+                                category: e.category,
+                                confidence: e.confidence,
+                                source: ExtensionSource::CodePattern,
+                            })
+                            .collect();
+                    }
+
+                    return Ok(payload);
+                }
+                _ => {
+                    return Err(error::ClassifierError::HeuristicInconclusive {
+                        confidence: best.map(|b| b.confidence * 100.0).unwrap_or(0.0),
+                        threshold: options.min_confidence * 100.0,
+                    });
+                }
+            }
+        }
+    };
+
+    // Build payload
+    let mut payload = DetectionPayload::new(format_detection, primary);
+    payload.extensions = initial_extensions;
+    payload.metadata = metadata;
+
+    // Add code-detected extensions if requested
+    if options.detect_extensions {
+        let code_exts = extensions::detect_from_code(data, payload.primary.isa, payload.primary.endianness);
+        let existing: std::collections::HashSet<String> = payload
+            .extensions
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+
+        for ext in code_exts {
+            if !existing.contains(&ext.name) {
+                payload.extensions.push(ExtensionDetection {
+                    name: ext.name,
+                    category: ext.category,
+                    confidence: ext.confidence,
+                    source: ExtensionSource::CodePattern,
+                });
+            }
+        }
+    }
+
+    Ok(payload)
+}
+
+/// Convert DetectedFormat to FormatDetection.
+fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
+    use formats::DetectedFormat;
+    match detected {
+        DetectedFormat::Elf { .. } => FormatDetection::new(FileFormat::Elf),
+        DetectedFormat::Pe { .. } => FormatDetection::new(FileFormat::Pe),
+        DetectedFormat::MachO { .. } => FormatDetection::new(FileFormat::MachO),
+        DetectedFormat::MachOFat { .. } => FormatDetection::new(FileFormat::MachOFat),
+        DetectedFormat::Coff { .. } => FormatDetection::new(FileFormat::Coff),
+        DetectedFormat::Xcoff { .. } => FormatDetection::new(FileFormat::Xcoff),
+        DetectedFormat::Ecoff { .. } => FormatDetection::new(FileFormat::Ecoff),
+        DetectedFormat::Aout { variant } => {
+            FormatDetection::with_variant(FileFormat::Aout, format!("{:?}", variant))
+        }
+        DetectedFormat::Mz { variant } => {
+            FormatDetection::with_variant(FileFormat::Mz, format!("{:?}", variant))
+        }
+        DetectedFormat::Pef => FormatDetection::new(FileFormat::Pef),
+        DetectedFormat::Wasm => FormatDetection::new(FileFormat::Wasm),
+        DetectedFormat::JavaClass => FormatDetection::new(FileFormat::JavaClass),
+        DetectedFormat::Dex { variant } => {
+            FormatDetection::with_variant(FileFormat::Dex, format!("{:?}", variant))
+        }
+        DetectedFormat::Bflt => FormatDetection::new(FileFormat::Bflt),
+        DetectedFormat::Console { variant } => {
+            FormatDetection::with_variant(format_for_console(variant), format!("{:?}", variant))
+        }
+        DetectedFormat::Kernel { variant } => {
+            FormatDetection::with_variant(format_for_kernel(variant), format!("{:?}", variant))
+        }
+        DetectedFormat::Ar { variant } => {
+            FormatDetection::with_variant(FileFormat::Archive, format!("{:?}", variant))
+        }
+        DetectedFormat::Hex { variant } => {
+            FormatDetection::with_variant(format_for_hex(variant), format!("{:?}", variant))
+        }
+        DetectedFormat::Goff => FormatDetection::new(FileFormat::Goff),
+        DetectedFormat::LlvmBc { .. } => FormatDetection::new(FileFormat::LlvmBc),
+        DetectedFormat::FatElf => FormatDetection::new(FileFormat::FatElf),
+        DetectedFormat::Raw => FormatDetection::raw(),
+    }
+}
+
+/// Get FileFormat for console variant.
+fn format_for_console(variant: &formats::console::ConsoleFormat) -> FileFormat {
+    use formats::console::ConsoleFormat;
+    match variant {
+        ConsoleFormat::Xbe => FileFormat::Xbe,
+        ConsoleFormat::Xex { .. } => FileFormat::Xex,
+        ConsoleFormat::SelfPs3 => FileFormat::SelfPs3,
+        ConsoleFormat::SelfPs4 => FileFormat::SelfPs4,
+        ConsoleFormat::SelfPs5 => FileFormat::SelfPs5,
+        ConsoleFormat::Nso => FileFormat::Nso,
+        ConsoleFormat::Nro => FileFormat::Nro,
+        ConsoleFormat::Dol => FileFormat::Dol,
+    }
+}
+
+/// Get FileFormat for kernel variant.
+fn format_for_kernel(variant: &formats::kernel::KernelFormat) -> FileFormat {
+    use formats::kernel::KernelFormat;
+    match variant {
+        KernelFormat::LinuxX86 { .. } => FileFormat::ZImage,
+        KernelFormat::LinuxArm64 => FileFormat::ZImage,
+        KernelFormat::LinuxRiscv => FileFormat::ZImage,
+        KernelFormat::UImage { .. } => FileFormat::UImage,
+        KernelFormat::Fit => FileFormat::Fit,
+        KernelFormat::Dtb => FileFormat::Dtb,
+    }
+}
+
+/// Get FileFormat for hex variant.
+fn format_for_hex(variant: &formats::hex::HexVariant) -> FileFormat {
+    use formats::hex::HexVariant;
+    match variant {
+        HexVariant::IntelHex { .. } => FileFormat::IntelHex,
+        HexVariant::Srec { .. } => FileFormat::Srec,
+        HexVariant::TiTxt => FileFormat::TiTxt,
+    }
+}
+
+/// Extract metadata from a ClassificationResult.
+fn extract_metadata(result: &ClassificationResult) -> Vec<MetadataEntry> {
+    let mut entries = Vec::new();
+
+    if let Some(entry) = result.metadata.entry_point {
+        entries.push(MetadataEntry::entry_point(entry));
+    }
+    if let Some(sections) = result.metadata.section_count {
+        entries.push(MetadataEntry::section_count(sections));
+    }
+    if let Some(flags) = result.metadata.flags {
+        entries.push(MetadataEntry::flags(flags));
+    }
+    if let Some(machine) = result.metadata.raw_machine {
+        entries.push(MetadataEntry::raw_machine(machine));
+    }
+
+    entries
 }
 
 /// Get version information for this library.

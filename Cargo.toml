@@ -6,7 +6,7 @@ authors = ["ISA Harvester Team"]
 description = "Universal binary architecture classifier supporting all major ISAs"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/isa-harvester/classifier"
-keywords = ["binary", "isa", "architecture", "elf", "mach-o", "pe"]
+keywords = ["binary", "isa", "architecture", "elf", "mach-o"]
 categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.70"
 
