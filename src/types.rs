@@ -1,0 +1,719 @@
+//! Core types for the ISA classifier.
+//!
+//! This module defines all fundamental types used to represent
+//! binary classification results, including ISA identifiers,
+//! extensions, variants, and confidence levels.
+
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Instruction Set Architecture identifiers.
+///
+/// Comprehensive enumeration of all supported processor architectures,
+/// covering mainstream, embedded, and legacy systems.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Isa {
+    // x86 family
+    X86,
+    X86_64,
+
+    // ARM family
+    Arm,
+    AArch64,
+
+    // RISC-V family
+    RiscV32,
+    RiscV64,
+    RiscV128,
+
+    // MIPS family
+    Mips,
+    Mips64,
+
+    // PowerPC family
+    Ppc,
+    Ppc64,
+
+    // IBM mainframe
+    S390,
+    S390x,
+
+    // SPARC family
+    Sparc,
+    Sparc64,
+
+    // Motorola 68k family
+    M68k,
+    ColdFire,
+
+    // SuperH family
+    Sh,
+    Sh4,
+
+    // Intel IA-64
+    Ia64,
+
+    // DEC Alpha
+    Alpha,
+
+    // HP PA-RISC
+    Parisc,
+
+    // LoongArch
+    LoongArch32,
+    LoongArch64,
+
+    // Qualcomm Hexagon
+    Hexagon,
+
+    // Synopsys ARC
+    Arc,
+    ArcCompact,
+    ArcCompact2,
+
+    // Tensilica Xtensa
+    Xtensa,
+
+    // Xilinx MicroBlaze
+    MicroBlaze,
+
+    // Altera Nios II
+    Nios2,
+
+    // OpenRISC
+    OpenRisc,
+
+    // C-SKY
+    Csky,
+
+    // NEC V850
+    V850,
+
+    // Renesas RX
+    Rx,
+
+    // TI DSP
+    TiC6000,
+    TiC2000,
+    TiC5500,
+    TiPru,
+
+    // Analog Devices
+    Blackfin,
+    Sharc,
+
+    // Embedded/Microcontrollers
+    Avr,
+    Avr32,
+    Msp430,
+    Pic,
+    Stm8,
+
+    // GPU/Accelerators
+    AmdGpu,
+    Cuda,
+    Bpf,
+
+    // Intel legacy
+    I860,
+    I960,
+
+    // Various
+    Vax,
+    Pdp11,
+    Z80,
+    Mcs6502,
+    W65816,
+
+    // Elbrus
+    Elbrus,
+
+    // Tilera
+    Tile64,
+    TilePro,
+    TileGx,
+
+    // Broadcom VideoCore
+    VideoCore3,
+    VideoCore5,
+
+    // Kalray
+    Kvx,
+
+    // MCST Elbrus
+    McstElbrus,
+
+    // Unknown with numeric ID
+    Unknown(u32),
+}
+
+impl Isa {
+    /// Returns a human-readable name for this ISA.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Isa::X86 => "x86 (i386)",
+            Isa::X86_64 => "x86-64 (AMD64)",
+            Isa::Arm => "ARM (32-bit)",
+            Isa::AArch64 => "AArch64 (ARM64)",
+            Isa::RiscV32 => "RISC-V (32-bit)",
+            Isa::RiscV64 => "RISC-V (64-bit)",
+            Isa::RiscV128 => "RISC-V (128-bit)",
+            Isa::Mips => "MIPS (32-bit)",
+            Isa::Mips64 => "MIPS (64-bit)",
+            Isa::Ppc => "PowerPC (32-bit)",
+            Isa::Ppc64 => "PowerPC (64-bit)",
+            Isa::S390 => "IBM S/390",
+            Isa::S390x => "IBM z/Architecture",
+            Isa::Sparc => "SPARC (32-bit)",
+            Isa::Sparc64 => "SPARC (64-bit)",
+            Isa::M68k => "Motorola 68000",
+            Isa::ColdFire => "Motorola ColdFire",
+            Isa::Sh => "SuperH",
+            Isa::Sh4 => "SuperH SH-4",
+            Isa::Ia64 => "Intel IA-64 (Itanium)",
+            Isa::Alpha => "DEC Alpha",
+            Isa::Parisc => "HP PA-RISC",
+            Isa::LoongArch32 => "LoongArch (32-bit)",
+            Isa::LoongArch64 => "LoongArch (64-bit)",
+            Isa::Hexagon => "Qualcomm Hexagon",
+            Isa::Arc => "ARC",
+            Isa::ArcCompact => "ARC ARCompact",
+            Isa::ArcCompact2 => "ARC ARCv2",
+            Isa::Xtensa => "Tensilica Xtensa",
+            Isa::MicroBlaze => "Xilinx MicroBlaze",
+            Isa::Nios2 => "Altera Nios II",
+            Isa::OpenRisc => "OpenRISC",
+            Isa::Csky => "C-SKY",
+            Isa::V850 => "NEC V850",
+            Isa::Rx => "Renesas RX",
+            Isa::TiC6000 => "TI TMS320C6000",
+            Isa::TiC2000 => "TI TMS320C2000",
+            Isa::TiC5500 => "TI TMS320C55x",
+            Isa::TiPru => "TI PRU",
+            Isa::Blackfin => "Analog Devices Blackfin",
+            Isa::Sharc => "Analog Devices SHARC",
+            Isa::Avr => "Atmel AVR",
+            Isa::Avr32 => "Atmel AVR32",
+            Isa::Msp430 => "TI MSP430",
+            Isa::Pic => "Microchip PIC",
+            Isa::Stm8 => "STMicro STM8",
+            Isa::AmdGpu => "AMD GPU",
+            Isa::Cuda => "NVIDIA CUDA",
+            Isa::Bpf => "Linux BPF",
+            Isa::I860 => "Intel i860",
+            Isa::I960 => "Intel i960",
+            Isa::Vax => "DEC VAX",
+            Isa::Pdp11 => "DEC PDP-11",
+            Isa::Z80 => "Zilog Z80",
+            Isa::Mcs6502 => "MOS 6502",
+            Isa::W65816 => "WDC 65816",
+            Isa::Elbrus => "Elbrus",
+            Isa::Tile64 => "Tilera TILE64",
+            Isa::TilePro => "Tilera TILEPro",
+            Isa::TileGx => "Tilera TILE-Gx",
+            Isa::VideoCore3 => "Broadcom VideoCore III",
+            Isa::VideoCore5 => "Broadcom VideoCore V",
+            Isa::Kvx => "Kalray VLIW",
+            Isa::McstElbrus => "MCST Elbrus",
+            Isa::Unknown(_) => "Unknown",
+        }
+    }
+
+    /// Returns the default bitwidth for this ISA.
+    pub fn default_bitwidth(&self) -> u8 {
+        match self {
+            Isa::X86 | Isa::Arm | Isa::RiscV32 | Isa::Mips | Isa::Ppc
+            | Isa::S390 | Isa::Sparc | Isa::M68k | Isa::ColdFire
+            | Isa::Sh | Isa::Sh4 | Isa::Parisc | Isa::LoongArch32
+            | Isa::Arc | Isa::ArcCompact | Isa::ArcCompact2 | Isa::Xtensa
+            | Isa::MicroBlaze | Isa::Nios2 | Isa::OpenRisc | Isa::Csky
+            | Isa::V850 | Isa::Rx | Isa::TiC6000 | Isa::TiC2000 | Isa::TiC5500
+            | Isa::TiPru | Isa::Blackfin | Isa::Sharc | Isa::Hexagon
+            | Isa::Tile64 | Isa::TilePro | Isa::TileGx => 32,
+
+            Isa::X86_64 | Isa::AArch64 | Isa::RiscV64 | Isa::Mips64
+            | Isa::Ppc64 | Isa::S390x | Isa::Sparc64 | Isa::Ia64
+            | Isa::Alpha | Isa::LoongArch64 | Isa::Kvx | Isa::Elbrus
+            | Isa::McstElbrus | Isa::Bpf => 64,
+
+            Isa::RiscV128 => 128,
+
+            Isa::Avr | Isa::Avr32 | Isa::Msp430 | Isa::Pic
+            | Isa::Stm8 | Isa::Z80 | Isa::Mcs6502 | Isa::W65816 => 16,
+
+            Isa::Pdp11 => 16,
+            Isa::Vax => 32,
+            Isa::I860 | Isa::I960 => 32,
+            Isa::AmdGpu | Isa::Cuda => 64,
+            Isa::VideoCore3 | Isa::VideoCore5 => 32,
+
+            Isa::Unknown(_) => 0,
+        }
+    }
+
+    /// Returns whether this ISA uses variable-length instructions.
+    pub fn is_variable_length(&self) -> bool {
+        matches!(
+            self,
+            Isa::X86
+                | Isa::X86_64
+                | Isa::S390
+                | Isa::S390x
+                | Isa::M68k
+                | Isa::ColdFire
+                | Isa::Avr
+                | Isa::Msp430
+                | Isa::Z80
+                | Isa::RiscV32
+                | Isa::RiscV64
+                | Isa::RiscV128
+                | Isa::Xtensa
+        )
+    }
+}
+
+impl fmt::Display for Isa {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Isa::Unknown(id) => write!(f, "unknown(0x{:04X})", id),
+            other => write!(f, "{}", format!("{:?}", other).to_lowercase()),
+        }
+    }
+}
+
+/// Byte ordering (endianness).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Endianness {
+    /// Little-endian byte order.
+    #[default]
+    Little,
+    /// Big-endian byte order.
+    Big,
+    /// Bi-endian (can operate in either mode).
+    BiEndian,
+}
+
+impl fmt::Display for Endianness {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Endianness::Little => write!(f, "little"),
+            Endianness::Big => write!(f, "big"),
+            Endianness::BiEndian => write!(f, "bi-endian"),
+        }
+    }
+}
+
+/// Binary file format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileFormat {
+    /// Executable and Linkable Format (Linux, BSD, etc.)
+    Elf,
+    /// Portable Executable (Windows)
+    Pe,
+    /// Mach-O (macOS, iOS)
+    MachO,
+    /// Universal/Fat binary (macOS)
+    MachOFat,
+    /// XCOFF (AIX)
+    Xcoff,
+    /// ECOFF (older MIPS/Alpha)
+    Ecoff,
+    /// Raw binary (no recognized format)
+    Raw,
+}
+
+impl fmt::Display for FileFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FileFormat::Elf => write!(f, "ELF"),
+            FileFormat::Pe => write!(f, "PE/COFF"),
+            FileFormat::MachO => write!(f, "Mach-O"),
+            FileFormat::MachOFat => write!(f, "Mach-O Fat"),
+            FileFormat::Xcoff => write!(f, "XCOFF"),
+            FileFormat::Ecoff => write!(f, "ECOFF"),
+            FileFormat::Raw => write!(f, "Raw"),
+        }
+    }
+}
+
+/// ISA extension or feature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub struct Extension {
+    /// Extension name (e.g., "AVX2", "SVE", "C")
+    pub name: String,
+    /// Extension category
+    pub category: ExtensionCategory,
+    /// Confidence level (0.0 - 1.0)
+    pub confidence: f64,
+}
+
+impl Eq for Extension {}
+
+impl std::hash::Hash for Extension {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.category.hash(state);
+    }
+}
+
+impl Extension {
+    /// Create a new extension with high confidence.
+    pub fn new(name: impl Into<String>, category: ExtensionCategory) -> Self {
+        Self {
+            name: name.into(),
+            category,
+            confidence: 1.0,
+        }
+    }
+
+    /// Create a new extension with specified confidence.
+    pub fn with_confidence(
+        name: impl Into<String>,
+        category: ExtensionCategory,
+        confidence: f64,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            category,
+            confidence: confidence.clamp(0.0, 1.0),
+        }
+    }
+}
+
+impl fmt::Display for Extension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+/// Categories of ISA extensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionCategory {
+    /// SIMD/Vector extensions (SSE, AVX, NEON, SVE, etc.)
+    Simd,
+    /// Cryptographic extensions (AES-NI, SHA, etc.)
+    Crypto,
+    /// Atomic/Synchronization extensions
+    Atomic,
+    /// Floating-point extensions
+    FloatingPoint,
+    /// Bit manipulation extensions
+    BitManip,
+    /// Virtualization extensions
+    Virtualization,
+    /// Security extensions (PAC, BTI, MTE, etc.)
+    Security,
+    /// Transactional memory
+    Transactional,
+    /// Machine learning / AI accelerators
+    MachineLearning,
+    /// Compressed instruction support
+    Compressed,
+    /// Privileged/System extensions
+    System,
+    /// Other/Misc extensions
+    Other,
+}
+
+/// Architecture variant or profile.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub struct Variant {
+    /// Variant name (e.g., "ARMv8.2-A", "MIPS32R6", "ELFv2")
+    pub name: String,
+    /// Sub-variant or profile
+    pub profile: Option<String>,
+    /// ABI version
+    pub abi: Option<String>,
+}
+
+impl Variant {
+    /// Create a new variant.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            profile: None,
+            abi: None,
+        }
+    }
+
+    /// Create a variant with profile.
+    pub fn with_profile(name: impl Into<String>, profile: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            profile: Some(profile.into()),
+            abi: None,
+        }
+    }
+
+    /// Create a variant with ABI.
+    pub fn with_abi(name: impl Into<String>, abi: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            profile: None,
+            abi: Some(abi.into()),
+        }
+    }
+}
+
+impl fmt::Display for Variant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+        if let Some(ref profile) = self.profile {
+            write!(f, " ({})", profile)?;
+        }
+        if let Some(ref abi) = self.abi {
+            write!(f, " [{}]", abi)?;
+        }
+        Ok(())
+    }
+}
+
+/// Complete classification result for a binary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassificationResult {
+    /// Primary ISA detected
+    pub isa: Isa,
+    /// Register width in bits (16, 32, 64, 128)
+    pub bitwidth: u8,
+    /// Byte ordering
+    pub endianness: Endianness,
+    /// File format
+    pub format: FileFormat,
+    /// Architecture variant
+    pub variant: Variant,
+    /// Detected extensions
+    pub extensions: Vec<Extension>,
+    /// Overall confidence (0.0 - 1.0)
+    pub confidence: f64,
+    /// Classification source
+    pub source: ClassificationSource,
+    /// Additional metadata
+    pub metadata: ClassificationMetadata,
+}
+
+impl ClassificationResult {
+    /// Create a new high-confidence result from format parsing.
+    pub fn from_format(
+        isa: Isa,
+        bitwidth: u8,
+        endianness: Endianness,
+        format: FileFormat,
+    ) -> Self {
+        Self {
+            isa,
+            bitwidth,
+            endianness,
+            format,
+            variant: Variant::default(),
+            extensions: Vec::new(),
+            confidence: 1.0,
+            source: ClassificationSource::FileFormat,
+            metadata: ClassificationMetadata::default(),
+        }
+    }
+
+    /// Create a result from heuristic analysis.
+    pub fn from_heuristics(isa: Isa, bitwidth: u8, endianness: Endianness, confidence: f64) -> Self {
+        Self {
+            isa,
+            bitwidth,
+            endianness,
+            format: FileFormat::Raw,
+            variant: Variant::default(),
+            extensions: Vec::new(),
+            confidence,
+            source: ClassificationSource::Heuristic,
+            metadata: ClassificationMetadata::default(),
+        }
+    }
+
+    /// Add an extension to the result.
+    pub fn with_extension(mut self, ext: Extension) -> Self {
+        self.extensions.push(ext);
+        self
+    }
+
+    /// Set the variant.
+    pub fn with_variant(mut self, variant: Variant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// Add metadata.
+    pub fn with_metadata(mut self, metadata: ClassificationMetadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    /// Check if this is a high-confidence result.
+    pub fn is_confident(&self) -> bool {
+        self.confidence >= 0.8
+    }
+
+    /// Get extension names as a vector.
+    pub fn extension_names(&self) -> Vec<&str> {
+        self.extensions.iter().map(|e| e.name.as_str()).collect()
+    }
+}
+
+impl fmt::Display for ClassificationResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} ({}-bit, {}, {}) [{:.1}% confidence]",
+            self.isa.name(),
+            self.bitwidth,
+            self.endianness,
+            self.format,
+            self.confidence * 100.0
+        )?;
+
+        if !self.variant.name.is_empty() {
+            write!(f, "\n  Variant: {}", self.variant)?;
+        }
+
+        if !self.extensions.is_empty() {
+            write!(f, "\n  Extensions: ")?;
+            for (i, ext) in self.extensions.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", ext.name)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Source of classification determination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassificationSource {
+    /// Determined from file format headers (ELF, PE, Mach-O)
+    FileFormat,
+    /// Determined from instruction pattern analysis
+    Heuristic,
+    /// Combined format + heuristic analysis
+    Combined,
+    /// User-specified override
+    UserSpecified,
+}
+
+/// Additional metadata from classification.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClassificationMetadata {
+    /// Entry point address
+    pub entry_point: Option<u64>,
+    /// Number of sections/segments
+    pub section_count: Option<usize>,
+    /// Code section size in bytes
+    pub code_size: Option<u64>,
+    /// ELF e_flags or equivalent
+    pub flags: Option<u32>,
+    /// Raw machine type value
+    pub raw_machine: Option<u32>,
+    /// Additional notes
+    pub notes: Vec<String>,
+}
+
+/// Options for classification behavior.
+#[derive(Debug, Clone, Default)]
+pub struct ClassifierOptions {
+    /// Minimum confidence threshold for heuristic analysis
+    pub min_confidence: f64,
+    /// Enable deep heuristic scanning
+    pub deep_scan: bool,
+    /// Maximum bytes to scan for heuristics
+    pub max_scan_bytes: usize,
+    /// Enable extension detection
+    pub detect_extensions: bool,
+    /// Prefer speed over accuracy
+    pub fast_mode: bool,
+}
+
+impl ClassifierOptions {
+    /// Create options with default settings.
+    pub fn new() -> Self {
+        Self {
+            min_confidence: 0.3,
+            deep_scan: false,
+            max_scan_bytes: 1024 * 1024, // 1MB
+            detect_extensions: true,
+            fast_mode: false,
+        }
+    }
+
+    /// Create options for thorough analysis.
+    pub fn thorough() -> Self {
+        Self {
+            min_confidence: 0.2,
+            deep_scan: true,
+            max_scan_bytes: 10 * 1024 * 1024, // 10MB
+            detect_extensions: true,
+            fast_mode: false,
+        }
+    }
+
+    /// Create options for fast analysis.
+    pub fn fast() -> Self {
+        Self {
+            min_confidence: 0.5,
+            deep_scan: false,
+            max_scan_bytes: 64 * 1024, // 64KB
+            detect_extensions: false,
+            fast_mode: true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_isa_display() {
+        assert_eq!(Isa::X86_64.to_string(), "x86_64");
+        assert_eq!(Isa::AArch64.to_string(), "aarch64");
+        assert_eq!(Isa::Unknown(0x1234).to_string(), "unknown(0x1234)");
+    }
+
+    #[test]
+    fn test_isa_bitwidth() {
+        assert_eq!(Isa::X86.default_bitwidth(), 32);
+        assert_eq!(Isa::X86_64.default_bitwidth(), 64);
+        assert_eq!(Isa::Avr.default_bitwidth(), 16);
+        assert_eq!(Isa::RiscV128.default_bitwidth(), 128);
+    }
+
+    #[test]
+    fn test_extension_display() {
+        let ext = Extension::new("AVX2", ExtensionCategory::Simd);
+        assert_eq!(ext.to_string(), "AVX2");
+    }
+
+    #[test]
+    fn test_classification_result() {
+        let result = ClassificationResult::from_format(
+            Isa::X86_64,
+            64,
+            Endianness::Little,
+            FileFormat::Elf,
+        );
+        assert!(result.is_confident());
+        assert!(result.to_string().contains("x86-64"));
+    }
+
+    #[test]
+    fn test_variant() {
+        let v = Variant::with_profile("ARMv8.2-A", "Cortex-A76");
+        assert!(v.to_string().contains("ARMv8.2-A"));
+        assert!(v.to_string().contains("Cortex-A76"));
+    }
+}

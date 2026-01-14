@@ -1,0 +1,64 @@
+[package]
+name = "isa-classifier"
+version = "0.1.0"
+edition = "2021"
+authors = ["ISA Harvester Team"]
+description = "Universal binary architecture classifier supporting all major ISAs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/isa-harvester/classifier"
+keywords = ["binary", "isa", "architecture", "elf", "mach-o", "pe"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.70"
+
+[lib]
+name = "isa_classifier"
+path = "src/lib.rs"
+
+[[bin]]
+name = "isa-classify"
+path = "src/main.rs"
+
+[dependencies]
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive", "env"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Binary parsing utilities
+byteorder = "1.5"
+memchr = "2.7"
+
+# Bit manipulation
+bitflags = "2.4"
+
+# Hex display
+hex = "0.4"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+tempfile = "3.10"
+criterion = "0.5"
+
+[features]
+default = ["cli"]
+cli = []
+full-heuristics = []
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
