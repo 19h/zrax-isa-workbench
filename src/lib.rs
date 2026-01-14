@@ -176,6 +176,20 @@ pub fn classify_bytes_with_options(
         formats::DetectedFormat::Coff { machine: _ } => formats::coff::parse(data)?,
         formats::DetectedFormat::Xcoff { bits } => formats::xcoff::parse(data, bits)?,
         formats::DetectedFormat::Ecoff { variant } => formats::ecoff::parse(data, variant)?,
+        formats::DetectedFormat::Aout { variant } => formats::aout::parse(data, variant)?,
+        formats::DetectedFormat::Mz { variant } => formats::mz::parse(data, variant)?,
+        formats::DetectedFormat::Pef => formats::pef::parse(data)?,
+        formats::DetectedFormat::Wasm => formats::wasm::parse(data)?,
+        formats::DetectedFormat::JavaClass => formats::java::parse(data)?,
+        formats::DetectedFormat::Dex { variant } => formats::dex::parse(data, variant)?,
+        formats::DetectedFormat::Bflt => formats::bflt::parse(data)?,
+        formats::DetectedFormat::Console { variant } => formats::console::parse(data, variant)?,
+        formats::DetectedFormat::Kernel { variant } => formats::kernel::parse(data, variant)?,
+        formats::DetectedFormat::Ar { variant } => formats::ar::parse(data, variant)?,
+        formats::DetectedFormat::Hex { variant } => formats::hex::parse(data, variant)?,
+        formats::DetectedFormat::Goff => formats::goff::parse(data)?,
+        formats::DetectedFormat::LlvmBc { variant } => formats::llvm_bc::parse(data, variant)?,
+        formats::DetectedFormat::FatElf => formats::fatelf::parse(data)?,
         formats::DetectedFormat::Raw => {
             // Fall back to heuristic analysis
             heuristics::analyze(data, options)?

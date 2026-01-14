@@ -56,6 +56,58 @@ pub enum ClassifierError {
         actual: usize,
     },
 
+    /// Error parsing a.out format.
+    #[error("a.out parse error: {message}")]
+    AoutParseError { message: String },
+
+    /// Error parsing DOS/NE/LE format.
+    #[error("DOS/NE/LE parse error: {message}")]
+    DosParseError { message: String },
+
+    /// Error parsing PEF format.
+    #[error("PEF parse error: {message}")]
+    PefParseError { message: String },
+
+    /// Error parsing hex format (Intel HEX, S-record, TI-TXT).
+    #[error("Hex format parse error: {message}")]
+    HexParseError { message: String },
+
+    /// Error parsing bFLT format.
+    #[error("bFLT parse error: {message}")]
+    BfltParseError { message: String },
+
+    /// Error parsing GOFF format.
+    #[error("GOFF parse error: {message}")]
+    GoffParseError { message: String },
+
+    /// Error parsing WebAssembly.
+    #[error("WebAssembly parse error: {message}")]
+    WasmParseError { message: String },
+
+    /// Error parsing Java class file.
+    #[error("Java class parse error: {message}")]
+    JavaClassParseError { message: String },
+
+    /// Error parsing DEX/ODEX.
+    #[error("DEX parse error: {message}")]
+    DexParseError { message: String },
+
+    /// Error parsing game console format.
+    #[error("Console format parse error: {message}")]
+    ConsoleParseError { message: String },
+
+    /// Error parsing kernel/boot image.
+    #[error("Kernel image parse error: {message}")]
+    KernelParseError { message: String },
+
+    /// Error parsing archive format.
+    #[error("Archive parse error: {message}")]
+    ArchiveParseError { message: String },
+
+    /// Invalid checksum in format.
+    #[error("Invalid checksum: expected {expected}, got {actual}")]
+    InvalidChecksum { expected: String, actual: String },
+
     /// Invalid section or segment.
     #[error("Invalid {kind} at index {index}: {message}")]
     InvalidSection {

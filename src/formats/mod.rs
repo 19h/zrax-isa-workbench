@@ -7,14 +7,38 @@
 //! - COFF (Standalone Common Object File Format)
 //! - XCOFF (AIX Extended COFF)
 //! - ECOFF (Extended COFF for MIPS/Alpha)
+//! - a.out (BSD, Plan 9, Minix)
+//! - MZ/NE/LE/LX (DOS and OS/2)
+//! - PEF (Classic Mac OS)
+//! - WebAssembly
+//! - Java class files
+//! - DEX/ODEX/VDEX/ART (Android)
+//! - Game console formats (XBE, XEX, SELF, NSO, DOL)
+//! - Boot/kernel images (zImage, uImage, FIT)
+//! - Hex formats (Intel HEX, S-record, TI-TXT)
+//! - Archive formats (ar)
 //! - Raw binary analysis
 
+pub mod aout;
+pub mod ar;
+pub mod bflt;
 pub mod coff;
+pub mod console;
+pub mod dex;
 pub mod ecoff;
 pub mod elf;
+pub mod fatelf;
+pub mod goff;
+pub mod hex;
+pub mod java;
+pub mod kernel;
+pub mod llvm_bc;
 pub mod macho;
+pub mod mz;
 pub mod pe;
+pub mod pef;
 pub mod raw;
+pub mod wasm;
 pub mod xcoff;
 
 use crate::error::{ClassifierError, Result};
@@ -63,6 +87,51 @@ pub mod magic {
 
     /// ECOFF Alpha (magic 0x0183 stored as LE)
     pub const ECOFF_ALPHA: [u8; 2] = [0x83, 0x01];
+
+    /// WebAssembly magic: "\0asm"
+    pub const WASM: [u8; 4] = [0x00, 0x61, 0x73, 0x6D];
+
+    /// Java class file magic: 0xCAFEBABE
+    pub const JAVA_CLASS: [u8; 4] = [0xCA, 0xFE, 0xBA, 0xBE];
+
+    /// DEX magic: "dex\n"
+    pub const DEX: [u8; 4] = [b'd', b'e', b'x', b'\n'];
+
+    /// bFLT magic: "bFLT"
+    pub const BFLT: [u8; 4] = [b'b', b'F', b'L', b'T'];
+
+    /// PEF magic: "Joy!" + "peff"
+    pub const PEF_TAG1: [u8; 4] = [b'J', b'o', b'y', b'!'];
+
+    /// ar archive magic: "!<arch>\n"
+    pub const AR: [u8; 8] = [b'!', b'<', b'a', b'r', b'c', b'h', b'>', b'\n'];
+
+    /// U-Boot uImage magic
+    pub const UIMAGE: u32 = 0x27051956;
+
+    /// FDT/DTB magic
+    pub const FDT: u32 = 0xD00DFEED;
+
+    /// XBE (Xbox) magic: "XBEH"
+    pub const XBE: [u8; 4] = [b'X', b'B', b'E', b'H'];
+
+    /// XEX (Xbox 360) magic: "XEX2"
+    pub const XEX: [u8; 4] = [b'X', b'E', b'X', b'2'];
+
+    /// NSO (Switch) magic: "NSO0"
+    pub const NSO: [u8; 4] = [b'N', b'S', b'O', b'0'];
+
+    /// PS3 SELF magic: "SCE\0"
+    pub const PS3_SELF: [u8; 4] = [b'S', b'C', b'E', 0];
+
+    /// FatELF magic
+    pub const FATELF: u32 = 0x1F0E70FA;
+
+    /// GOFF record marker
+    pub const GOFF: u8 = 0x03;
+
+    /// LLVM bitcode magic: "BC" + 0xC0DE
+    pub const LLVM_BC: [u8; 4] = [b'B', b'C', 0xC0, 0xDE];
 }
 
 /// Detected file format with parsing context.
@@ -82,6 +151,34 @@ pub enum DetectedFormat {
     Xcoff { bits: u8 },
     /// ECOFF
     Ecoff { variant: ecoff::EcoffVariant },
+    /// a.out (BSD, Plan 9, Minix)
+    Aout { variant: aout::AoutVariant },
+    /// DOS MZ / NE / LE / LX
+    Mz { variant: mz::ExtendedType },
+    /// PEF (Classic Mac OS)
+    Pef,
+    /// WebAssembly
+    Wasm,
+    /// Java class file
+    JavaClass,
+    /// DEX/ODEX/VDEX/ART (Android)
+    Dex { variant: dex::DexVariant },
+    /// bFLT (uClinux)
+    Bflt,
+    /// Game console formats
+    Console { variant: console::ConsoleFormat },
+    /// Kernel/boot images
+    Kernel { variant: kernel::KernelFormat },
+    /// ar archive
+    Ar { variant: ar::ArVariant },
+    /// Intel HEX / S-record / TI-TXT
+    Hex { variant: hex::HexVariant },
+    /// GOFF (IBM z/Architecture)
+    Goff,
+    /// LLVM bitcode
+    LlvmBc { variant: llvm_bc::LlvmVariant },
+    /// FatELF multi-architecture
+    FatElf,
     /// Unknown/raw format
     Raw,
 }
@@ -89,6 +186,10 @@ pub enum DetectedFormat {
 /// Detect the file format from magic bytes.
 pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if data.len() < 4 {
+        // Check for text-based hex formats (can work with minimal data)
+        if let Some(variant) = hex::detect(data) {
+            return DetectedFormat::Hex { variant };
+        }
         return DetectedFormat::Raw;
     }
 
@@ -103,7 +204,12 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Raw;
     }
 
-    // PE/COFF
+    // FatELF (check before Mach-O since magic could conflict)
+    if fatelf::detect(data) {
+        return DetectedFormat::FatElf;
+    }
+
+    // PE/COFF - check for PE first, then fall through to MZ/NE/LE/LX
     if data.len() >= 2 && data[..2] == magic::MZ {
         if data.len() >= 0x40 {
             let pe_offset = u32::from_le_bytes([data[0x3C], data[0x3D], data[0x3E], data[0x3F]]);
@@ -112,9 +218,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
                 return DetectedFormat::Pe { pe_offset };
             }
         }
+        // Not PE, try MZ/NE/LE/LX
+        if let Some(variant) = mz::detect(data) {
+            return DetectedFormat::Mz { variant };
+        }
     }
 
-    // Mach-O
+    // Mach-O (check before Java class since 0xCAFEBABE conflicts with fat binary)
     let magic4 = &data[..4];
     if magic4 == magic::MACHO_32_BE {
         return DetectedFormat::MachO {
@@ -140,11 +250,87 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
             big_endian: false,
         };
     }
+    // Mach-O fat uses 0xCAFEBABE which conflicts with Java class files
+    // Differentiate by checking if it looks like valid fat header
     if magic4 == magic::MACHO_FAT_BE {
-        return DetectedFormat::MachOFat { big_endian: true };
+        // Check if it's a valid Mach-O fat binary vs Java class
+        if data.len() >= 8 {
+            let nfat_arch = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+            // Java class files have minor/major version here (usually small numbers like 0, 52-65)
+            // Mach-O fat binaries have nfat_arch (usually 1-4)
+            // If nfat_arch is reasonable and followed by valid fat arch entries, it's Mach-O
+            if nfat_arch > 0 && nfat_arch <= 20 {
+                // Further check: see if we have enough data for fat_arch entries
+                let fat_arch_size = 20; // Each fat_arch is 20 bytes
+                if data.len() >= 8 + (nfat_arch as usize * fat_arch_size) {
+                    // Check if first fat_arch looks valid (cputype should be reasonable)
+                    let cputype = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
+                    // Valid cputypes are typically 7, 12, 18, 0x01000007, 0x0100000c, etc.
+                    if cputype > 0 && (cputype < 100 || cputype > 0x01000000) {
+                        return DetectedFormat::MachOFat { big_endian: true };
+                    }
+                }
+            }
+        }
+        // Fall through to check for Java class
     }
     if magic4 == magic::MACHO_FAT_LE {
         return DetectedFormat::MachOFat { big_endian: false };
+    }
+
+    // Java class (after Mach-O fat check since 0xCAFEBABE conflicts)
+    if java::detect(data) {
+        return DetectedFormat::JavaClass;
+    }
+
+    // WebAssembly
+    if wasm::detect(data) {
+        return DetectedFormat::Wasm;
+    }
+
+    // DEX/ODEX/VDEX/ART (Android)
+    if let Some(variant) = dex::detect(data) {
+        return DetectedFormat::Dex { variant };
+    }
+
+    // PEF (Classic Mac OS)
+    if pef::detect(data) {
+        return DetectedFormat::Pef;
+    }
+
+    // bFLT (uClinux)
+    if bflt::detect(data) {
+        return DetectedFormat::Bflt;
+    }
+
+    // LLVM bitcode
+    if let Some(variant) = llvm_bc::detect(data) {
+        return DetectedFormat::LlvmBc { variant };
+    }
+
+    // ar archive
+    if let Some(variant) = ar::detect(data) {
+        return DetectedFormat::Ar { variant };
+    }
+
+    // Game console formats
+    if let Some(variant) = console::detect(data) {
+        return DetectedFormat::Console { variant };
+    }
+
+    // Kernel/boot images
+    if let Some(variant) = kernel::detect(data) {
+        return DetectedFormat::Kernel { variant };
+    }
+
+    // GOFF (IBM z/Architecture) - check before generic COFF
+    if goff::detect(data) {
+        return DetectedFormat::Goff;
+    }
+
+    // a.out (BSD, Plan 9, Minix)
+    if let Some(variant) = aout::detect(data) {
+        return DetectedFormat::Aout { variant };
     }
 
     // XCOFF
@@ -160,6 +346,11 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     // ECOFF (check before standalone COFF since ECOFF has specific magic)
     if let Some(variant) = ecoff::detect(data) {
         return DetectedFormat::Ecoff { variant };
+    }
+
+    // Text-based hex formats (Intel HEX, S-record, TI-TXT)
+    if let Some(variant) = hex::detect(data) {
+        return DetectedFormat::Hex { variant };
     }
 
     // Standalone COFF (Windows object files)
@@ -183,6 +374,20 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::Coff { machine: _ } => coff::parse(data),
         DetectedFormat::Xcoff { bits } => xcoff::parse(data, bits),
         DetectedFormat::Ecoff { variant } => ecoff::parse(data, variant),
+        DetectedFormat::Aout { variant } => aout::parse(data, variant),
+        DetectedFormat::Mz { variant } => mz::parse(data, variant),
+        DetectedFormat::Pef => pef::parse(data),
+        DetectedFormat::Wasm => wasm::parse(data),
+        DetectedFormat::JavaClass => java::parse(data),
+        DetectedFormat::Dex { variant } => dex::parse(data, variant),
+        DetectedFormat::Bflt => bflt::parse(data),
+        DetectedFormat::Console { variant } => console::parse(data, variant),
+        DetectedFormat::Kernel { variant } => kernel::parse(data, variant),
+        DetectedFormat::Ar { variant } => ar::parse(data, variant),
+        DetectedFormat::Hex { variant } => hex::parse(data, variant),
+        DetectedFormat::Goff => goff::parse(data),
+        DetectedFormat::LlvmBc { variant } => llvm_bc::parse(data, variant),
+        DetectedFormat::FatElf => fatelf::parse(data),
         DetectedFormat::Raw => raw::analyze(data),
     }
 }
@@ -263,5 +468,106 @@ mod tests {
         let data = [0x01, 0x02, 0x03, 0x04];
         assert_eq!(read_u32(&data, 0, true).unwrap(), 0x04030201);
         assert_eq!(read_u32(&data, 0, false).unwrap(), 0x01020304);
+    }
+
+    #[test]
+    fn test_detect_wasm() {
+        let data = [0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00];
+        match detect_format(&data) {
+            DetectedFormat::Wasm => {}
+            other => panic!("Expected Wasm, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_java_class() {
+        // Java class file magic 0xCAFEBABE followed by valid version
+        let data = [0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34];
+        match detect_format(&data) {
+            DetectedFormat::JavaClass => {}
+            other => panic!("Expected JavaClass, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_dex() {
+        let data = [b'd', b'e', b'x', b'\n', b'0', b'3', b'5', 0x00];
+        match detect_format(&data) {
+            DetectedFormat::Dex { variant: dex::DexVariant::Dex { .. } } => {}
+            other => panic!("Expected Dex, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_pef() {
+        // "Joy!" + "peff"
+        let data = [b'J', b'o', b'y', b'!', b'p', b'e', b'f', b'f', 0, 0, 0, 0];
+        match detect_format(&data) {
+            DetectedFormat::Pef => {}
+            other => panic!("Expected Pef, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_bflt() {
+        let data = [b'b', b'F', b'L', b'T', 0, 0, 0, 4];
+        match detect_format(&data) {
+            DetectedFormat::Bflt => {}
+            other => panic!("Expected Bflt, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_ar() {
+        let data = [b'!', b'<', b'a', b'r', b'c', b'h', b'>', b'\n'];
+        match detect_format(&data) {
+            DetectedFormat::Ar { .. } => {}
+            other => panic!("Expected Ar, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_llvm_bc() {
+        let data = [b'B', b'C', 0xC0, 0xDE, 0, 0, 0, 0];
+        match detect_format(&data) {
+            DetectedFormat::LlvmBc { variant: llvm_bc::LlvmVariant::Bitcode } => {}
+            other => panic!("Expected LlvmBc Bitcode, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_console_xbe() {
+        let data = [b'X', b'B', b'E', b'H', 0, 0, 0, 0];
+        match detect_format(&data) {
+            DetectedFormat::Console { variant: console::ConsoleFormat::Xbe } => {}
+            other => panic!("Expected Console Xbe, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_console_nso() {
+        let data = [b'N', b'S', b'O', b'0', 0, 0, 0, 0];
+        match detect_format(&data) {
+            DetectedFormat::Console { variant: console::ConsoleFormat::Nso } => {}
+            other => panic!("Expected Console Nso, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_intel_hex() {
+        let data = b":020000040800F2\r\n:1000000000";
+        match detect_format(data) {
+            DetectedFormat::Hex { variant: hex::HexVariant::IntelHex { .. } } => {}
+            other => panic!("Expected Intel HEX, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_detect_srec() {
+        let data = b"S00600004844521B\r\n";
+        match detect_format(data) {
+            DetectedFormat::Hex { variant: hex::HexVariant::Srec { .. } } => {}
+            other => panic!("Expected S-record, got {:?}", other),
+        }
     }
 }

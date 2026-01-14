@@ -145,6 +145,25 @@ pub enum Isa {
     // MCST Elbrus
     McstElbrus,
 
+    // Fujitsu FR-V
+    Frv,
+
+    // Virtual Machine ISAs
+    /// WebAssembly virtual stack machine
+    Wasm,
+    /// Java Virtual Machine bytecode
+    Jvm,
+    /// Dalvik/ART bytecode (Android)
+    Dalvik,
+    /// Common Language Runtime (CLR/.NET)
+    Clr,
+    /// EFI Byte Code
+    Ebc,
+
+    // Cell BE / PlayStation 3
+    /// Cell Broadband Engine SPU
+    CellSpu,
+
     // Unknown with numeric ID
     Unknown(u32),
 }
@@ -217,6 +236,13 @@ impl Isa {
             Isa::VideoCore5 => "Broadcom VideoCore V",
             Isa::Kvx => "Kalray VLIW",
             Isa::McstElbrus => "MCST Elbrus",
+            Isa::Frv => "Fujitsu FR-V",
+            Isa::Wasm => "WebAssembly",
+            Isa::Jvm => "JVM Bytecode",
+            Isa::Dalvik => "Dalvik/ART Bytecode",
+            Isa::Clr => "CLR/.NET Bytecode",
+            Isa::Ebc => "EFI Byte Code",
+            Isa::CellSpu => "Cell SPU",
             Isa::Unknown(_) => "Unknown",
         }
     }
@@ -236,7 +262,7 @@ impl Isa {
             Isa::X86_64 | Isa::AArch64 | Isa::RiscV64 | Isa::Mips64
             | Isa::Ppc64 | Isa::S390x | Isa::Sparc64 | Isa::Ia64
             | Isa::Alpha | Isa::LoongArch64 | Isa::Kvx | Isa::Elbrus
-            | Isa::McstElbrus | Isa::Bpf => 64,
+            | Isa::McstElbrus | Isa::Bpf | Isa::Ebc => 64,
 
             Isa::RiscV128 => 128,
 
@@ -248,6 +274,14 @@ impl Isa {
             Isa::I860 | Isa::I960 => 32,
             Isa::AmdGpu | Isa::Cuda => 64,
             Isa::VideoCore3 | Isa::VideoCore5 => 32,
+            Isa::Frv => 32,
+            Isa::CellSpu => 128,
+
+            // Virtual machine ISAs - bitwidth is notional
+            Isa::Wasm => 32,    // wasm32 is more common
+            Isa::Jvm => 32,     // JVM operand stack width
+            Isa::Dalvik => 32,  // Register-based 32-bit
+            Isa::Clr => 32,     // CIL stack width
 
             Isa::Unknown(_) => 0,
         }
@@ -309,6 +343,7 @@ impl fmt::Display for Endianness {
 /// Binary file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum FileFormat {
     /// Executable and Linkable Format (Linux, BSD, etc.)
     Elf,
@@ -326,6 +361,116 @@ pub enum FileFormat {
     Ecoff,
     /// Raw binary (no recognized format)
     Raw,
+
+    // Unix/POSIX Legacy Formats
+    /// a.out (BSD variant)
+    Aout,
+    /// Plan 9 a.out
+    Plan9Aout,
+    /// Minix a.out
+    MinixAout,
+
+    // DOS/Windows Legacy
+    /// MZ/DOS executable
+    Mz,
+    /// NE (New Executable) - 16-bit Windows/OS2
+    Ne,
+    /// LE (Linear Executable) - OS/2, VxD
+    Le,
+    /// LX (Linear Executable Extended) - OS/2
+    Lx,
+    /// COM (DOS .COM file)
+    Com,
+    /// OMF (Object Module Format)
+    Omf,
+
+    // Apple Formats
+    /// PEF (Preferred Executable Format) - Classic Mac OS
+    Pef,
+
+    // Text-Based Hex Formats
+    /// Intel HEX
+    IntelHex,
+    /// Motorola S-record
+    Srec,
+    /// TI-TXT format
+    TiTxt,
+
+    // Embedded/NoMMU Formats
+    /// bFLT (Binary Flat Format) - uClinux
+    Bflt,
+    /// DXE (Blackfin Dynamic Execution)
+    Dxe,
+
+    // Mainframe Formats
+    /// GOFF (Generalized Object File Format) - z/Architecture
+    Goff,
+    /// MVS Load Module
+    MvsLoad,
+    /// HP-UX SOM (System Object Model)
+    Som,
+
+    // Legacy/Historical
+    /// RSX-11/RT-11 object format
+    Rsx11,
+    /// VMS object/image format
+    Vms,
+    /// IEEE-695 object format
+    Ieee695,
+
+    // Virtual Machine Bytecode
+    /// WebAssembly
+    Wasm,
+    /// Java class file
+    JavaClass,
+    /// Android DEX (Dalvik Executable)
+    Dex,
+    /// Android ODEX (Optimized DEX)
+    Odex,
+    /// Android VDEX
+    Vdex,
+    /// Android ART image
+    Art,
+    /// LLVM Bitcode
+    LlvmBc,
+
+    // Multi-Architecture Containers
+    /// FatELF
+    FatElf,
+    /// ar archive
+    Archive,
+    /// Windows .lib import library
+    WindowsLib,
+
+    // Game Console Formats
+    /// XBE (Original Xbox)
+    Xbe,
+    /// XEX (Xbox 360)
+    Xex,
+    /// SELF (PlayStation 3)
+    SelfPs3,
+    /// SELF (PlayStation 4)
+    SelfPs4,
+    /// SELF (PlayStation 5)
+    SelfPs5,
+    /// NSO (Nintendo Switch)
+    Nso,
+    /// NRO (Nintendo Switch)
+    Nro,
+    /// DOL (GameCube/Wii)
+    Dol,
+    /// REL (GameCube/Wii relocatable)
+    Rel,
+
+    // Kernel/Boot Formats
+    /// Linux zImage/bzImage
+    ZImage,
+    /// U-Boot uImage
+    UImage,
+    /// Flattened Image Tree
+    Fit,
+    /// Device Tree Blob
+    Dtb,
 }
 
 impl fmt::Display for FileFormat {
@@ -339,6 +484,61 @@ impl fmt::Display for FileFormat {
             FileFormat::Xcoff => write!(f, "XCOFF"),
             FileFormat::Ecoff => write!(f, "ECOFF"),
             FileFormat::Raw => write!(f, "Raw"),
+            // Unix/POSIX Legacy
+            FileFormat::Aout => write!(f, "a.out"),
+            FileFormat::Plan9Aout => write!(f, "Plan 9 a.out"),
+            FileFormat::MinixAout => write!(f, "Minix a.out"),
+            // DOS/Windows Legacy
+            FileFormat::Mz => write!(f, "MZ/DOS"),
+            FileFormat::Ne => write!(f, "NE"),
+            FileFormat::Le => write!(f, "LE"),
+            FileFormat::Lx => write!(f, "LX"),
+            FileFormat::Com => write!(f, "COM"),
+            FileFormat::Omf => write!(f, "OMF"),
+            // Apple
+            FileFormat::Pef => write!(f, "PEF"),
+            // Hex formats
+            FileFormat::IntelHex => write!(f, "Intel HEX"),
+            FileFormat::Srec => write!(f, "S-record"),
+            FileFormat::TiTxt => write!(f, "TI-TXT"),
+            // Embedded
+            FileFormat::Bflt => write!(f, "bFLT"),
+            FileFormat::Dxe => write!(f, "DXE"),
+            // Mainframe
+            FileFormat::Goff => write!(f, "GOFF"),
+            FileFormat::MvsLoad => write!(f, "MVS Load"),
+            FileFormat::Som => write!(f, "HP-UX SOM"),
+            // Legacy
+            FileFormat::Rsx11 => write!(f, "RSX-11"),
+            FileFormat::Vms => write!(f, "VMS"),
+            FileFormat::Ieee695 => write!(f, "IEEE-695"),
+            // VM Bytecode
+            FileFormat::Wasm => write!(f, "WebAssembly"),
+            FileFormat::JavaClass => write!(f, "Java Class"),
+            FileFormat::Dex => write!(f, "DEX"),
+            FileFormat::Odex => write!(f, "ODEX"),
+            FileFormat::Vdex => write!(f, "VDEX"),
+            FileFormat::Art => write!(f, "ART"),
+            FileFormat::LlvmBc => write!(f, "LLVM Bitcode"),
+            // Multi-arch containers
+            FileFormat::FatElf => write!(f, "FatELF"),
+            FileFormat::Archive => write!(f, "ar Archive"),
+            FileFormat::WindowsLib => write!(f, "Windows .lib"),
+            // Game consoles
+            FileFormat::Xbe => write!(f, "XBE"),
+            FileFormat::Xex => write!(f, "XEX"),
+            FileFormat::SelfPs3 => write!(f, "PS3 SELF"),
+            FileFormat::SelfPs4 => write!(f, "PS4 SELF"),
+            FileFormat::SelfPs5 => write!(f, "PS5 SELF"),
+            FileFormat::Nso => write!(f, "NSO"),
+            FileFormat::Nro => write!(f, "NRO"),
+            FileFormat::Dol => write!(f, "DOL"),
+            FileFormat::Rel => write!(f, "REL"),
+            // Kernel/Boot
+            FileFormat::ZImage => write!(f, "zImage"),
+            FileFormat::UImage => write!(f, "uImage"),
+            FileFormat::Fit => write!(f, "FIT"),
+            FileFormat::Dtb => write!(f, "DTB"),
         }
     }
 }
