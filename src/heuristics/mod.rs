@@ -41,6 +41,8 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::MicroBlaze, "Xilinx MicroBlaze"),
     (Isa::Nios2, "Altera Nios II"),
     (Isa::OpenRisc, "OpenRISC"),
+    (Isa::Jvm, "JVM Bytecode"),
+    (Isa::Wasm, "WebAssembly"),
 ];
 
 /// Result of heuristic scoring for a single architecture.
@@ -369,6 +371,26 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         confidence: 0.0,
         endianness: Endianness::Big,
         bitwidth: 32,
+    });
+
+    // JVM Bytecode
+    let jvm_score = scorer::score_jvm(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Jvm,
+        raw_score: jvm_score,
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 32, // Stack-based, but operand stack is 32-bit slots
+    });
+
+    // WebAssembly
+    let wasm_score = scorer::score_wasm(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Wasm,
+        raw_score: wasm_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32, // WASM 1.0 is 32-bit memory addressing
     });
 
     // Calculate normalized confidence

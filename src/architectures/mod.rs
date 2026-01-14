@@ -10,6 +10,7 @@ pub mod arc;
 pub mod arm;
 pub mod avr;
 pub mod hexagon;
+pub mod jvm;
 pub mod loongarch;
 pub mod m68k;
 pub mod microblaze;
@@ -23,6 +24,7 @@ pub mod riscv;
 pub mod s390x;
 pub mod sparc;
 pub mod superh;
+pub mod wasm;
 pub mod x86;
 pub mod xtensa;
 
@@ -41,6 +43,7 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::Bpf => Endianness::Little,
         Isa::Cuda => Endianness::Little,
         Isa::AmdGpu => Endianness::Little,
+        Isa::Wasm => Endianness::Little, // WASM is little-endian
 
         // Big-endian by default
         Isa::Ppc | Isa::Ppc64 => Endianness::Big,
@@ -49,6 +52,8 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::M68k | Isa::ColdFire => Endianness::Big,
         Isa::Parisc => Endianness::Big,
         Isa::McstElbrus => Endianness::Big,
+        Isa::Jvm => Endianness::Big,     // JVM is big-endian
+        Isa::Dalvik => Endianness::Little, // DEX is little-endian
 
         // Bi-endian (default to little)
         Isa::Arm => Endianness::Little,
@@ -77,6 +82,9 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::S390 | Isa::S390x => 2,
         Isa::M68k | Isa::ColdFire => 2,
         Isa::Z80 | Isa::Mcs6502 | Isa::W65816 => 1,
+        Isa::Jvm => 1,     // JVM bytecode is byte-aligned
+        Isa::Wasm => 1,    // WASM bytecode is byte-aligned
+        Isa::Dalvik => 2,  // DEX bytecode is 2-byte aligned
 
         // Fixed 32-bit, 4-byte aligned
         Isa::Arm => 4,
@@ -119,6 +127,9 @@ pub fn supports_compressed(isa: Isa) -> bool {
             | Isa::Avr
             | Isa::Msp430
             | Isa::Xtensa
+            | Isa::Jvm     // JVM has variable-length bytecode
+            | Isa::Wasm    // WASM has variable-length bytecode (LEB128)
+            | Isa::Dalvik  // DEX has variable-length bytecode
     )
 }
 

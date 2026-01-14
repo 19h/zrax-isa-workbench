@@ -9,8 +9,8 @@
 //! The actual scoring logic is implemented in `crate::architectures::*::score()`.
 
 use crate::architectures::{
-    aarch64, alpha, arc, arm, avr, hexagon, loongarch, m68k, microblaze, mips, msp430, nios2,
-    openrisc, parisc, ppc, riscv, s390x, sparc, superh, x86, xtensa,
+    aarch64, alpha, arc, arm, avr, hexagon, jvm, loongarch, m68k, microblaze, mips, msp430, nios2,
+    openrisc, parisc, ppc, riscv, s390x, sparc, superh, wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -190,6 +190,26 @@ pub fn score_openrisc(data: &[u8]) -> i64 {
     openrisc::score(data)
 }
 
+// =============================================================================
+// Virtual machine bytecode scoring
+// =============================================================================
+
+/// Score likelihood of JVM bytecode.
+///
+/// Delegates to `crate::architectures::jvm::score()`.
+#[inline]
+pub fn score_jvm(data: &[u8]) -> i64 {
+    jvm::score(data)
+}
+
+/// Score likelihood of WebAssembly bytecode.
+///
+/// Delegates to `crate::architectures::wasm::score()`.
+#[inline]
+pub fn score_wasm(data: &[u8]) -> i64 {
+    wasm::score(data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,5 +363,28 @@ mod tests {
             0x44, 0x00, 0x48, 0x00, // l.jr r9
         ];
         assert!(score_openrisc(&code) > 0);
+    }
+
+    #[test]
+    fn test_jvm_scoring() {
+        // Simple Java method: aload_0, invokespecial, return
+        let code = [
+            0x2A,       // aload_0
+            0xB7, 0x00, 0x01, // invokespecial #1
+            0xB1,       // return
+        ];
+        assert!(score_jvm(&code) > 0);
+    }
+
+    #[test]
+    fn test_wasm_scoring() {
+        // Simple WASM: local.get 0, i32.const 1, i32.add, end
+        let code = [
+            0x20, 0x00, // local.get 0
+            0x41, 0x01, // i32.const 1
+            0x6A,       // i32.add
+            0x0B,       // end
+        ];
+        assert!(score_wasm(&code) > 0);
     }
 }
