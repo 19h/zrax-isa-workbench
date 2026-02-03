@@ -178,7 +178,51 @@ fn score_thumb(data: &[u8]) -> i64 {
     let mut consecutive_zeros = 0u32;
     let mut last_hw: u16 = 0;
     let mut repeat_count = 0u32;
+    let mut aarch64_penalty: i64 = 0;
     let mut i = 0;
+
+    // Pre-scan for AArch64 patterns to apply penalty
+    // AArch64 instructions are 32-bit aligned, look for distinctive patterns
+    if data.len() >= 8 {
+        let mut j = 0;
+        while j + 3 < data.len().min(4096) {
+            let word = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+
+            // AArch64 MRS/MSR system register instructions (0xD5xxxxxx)
+            if (word >> 20) == 0xD53 || (word >> 20) == 0xD51 {
+                aarch64_penalty += 50;
+            }
+            // AArch64 STP/LDP with signed offset (0xA9/0x29 prefix for sp-based)
+            else if (word >> 22) == 0x2A4 || (word >> 22) == 0x2A5 {
+                aarch64_penalty += 30;
+            }
+            // AArch64 BL (0x94 or 0x97 prefix = bits 31:26 = 100101)
+            else if (word >> 26) == 0x25 {
+                aarch64_penalty += 20;
+            }
+            // AArch64 ADD/SUB immediate with SP (0x91/0xD1 patterns)
+            else if (word >> 24) == 0x91 || (word >> 24) == 0xD1 {
+                aarch64_penalty += 15;
+            }
+            // AArch64 RET (D65F03C0)
+            else if word == 0xD65F03C0 {
+                aarch64_penalty += 40;
+            }
+            // AArch64 NOP (D503201F)
+            else if word == 0xD503201F {
+                aarch64_penalty += 25;
+            }
+            // AArch64 ADRP (1xxxxxxx 0xxx where opcode is 10xxx)
+            else if (word & 0x9F000000) == 0x90000000 {
+                aarch64_penalty += 20;
+            }
+            // AArch64 B (unconditional branch - 000101xx pattern)
+            else if (word >> 26) == 0x05 {
+                aarch64_penalty += 15;
+            }
+            j += 4;
+        }
+    }
 
     while i + 1 < data.len() {
         let hw = u16::from_le_bytes([data[i], data[i + 1]]);
@@ -225,70 +269,129 @@ fn score_thumb(data: &[u8]) -> i64 {
             let hw2 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             let word = ((hw as u32) << 16) | (hw2 as u32);
 
-            // BL/BLX - Branch with Link (very common in Thumb-2)
+            // BL/BLX - Branch with Link (VERY common in Thumb-2 firmware)
             // Encoding: 11110Sxxxxxxxxxx 11J1Jxxxxxxxxxxx
             if (hw & 0xF800) == 0xF000 && (hw2 & 0xD000) == 0xD000 {
-                score += 25; // BL is a strong indicator
+                score += 45; // BL is THE most common instruction in firmware
             }
             // B.W - Unconditional branch (32-bit)
             else if (hw & 0xF800) == 0xF000 && (hw2 & 0xD000) == 0x9000 {
-                score += 15;
+                score += 25;
             }
-            // LDR.W / STR.W (32-bit load/store)
+            // LDR.W Rt, [PC, #imm] - Literal pool load (VERY common)
+            // Encoding: 1111 1000 x101 1111 (F85F or F8DF)
+            else if (hw & 0xFF7F) == 0xF85F || (hw & 0xFF7F) == 0xF8DF {
+                score += 40; // PC-relative load is very distinctive
+            }
+            // LDR.W / STR.W (32-bit load/store with immediate)
             else if (hw & 0xFFF0) == 0xF8D0 || (hw & 0xFFF0) == 0xF8C0 {
-                score += 12; // LDR.W Rt, [Rn, #imm12] / STR.W
+                score += 22; // LDR.W Rt, [Rn, #imm12] / STR.W
             }
             // LDR.W / STR.W with register offset
             else if (hw & 0xFFF0) == 0xF850 || (hw & 0xFFF0) == 0xF840 {
-                score += 12;
+                score += 22;
             }
-            // PUSH.W / POP.W (multiple registers)
+            // LDRB.W / STRB.W / LDRH.W / STRH.W
+            else if (hw & 0xFE50) == 0xF810 || (hw & 0xFE50) == 0xF830 {
+                score += 18;
+            }
+            // PUSH.W / POP.W (multiple registers) - function boundaries
             else if (word & 0xFFFFE000) == 0xE92D0000 {
-                score += 30; // PUSH.W {reglist}
+                score += 55; // PUSH.W {reglist} - strong function marker
             } else if (word & 0xFFFFE000) == 0xE8BD0000 {
-                score += 30; // POP.W {reglist}
+                score += 55; // POP.W {reglist}
             }
-            // MOV.W / MOVT
+            // STMDB / LDMIA (other multiple load/store)
+            else if (hw & 0xFFD0) == 0xE880 || (hw & 0xFFD0) == 0xE900 {
+                score += 25;
+            }
+            // MOV.W Rd, #imm (4FF0 xxxx pattern)
+            else if (hw & 0xFBEF) == 0xF04F {
+                score += 20; // Very common
+            }
+            // MOVW / MOVT (load 16-bit immediate)
             else if (hw & 0xFBF0) == 0xF240 || (hw & 0xFBF0) == 0xF2C0 {
-                score += 10; // MOVW / MOVT
+                score += 22; // MOVW / MOVT - address construction
             }
             // ADD.W / SUB.W with immediate
             else if (hw & 0xFBE0) == 0xF100 || (hw & 0xFBE0) == 0xF1A0 {
-                score += 8;
+                score += 12;
             }
-            // CMP.W
+            // ADD.W / SUB.W with register
+            else if (hw & 0xFFE0) == 0xEB00 || (hw & 0xFFE0) == 0xEBA0 {
+                score += 12;
+            }
+            // CMP.W with immediate
             else if (hw & 0xFBF0) == 0xF1B0 {
-                score += 8;
+                score += 12;
             }
             // TST.W / TEQ.W
             else if (hw & 0xFBF0) == 0xF010 || (hw & 0xFBF0) == 0xF090 {
-                score += 6;
+                score += 10;
             }
-            // MRS / MSR (system register access - common in firmware)
-            else if (word & 0xFFE0F0FF) == 0xF3EF8000 {
-                score += 35; // MRS Rd, spec_reg
-            } else if (word & 0xFFF0F0FF) == 0xF3808800 {
-                score += 35; // MSR spec_reg, Rn
+            // AND.W / ORR.W / EOR.W / BIC.W
+            else if (hw & 0xFFE0) == 0xF000
+                || (hw & 0xFFE0) == 0xF040
+                || (hw & 0xFFE0) == 0xF080
+                || (hw & 0xFFE0) == 0xF020
+            {
+                score += 10;
             }
-            // DMB / DSB / ISB (memory barriers)
+            // MRS (system register read) - firmware specific
+            else if (hw & 0xFFF0) == 0xF3E0 && (hw2 & 0xF000) == 0x8000 {
+                score += 50; // MRS Rd, spec_reg - very distinctive
+            }
+            // MSR (system register write) - firmware specific
+            else if (hw & 0xFFF0) == 0xF380 && (hw2 & 0xFF00) == 0x8800 {
+                score += 50; // MSR spec_reg, Rn - very distinctive
+            }
+            // DMB / DSB / ISB (memory barriers) - firmware specific
             else if (word & 0xFFFFFFF0) == 0xF3BF8F50 {
-                score += 25; // DMB
+                score += 40; // DMB
             } else if (word & 0xFFFFFFF0) == 0xF3BF8F40 {
-                score += 25; // DSB
+                score += 40; // DSB - firmware barrier
             } else if word == 0xF3BF8F6F {
-                score += 25; // ISB
+                score += 40; // ISB - firmware barrier
             }
-            // CPSIE / CPSID (interrupt control)
+            // CPSIE / CPSID (interrupt control) - 32-bit encoding
             else if (word & 0xFFFFFF00) == 0xF3AF8600 || (word & 0xFFFFFF00) == 0xF3AF8700 {
-                score += 30; // CPSIE/CPSID - very firmware specific
+                score += 45; // CPSIE/CPSID - very firmware specific
             }
-            // IT block handling (If-Then)
+            // IT block handling (If-Then) - Thumb-2 specific
             else if (hw & 0xFF00) == 0xBF00 && (hw & 0x00FF) != 0x00 {
-                score += 15; // IT instruction
+                score += 25; // IT instruction - Thumb-2 exclusive
+            }
+            // TBB / TBH (table branch) - switch statement implementation
+            else if (hw & 0xFFF0) == 0xE8D0
+                && ((hw2 & 0xFFF0) == 0xF000 || (hw2 & 0xFFF0) == 0xF010)
+            {
+                score += 35; // Table branch - very Thumb-2 specific
+            }
+            // LDRD / STRD (double-word load/store)
+            else if (hw & 0xFE50) == 0xE850 || (hw & 0xFE50) == 0xE940 {
+                score += 20;
+            }
+            // CLREX / LDREX / STREX (exclusive access)
+            else if (hw & 0xFFF0) == 0xE850 && (hw2 & 0x0F00) == 0x0F00 {
+                score += 25;
+            }
+            // BFI / BFC / UBFX / SBFX (bitfield operations)
+            else if (hw & 0xFFE0) == 0xF360 || (hw & 0xFFE0) == 0xF3C0 || (hw & 0xFFE0) == 0xF340
+            {
+                score += 18;
+            }
+            // SDIV / UDIV (division - Cortex-M3+)
+            else if (hw & 0xFFF0) == 0xFB90 || (hw & 0xFFF0) == 0xFBB0 {
+                score += 30; // Division is distinctive
+            }
+            // MLA / MLS / SMULL / UMULL (multiply)
+            else if (hw & 0xFFF0) == 0xFB00 || (hw & 0xFFF0) == 0xFB80 || (hw & 0xFFF0) == 0xFBA0
+            {
+                score += 15;
             }
             // Generic valid 32-bit Thumb-2 instruction prefix
             else {
-                score += 5;
+                score += 8;
             }
 
             i += 4;
@@ -297,124 +400,160 @@ fn score_thumb(data: &[u8]) -> i64 {
 
             // BX LR - Return from function (very common)
             if hw == 0x4770 {
-                score += 30;
+                score += 40; // Extremely common in firmware
             }
             // BX Rn (other register)
             else if (hw & 0xFF87) == 0x4700 {
-                score += 15;
+                score += 20;
             }
             // PUSH {reglist} with LR
             else if (hw & 0xFE00) == 0xB400 {
                 let has_lr = (hw & 0x0100) != 0;
-                score += if has_lr { 25 } else { 15 }; // PUSH with LR is function prologue
+                score += if has_lr { 35 } else { 18 }; // PUSH with LR is function prologue
             }
             // POP {reglist} with PC
             else if (hw & 0xFE00) == 0xBC00 {
                 let has_pc = (hw & 0x0100) != 0;
-                score += if has_pc { 25 } else { 15 }; // POP with PC is function return
+                score += if has_pc { 35 } else { 18 }; // POP with PC is function return
             }
             // NOP.N
             else if hw == 0xBF00 {
-                score += 8;
+                score += 10;
+            }
+            // WFI (Wait For Interrupt) - very firmware specific
+            else if hw == 0xBF30 {
+                score += 40; // Sleep instruction - very distinctive
+            }
+            // WFE (Wait For Event) - very firmware specific
+            else if hw == 0xBF20 {
+                score += 40; // Sleep instruction - very distinctive
+            }
+            // SEV (Send Event) - firmware specific
+            else if hw == 0xBF40 {
+                score += 35;
+            }
+            // CPSID i (disable interrupts) - 16-bit encoding
+            else if hw == 0xB672 {
+                score += 50; // Very firmware specific
+            }
+            // CPSIE i (enable interrupts) - 16-bit encoding
+            else if hw == 0xB662 {
+                score += 50; // Very firmware specific
+            }
+            // CPSID f (disable faults)
+            else if hw == 0xB673 {
+                score += 50;
+            }
+            // CPSIE f (enable faults)
+            else if hw == 0xB663 {
+                score += 50;
             }
             // MOV Rd, Rn (low registers)
             else if (hw & 0xFFC0) == 0x0000 && hw != 0x0000 {
                 // Actually LSL Rd, Rm, #0 = MOV
-                score += 5;
+                score += 6;
             }
             // MOV Rd, Rn (high registers)
             else if (hw & 0xFF00) == 0x4600 {
-                score += 8;
+                score += 10;
             }
             // ADD/SUB with immediate (common)
             else if (hw & 0xF800) == 0x3000 || (hw & 0xF800) == 0x3800 {
-                score += 6; // ADD Rn, #imm8 / SUB Rn, #imm8
+                score += 8; // ADD Rn, #imm8 / SUB Rn, #imm8
             }
             // ADD/SUB (register)
             else if (hw & 0xFE00) == 0x1800 || (hw & 0xFE00) == 0x1A00 {
-                score += 5;
+                score += 7;
             }
             // CMP with immediate
             else if (hw & 0xF800) == 0x2800 {
-                score += 6;
+                score += 8;
             }
             // CMP (register, low)
             else if (hw & 0xFFC0) == 0x4280 {
-                score += 5;
+                score += 7;
             }
             // CMP (register, high)
             else if (hw & 0xFF00) == 0x4500 {
-                score += 5;
+                score += 7;
             }
             // LDR Rt, [PC, #imm] (literal pool)
             else if (hw & 0xF800) == 0x4800 {
-                score += 10; // Very common pattern
+                score += 15; // Very common pattern
             }
             // LDR/STR with register offset
             else if (hw & 0xF000) == 0x5000 {
-                score += 6;
+                score += 8;
             }
             // LDR/STR with immediate offset
             else if (hw & 0xE000) == 0x6000 {
-                score += 6;
+                score += 8;
             }
             // LDRB/STRB with immediate offset
             else if (hw & 0xF000) == 0x7000 {
-                score += 5;
+                score += 7;
             }
             // LDRH/STRH with immediate offset
             else if (hw & 0xF000) == 0x8000 {
-                score += 5;
+                score += 7;
             }
             // LDR/STR (SP-relative)
             else if (hw & 0xF000) == 0x9000 {
-                score += 7;
+                score += 10;
             }
-            // ADD Rd, PC/SP, #imm
-            else if (hw & 0xF000) == 0xA000 {
-                score += 7;
+            // ADD Rd, PC, #imm (ADR - address calculation)
+            else if (hw & 0xF800) == 0xA000 {
+                score += 12;
+            }
+            // ADD Rd, SP, #imm (stack offset calculation)
+            else if (hw & 0xF800) == 0xA800 {
+                score += 12;
+            }
+            // ADD/SUB SP, #imm (stack frame adjustment)
+            else if (hw & 0xFF00) == 0xB000 {
+                score += 15; // Very common in function prologues/epilogues
             }
             // Conditional branch B<cond>
             else if (hw & 0xF000) == 0xD000 && (hw & 0x0F00) != 0x0E00 && (hw & 0x0F00) != 0x0F00
             {
-                score += 8;
+                score += 10;
             }
             // Unconditional branch B
             else if (hw & 0xF800) == 0xE000 {
-                score += 6;
+                score += 8;
             }
             // CBZ / CBNZ (Thumb-2)
             else if (hw & 0xF500) == 0xB100 || (hw & 0xF500) == 0xB900 {
-                score += 12; // Compare and Branch - Thumb-2 specific
+                score += 18; // Compare and Branch - Thumb-2 specific
             }
             // SVC (Supervisor Call)
             else if (hw & 0xFF00) == 0xDF00 {
-                score += 15;
+                score += 20;
             }
             // BKPT (Breakpoint)
             else if (hw & 0xFF00) == 0xBE00 {
-                score += 10;
+                score += 15;
             }
             // ADR (load address)
             else if (hw & 0xF800) == 0xA000 {
-                score += 6;
+                score += 10;
             }
             // Logical ops (AND, EOR, LSL, LSR, ASR, ADC, SBC, ROR, TST, RSB, etc.)
             else if (hw & 0xFC00) == 0x4000 {
-                score += 4;
-            }
-            // SXTH, SXTB, UXTH, UXTB
-            else if (hw & 0xFF00) == 0xB200 {
                 score += 6;
             }
-            // REV, REV16, REVSH
+            // SXTH, SXTB, UXTH, UXTB - sign/zero extend
+            else if (hw & 0xFF00) == 0xB200 {
+                score += 10;
+            }
+            // REV, REV16, REVSH - byte reverse
             else if (hw & 0xFFC0) == 0xBA00 || (hw & 0xFFC0) == 0xBA40 || (hw & 0xFFC0) == 0xBAC0
             {
-                score += 6;
+                score += 12;
             }
             // UDF (Undefined) - often used as assertions
             else if (hw & 0xFF00) == 0xDE00 {
-                score += 3;
+                score += 5;
             }
             // All ones is padding/invalid
             else if hw == 0xFFFF {
@@ -424,6 +563,9 @@ fn score_thumb(data: &[u8]) -> i64 {
             i += 2;
         }
     }
+
+    // Apply AArch64 penalty - if we detected significant AArch64 code, reduce Thumb score
+    score -= aarch64_penalty;
 
     score.max(0)
 }

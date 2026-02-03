@@ -284,34 +284,34 @@ pub fn score(data: &[u8]) -> i64 {
         // MOV x29, sp (via ADD): 1001 0001 00xx xxxx xxxx xx11 1111 1101 = 0x910003FD
         if (prev_instr & 0xFFC003FF) == 0xA98003FD && word == 0x910003FD {
             // STP x29, x30, [sp, #-N]! followed by MOV x29, sp
-            score += 50;
+            score += 80; // Boosted - very distinctive AArch64 function boundary
         }
 
         // Function epilogue: LDP x29, x30, [sp], #N followed by RET
         // LDP post-index: 1x10 1000 11xx xxxx xxxx xxxx xxxx xxxx = 0xA8C00000 mask 0xFFC00000
         if (prev_instr & 0xFFC003FF) == 0xA8C003FD && word == ret::RET {
-            score += 50;
+            score += 80; // Boosted - very distinctive AArch64 function boundary
         }
 
         // Exception vector pattern: MRS followed by MRS followed by MRS
         // This is the pattern we see in rkos: 3 MRS instructions reading exception state
         if is_mrs(prev_prev_instr) && is_mrs(prev_instr) && is_mrs(word) {
-            score += 60;
+            score += 100; // Boosted - extremely distinctive
         }
 
         // MRS followed by MRS followed by B (exception vector entry)
         if is_mrs(prev_prev_instr) && is_mrs(prev_instr) && is_branch(word) && !is_bl(word) {
-            score += 50;
+            score += 80; // Boosted
         }
 
         // BL followed by MOV x0, xN (common call + result handling)
         if is_bl(prev_instr) && is_mov_reg(word) && (word & 0x1F) == 0 {
-            score += 25;
+            score += 35;
         }
 
         // System register block: MSR followed by ISB/DSB
         if is_msr(prev_instr) && is_barrier(word) {
-            score += 40;
+            score += 60; // Boosted
         }
 
         // ADRP followed by ADD/LDR (PC-relative addressing pattern)
@@ -322,9 +322,9 @@ pub fn score(data: &[u8]) -> i64 {
             if prev_rd == curr_rn {
                 if (word >> 24) & 0x1F == 0x11 {
                     // ADD immediate
-                    score += 35;
+                    score += 50; // Boosted - very distinctive pattern
                 } else if is_ldr_str_imm(word) {
-                    score += 35;
+                    score += 50; // Boosted
                 }
             }
         }
@@ -335,53 +335,53 @@ pub fn score(data: &[u8]) -> i64 {
 
         // NOP
         if word == system::NOP {
-            score += 25;
-        }
-
-        // RET
-        if word == ret::RET {
             score += 30;
         }
 
-        // RETAA (PAC return)
+        // RET - very distinctive encoding
+        if word == ret::RET {
+            score += 40; // Boosted - specific encoding
+        }
+
+        // RETAA (PAC return) - extremely distinctive ARMv8.3-A feature
         if word == ret::RETAA {
-            score += 25;
+            score += 40;
         }
 
         // RETAB
         if word == ret::RETAB {
-            score += 25;
+            score += 40;
         }
 
         // ERET (exception return) - highly distinctive for firmware/kernel
         if is_eret(word) {
-            score += 40;
+            score += 50; // Boosted
         }
 
-        // MRS (read system register) - very distinctive for AArch64
+        // MRS (read system register) - VERY distinctive for AArch64
         // Common in kernel/firmware code for accessing system control registers
         if is_mrs(word) {
-            score += 35;
+            score += 50; // Boosted - this is a key AArch64 differentiator
         }
 
-        // MSR (write system register) - very distinctive for AArch64
+        // MSR (write system register) - VERY distinctive for AArch64
         if is_msr(word) {
-            score += 35;
+            score += 50; // Boosted - this is a key AArch64 differentiator
         }
 
         // Memory barriers (DSB, DMB, ISB) - distinctive system instructions
         if is_barrier(word) {
-            score += 25;
+            score += 35;
         }
 
         // BL (branch with link)
         if is_bl(word) {
-            score += 10;
+            score += 15; // Boosted - very common
         }
 
         // B (unconditional branch)
         if is_branch(word) && !is_bl(word) {
-            score += 8;
+            score += 12;
         }
 
         // SVC (system call)
@@ -421,32 +421,33 @@ pub fn score(data: &[u8]) -> i64 {
 
         // STP (store pair - common in prologue)
         if is_stp(word) {
-            score += 10;
+            score += 18; // Boosted - very distinctive AArch64 pattern
         }
 
         // LDP (load pair - common in epilogue)
         if is_ldp(word) {
-            score += 10;
+            score += 18; // Boosted - very distinctive AArch64 pattern
         }
 
         // MOV (register) via ORR - very common
         if is_mov_reg(word) {
-            score += 8;
+            score += 10;
         }
 
         // ADRP (address of page) - common for PC-relative addressing
+        // This is VERY distinctive for AArch64 (4KB page aligned addresses)
         if is_adrp(word) {
-            score += 12;
+            score += 25; // Boosted - unique to AArch64
         }
 
         // ADR (address) - common for PC-relative addressing
         if is_adr(word) {
-            score += 10;
+            score += 15;
         }
 
         // Conditional branches (B.cond) - very common in code
         if is_bcond(word) {
-            score += 12;
+            score += 15;
         }
 
         // CBZ/CBNZ - compare and branch
