@@ -428,48 +428,183 @@ fn score_thumb(data: &[u8]) -> i64 {
     score.max(0)
 }
 
+/// Score multi-instruction Thumb-2 patterns.
+/// Detects consecutive BL calls, function prologues/epilogues, etc.
+fn score_thumb_patterns(data: &[u8]) -> i64 {
+    let mut score: i64 = 0;
+    let mut consecutive_bl = 0u32;
+    let mut i = 0;
+
+    while i + 3 < data.len() {
+        let hw0 = u16::from_le_bytes([data[i], data[i + 1]]);
+
+        // Check for 32-bit Thumb-2 instruction
+        let top5 = (hw0 >> 11) & 0x1F;
+        if matches!(top5, 0x1D | 0x1E | 0x1F) && i + 3 < data.len() {
+            let hw1 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
+
+            // BL instruction pattern: F0xx Dxxx or F0xx Fxxx
+            let is_bl =
+                (hw0 & 0xF800) == 0xF000 && ((hw1 & 0xD000) == 0xD000 || (hw1 & 0xD000) == 0x9000);
+
+            if is_bl {
+                consecutive_bl += 1;
+                // Consecutive BL calls are very common in firmware init
+                if consecutive_bl >= 2 {
+                    score += 15; // Bonus for consecutive BLs
+                }
+                if consecutive_bl >= 4 {
+                    score += 25; // Strong pattern
+                }
+            } else {
+                // Reset but don't penalize for small gaps
+                if consecutive_bl > 0 {
+                    consecutive_bl = 0;
+                }
+            }
+
+            // PUSH.W {reglist} followed by SUB SP - function prologue
+            if (hw0 == 0xE92D) && i + 7 < data.len() {
+                let next_hw0 = u16::from_le_bytes([data[i + 4], data[i + 5]]);
+                // SUB SP, SP, #imm or MOV
+                if (next_hw0 & 0xFBEF) == 0xF1AD || (next_hw0 & 0xFF00) == 0xB000 {
+                    score += 40; // Strong function prologue pattern
+                }
+            }
+
+            // POP.W {reglist, PC} - function epilogue
+            if hw0 == 0xE8BD && (hw1 & 0x8000) != 0 {
+                score += 30; // Function return pattern
+            }
+
+            i += 4;
+        } else {
+            // 16-bit instruction
+            consecutive_bl = 0;
+
+            // BX LR followed by PUSH = new function start
+            if hw0 == 0x4770 && i + 3 < data.len() {
+                let next = u16::from_le_bytes([data[i + 2], data[i + 3]]);
+                if (next & 0xFE00) == 0xB400 || next == 0xE92D {
+                    score += 35; // Function boundary pattern
+                }
+            }
+
+            i += 2;
+        }
+    }
+
+    score
+}
+
 /// Detect Cortex-M vector table pattern.
 /// Vector tables have addresses with odd LSB (Thumb mode indicator) pointing within firmware.
 fn score_cortex_m_vector_table(data: &[u8]) -> i64 {
-    if data.len() < 64 {
+    // Try vector table at offset 0 and a few common header sizes
+    let offsets = [0usize, 0x100, 0x200, 0x400];
+    let mut best_score: i64 = 0;
+
+    for &offset in &offsets {
+        let score = score_vector_table_at_offset(data, offset);
+        if score > best_score {
+            best_score = score;
+        }
+    }
+
+    best_score
+}
+
+/// Score vector table at a specific offset.
+fn score_vector_table_at_offset(data: &[u8], offset: usize) -> i64 {
+    if data.len() < offset + 64 {
         return 0;
     }
 
     let mut score: i64 = 0;
     let mut valid_vectors = 0u32;
+    let mut vector_addrs: Vec<u32> = Vec::new();
+    let mut sp_valid = false;
 
-    // Check first 16 vectors (64 bytes)
-    for i in (0..64).step_by(4) {
-        let addr = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+    // Check up to 48 vectors (192 bytes) - covers main Cortex-M exceptions
+    // Need at least 4 bytes for each read
+    let available = data.len().saturating_sub(offset);
+    let check_size = 192.min(available.saturating_sub(3));
 
-        // Skip first entry (Initial SP) - should be even, in RAM range
+    for i in (0..check_size).step_by(4) {
+        let idx = offset + i;
+        if idx + 3 >= data.len() {
+            break;
+        }
+        let addr = u32::from_le_bytes([data[idx], data[idx + 1], data[idx + 2], data[idx + 3]]);
+
+        // First entry is Initial SP - should be even, in RAM range
         if i == 0 {
-            // SP typically in 0x20000000-0x20FFFFFF (SRAM) range
-            if (addr & 0xF0000000) == 0x20000000 || (addr & 0xFFF00000) == 0x10000000 {
-                score += 20;
+            // SP typically in 0x20000000-0x20FFFFFF (SRAM) or 0x10000000 range
+            if (addr & 0xF0000000) == 0x20000000 {
+                score += 50;
+                sp_valid = true;
+            } else if (addr & 0xFFF00000) == 0x10000000 {
+                score += 40;
+                sp_valid = true;
+            }
+            // SP should be word-aligned and reasonable size (4KB - 1MB)
+            if sp_valid && (addr & 3) == 0 {
+                let sp_size = addr & 0x00FFFFFF;
+                if sp_size >= 0x1000 && sp_size <= 0x100000 {
+                    score += 20;
+                }
             }
             continue;
         }
 
-        // Other entries are code addresses with Thumb bit set (odd)
+        // Reserved/unused vectors are often 0
         if addr == 0 {
-            continue; // Reserved/unused vector
+            continue;
         }
 
-        // Must be odd (Thumb mode)
+        // Must be odd (Thumb mode indicator)
         if (addr & 1) == 1 {
-            // Must be in reasonable code range (typically 0x00000000-0x20000000 for flash)
             let code_addr = addr & !1;
+            // Must be in reasonable code range
             if code_addr < 0x20000000 && code_addr >= 0x100 {
                 valid_vectors += 1;
+                vector_addrs.push(code_addr);
             }
         }
     }
 
-    if valid_vectors >= 8 {
-        score += 100; // Strong indicator of Cortex-M binary
+    // Check if vectors cluster in similar address range (typical for real firmware)
+    if vector_addrs.len() >= 4 {
+        let min_addr = *vector_addrs.iter().min().unwrap_or(&0);
+        let max_addr = *vector_addrs.iter().max().unwrap_or(&0);
+        let range = max_addr.saturating_sub(min_addr);
+
+        // Vectors typically span less than 1MB in real firmware
+        if range < 0x100000 && range > 0 {
+            score += 30; // Clustered vectors = strong indicator
+        }
+
+        // Check if most vectors share the same upper bits (same memory region)
+        let region_mask = 0xFFFF0000u32;
+        let first_region = vector_addrs[0] & region_mask;
+        let same_region_count = vector_addrs
+            .iter()
+            .filter(|&&a| (a & region_mask) == first_region)
+            .count();
+        if same_region_count >= vector_addrs.len() * 3 / 4 {
+            score += 40; // Most vectors in same 64KB region
+        }
+    }
+
+    // Score based on valid vector count
+    if valid_vectors >= 12 && sp_valid {
+        score += 150; // Very strong indicator
+    } else if valid_vectors >= 8 && sp_valid {
+        score += 100;
+    } else if valid_vectors >= 8 {
+        score += 80;
     } else if valid_vectors >= 4 {
-        score += 50;
+        score += 40;
     }
 
     score
@@ -481,14 +616,35 @@ fn score_cortex_m_vector_table(data: &[u8]) -> i64 {
 pub fn score(data: &[u8]) -> i64 {
     let arm32_score = score_arm32(data);
     let thumb_score = score_thumb(data);
+    let thumb_pattern_score = score_thumb_patterns(data);
     let vector_table_score = score_cortex_m_vector_table(data);
 
-    // Take the best score, with vector table as a bonus
-    let base_score = arm32_score.max(thumb_score);
+    // Take the best score, adding pattern bonus to Thumb score
+    let effective_thumb_score = thumb_score + thumb_pattern_score;
+    let base_score = arm32_score.max(effective_thumb_score);
 
-    // If we detected a vector table, add that bonus but cap it
-    let final_score = base_score + vector_table_score.min(base_score / 2);
+    // Vector table is a strong indicator - scale the bonus based on confidence
+    // A high vector table score (200+) indicates very likely Cortex-M firmware
+    let vector_bonus = if vector_table_score >= 200 {
+        // Strong vector table - add significant bonus (up to 50% of base score)
+        vector_table_score.min(base_score / 2)
+    } else if vector_table_score >= 100 {
+        // Good vector table - moderate bonus (up to 30% of base score)
+        vector_table_score.min(base_score * 3 / 10)
+    } else {
+        // Weak or no vector table - small bonus
+        vector_table_score.min(base_score / 5)
+    };
 
+    // Also add a multiplier if we have both strong thumb code AND vector table
+    let multiplier = if vector_table_score >= 150 && effective_thumb_score > arm32_score {
+        // Cortex-M firmware typically uses Thumb-2, boost confidence
+        110 // 10% boost
+    } else {
+        100
+    };
+
+    let final_score = (base_score + vector_bonus) * multiplier / 100;
     final_score.max(0)
 }
 
