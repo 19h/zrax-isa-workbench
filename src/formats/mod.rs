@@ -446,7 +446,10 @@ mod tests {
     fn test_detect_elf() {
         let data = [0x7F, b'E', b'L', b'F', 2, 1, 0, 0];
         match detect_format(&data) {
-            DetectedFormat::Elf { class: 2, endian: 1 } => {}
+            DetectedFormat::Elf {
+                class: 2,
+                endian: 1,
+            } => {}
             _ => panic!("Expected ELF detection"),
         }
     }
@@ -493,7 +496,9 @@ mod tests {
     fn test_detect_dex() {
         let data = [b'd', b'e', b'x', b'\n', b'0', b'3', b'5', 0x00];
         match detect_format(&data) {
-            DetectedFormat::Dex { variant: dex::DexVariant::Dex { .. } } => {}
+            DetectedFormat::Dex {
+                variant: dex::DexVariant::Dex { .. },
+            } => {}
             other => panic!("Expected Dex, got {:?}", other),
         }
     }
@@ -530,7 +535,9 @@ mod tests {
     fn test_detect_llvm_bc() {
         let data = [b'B', b'C', 0xC0, 0xDE, 0, 0, 0, 0];
         match detect_format(&data) {
-            DetectedFormat::LlvmBc { variant: llvm_bc::LlvmVariant::Bitcode } => {}
+            DetectedFormat::LlvmBc {
+                variant: llvm_bc::LlvmVariant::Bitcode,
+            } => {}
             other => panic!("Expected LlvmBc Bitcode, got {:?}", other),
         }
     }
@@ -539,7 +546,9 @@ mod tests {
     fn test_detect_console_xbe() {
         let data = [b'X', b'B', b'E', b'H', 0, 0, 0, 0];
         match detect_format(&data) {
-            DetectedFormat::Console { variant: console::ConsoleFormat::Xbe } => {}
+            DetectedFormat::Console {
+                variant: console::ConsoleFormat::Xbe,
+            } => {}
             other => panic!("Expected Console Xbe, got {:?}", other),
         }
     }
@@ -548,7 +557,9 @@ mod tests {
     fn test_detect_console_nso() {
         let data = [b'N', b'S', b'O', b'0', 0, 0, 0, 0];
         match detect_format(&data) {
-            DetectedFormat::Console { variant: console::ConsoleFormat::Nso } => {}
+            DetectedFormat::Console {
+                variant: console::ConsoleFormat::Nso,
+            } => {}
             other => panic!("Expected Console Nso, got {:?}", other),
         }
     }
@@ -557,7 +568,9 @@ mod tests {
     fn test_detect_intel_hex() {
         let data = b":020000040800F2\r\n:1000000000";
         match detect_format(data) {
-            DetectedFormat::Hex { variant: hex::HexVariant::IntelHex { .. } } => {}
+            DetectedFormat::Hex {
+                variant: hex::HexVariant::IntelHex { .. },
+            } => {}
             other => panic!("Expected Intel HEX, got {:?}", other),
         }
     }
@@ -566,7 +579,9 @@ mod tests {
     fn test_detect_srec() {
         let data = b"S00600004844521B\r\n";
         match detect_format(data) {
-            DetectedFormat::Hex { variant: hex::HexVariant::Srec { .. } } => {}
+            DetectedFormat::Hex {
+                variant: hex::HexVariant::Srec { .. },
+            } => {}
             other => panic!("Expected S-record, got {:?}", other),
         }
     }

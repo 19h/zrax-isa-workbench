@@ -8,7 +8,7 @@
 pub mod format {
     // Single 16-bit instructions
     pub const NOP: u16 = 0x0000;
-    
+
     // Two-word (32-bit) instructions - identified by specific patterns
     pub const JMP_MASK: u16 = 0xFE0E;
     pub const JMP_VAL: u16 = 0x940C;
@@ -24,114 +24,114 @@ pub mod format {
 pub mod patterns {
     /// NOP.
     pub const NOP: u16 = 0x0000;
-    
+
     /// RET (return from subroutine).
     pub const RET: u16 = 0x9508;
-    
+
     /// RETI (return from interrupt).
     pub const RETI: u16 = 0x9518;
-    
+
     /// SLEEP.
     pub const SLEEP: u16 = 0x9588;
-    
+
     /// BREAK (for debuggers).
     pub const BREAK: u16 = 0x9598;
-    
+
     /// WDR (watchdog reset).
     pub const WDR: u16 = 0x95A8;
-    
+
     /// SPM (store program memory).
     pub const SPM: u16 = 0x95E8;
-    
+
     /// IJMP (indirect jump via Z).
     pub const IJMP: u16 = 0x9409;
-    
+
     /// ICALL (indirect call via Z).
     pub const ICALL: u16 = 0x9509;
-    
+
     /// EIJMP (extended indirect jump).
     pub const EIJMP: u16 = 0x9419;
-    
+
     /// EICALL (extended indirect call).
     pub const EICALL: u16 = 0x9519;
-    
+
     /// SEC (set carry flag).
     pub const SEC: u16 = 0x9408;
-    
+
     /// CLC (clear carry flag).
     pub const CLC: u16 = 0x9488;
-    
+
     /// SEN (set negative flag).
     pub const SEN: u16 = 0x9428;
-    
+
     /// CLN (clear negative flag).
     pub const CLN: u16 = 0x94A8;
-    
+
     /// SEZ (set zero flag).
     pub const SEZ: u16 = 0x9418;
-    
+
     /// CLZ (clear zero flag).
     pub const CLZ: u16 = 0x9498;
-    
+
     /// SEI (set interrupt enable).
     pub const SEI: u16 = 0x9478;
-    
+
     /// CLI (clear interrupt enable).
     pub const CLI: u16 = 0x94F8;
-    
+
     // Masks for instruction groups
     pub const RJMP_MASK: u16 = 0xF000;
     pub const RJMP_VAL: u16 = 0xC000;
-    
+
     pub const RCALL_MASK: u16 = 0xF000;
     pub const RCALL_VAL: u16 = 0xD000;
-    
-    pub const BRBS_MASK: u16 = 0xFC00;  // Branch if bit set
+
+    pub const BRBS_MASK: u16 = 0xFC00; // Branch if bit set
     pub const BRBS_VAL: u16 = 0xF000;
-    
-    pub const BRBC_MASK: u16 = 0xFC00;  // Branch if bit clear
+
+    pub const BRBC_MASK: u16 = 0xFC00; // Branch if bit clear
     pub const BRBC_VAL: u16 = 0xF400;
-    
-    pub const LDI_MASK: u16 = 0xF000;   // Load immediate
+
+    pub const LDI_MASK: u16 = 0xF000; // Load immediate
     pub const LDI_VAL: u16 = 0xE000;
-    
-    pub const MOV_MASK: u16 = 0xFC00;   // Copy register
+
+    pub const MOV_MASK: u16 = 0xFC00; // Copy register
     pub const MOV_VAL: u16 = 0x2C00;
-    
-    pub const ADD_MASK: u16 = 0xFC00;   // Add
+
+    pub const ADD_MASK: u16 = 0xFC00; // Add
     pub const ADD_VAL: u16 = 0x0C00;
-    
-    pub const SUB_MASK: u16 = 0xFC00;   // Subtract
+
+    pub const SUB_MASK: u16 = 0xFC00; // Subtract
     pub const SUB_VAL: u16 = 0x1800;
-    
-    pub const AND_MASK: u16 = 0xFC00;   // Logical AND
+
+    pub const AND_MASK: u16 = 0xFC00; // Logical AND
     pub const AND_VAL: u16 = 0x2000;
-    
-    pub const OR_MASK: u16 = 0xFC00;    // Logical OR
+
+    pub const OR_MASK: u16 = 0xFC00; // Logical OR
     pub const OR_VAL: u16 = 0x2800;
-    
-    pub const EOR_MASK: u16 = 0xFC00;   // Exclusive OR
+
+    pub const EOR_MASK: u16 = 0xFC00; // Exclusive OR
     pub const EOR_VAL: u16 = 0x2400;
-    
-    pub const CP_MASK: u16 = 0xFC00;    // Compare
+
+    pub const CP_MASK: u16 = 0xFC00; // Compare
     pub const CP_VAL: u16 = 0x1400;
-    
-    pub const CPC_MASK: u16 = 0xFC00;   // Compare with carry
+
+    pub const CPC_MASK: u16 = 0xFC00; // Compare with carry
     pub const CPC_VAL: u16 = 0x0400;
-    
-    pub const CPI_MASK: u16 = 0xF000;   // Compare with immediate
+
+    pub const CPI_MASK: u16 = 0xF000; // Compare with immediate
     pub const CPI_VAL: u16 = 0x3000;
-    
-    pub const IN_MASK: u16 = 0xF800;    // In from I/O
+
+    pub const IN_MASK: u16 = 0xF800; // In from I/O
     pub const IN_VAL: u16 = 0xB000;
-    
-    pub const OUT_MASK: u16 = 0xF800;   // Out to I/O
+
+    pub const OUT_MASK: u16 = 0xF800; // Out to I/O
     pub const OUT_VAL: u16 = 0xB800;
-    
-    pub const PUSH_MASK: u16 = 0xFE0F;  // Push register
+
+    pub const PUSH_MASK: u16 = 0xFE0F; // Push register
     pub const PUSH_VAL: u16 = 0x920F;
-    
-    pub const POP_MASK: u16 = 0xFE0F;   // Pop register
+
+    pub const POP_MASK: u16 = 0xFE0F; // Pop register
     pub const POP_VAL: u16 = 0x900F;
 }
 
@@ -197,15 +197,19 @@ pub fn get_bit_num(instr: u16) -> u8 {
 /// Check if instruction is a two-word (32-bit) instruction.
 pub fn is_two_word(instr: u16) -> bool {
     // JMP, CALL, LDS, STS are 32-bit
-    ((instr & format::JMP_MASK) == format::JMP_VAL) ||
-    ((instr & format::CALL_MASK) == format::CALL_VAL) ||
-    ((instr & format::LDS_MASK) == format::LDS_VAL) ||
-    ((instr & format::STS_MASK) == format::STS_VAL)
+    ((instr & format::JMP_MASK) == format::JMP_VAL)
+        || ((instr & format::CALL_MASK) == format::CALL_VAL)
+        || ((instr & format::LDS_MASK) == format::LDS_VAL)
+        || ((instr & format::STS_MASK) == format::STS_VAL)
 }
 
 /// Determine instruction length in bytes.
 pub fn instruction_length(instr: u16) -> usize {
-    if is_two_word(instr) { 4 } else { 2 }
+    if is_two_word(instr) {
+        4
+    } else {
+        2
+    }
 }
 
 /// Check if instruction is NOP.
@@ -260,9 +264,11 @@ pub fn is_call_32(instr: u16) -> bool {
 
 /// Check if instruction is a branch (RJMP, IJMP, conditional branches).
 pub fn is_branch(instr: u16) -> bool {
-    is_rjmp(instr) || is_ijmp(instr) || is_jmp(instr) ||
-    ((instr & patterns::BRBS_MASK) == patterns::BRBS_VAL) ||
-    ((instr & patterns::BRBC_MASK) == patterns::BRBC_VAL)
+    is_rjmp(instr)
+        || is_ijmp(instr)
+        || is_jmp(instr)
+        || ((instr & patterns::BRBS_MASK) == patterns::BRBS_VAL)
+        || ((instr & patterns::BRBC_MASK) == patterns::BRBC_VAL)
 }
 
 /// Check if instruction is a call (RCALL, ICALL, CALL).
@@ -272,8 +278,8 @@ pub fn is_call(instr: u16) -> bool {
 
 /// Check if instruction is a conditional branch.
 pub fn is_conditional_branch(instr: u16) -> bool {
-    ((instr & patterns::BRBS_MASK) == patterns::BRBS_VAL) ||
-    ((instr & patterns::BRBC_MASK) == patterns::BRBC_VAL)
+    ((instr & patterns::BRBS_MASK) == patterns::BRBS_VAL)
+        || ((instr & patterns::BRBC_MASK) == patterns::BRBC_VAL)
 }
 
 /// Check if instruction is LDI (load immediate).
@@ -326,11 +332,11 @@ pub fn is_likely_valid(instr: u16) -> bool {
     if instr == patterns::NOP {
         return true;
     }
-    
+
     // Check for known instruction patterns
     // This is a simplified check - real validation would be more thorough
     let high_nibble = (instr >> 12) & 0xF;
-    
+
     match high_nibble {
         0x0 => {
             // NOP, MOVW, MULS, MULSU, FMUL, etc.
@@ -374,14 +380,27 @@ pub fn is_likely_valid(instr: u16) -> bool {
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
     let mut i = 0;
+    let mut zero_run: u32 = 0;
 
     // AVR is little-endian, mostly 16-bit instructions (some 32-bit)
     while i + 2 <= data.len() {
         let word = u16::from_le_bytes([data[i], data[i + 1]]);
 
-        // NOP
+        // NOP (0x0000) - but be careful: zeros are often padding, not real NOPs
+        // Only score NOPs that appear isolated, not in long runs
         if is_nop(word) {
-            score += 15;
+            zero_run += 1;
+            if zero_run <= 2 {
+                // Only score first couple zeros in a row
+                score += 5;
+            } else if zero_run > 8 {
+                // Long zero runs are likely padding, penalize slightly
+                score -= 1;
+            }
+            i += 2;
+            continue;
+        } else {
+            zero_run = 0;
         }
 
         // RET (return from subroutine)
@@ -537,7 +556,7 @@ mod tests {
         // LDI encoding: 1110 KKKK dddd KKKK
         // K high nibble in bits [11:8], K low nibble in bits [3:0]
         // d (register - 16) in bits [7:4]
-        
+
         // LDI R16, 0x00 = 1110 0000 0000 0000 = 0xE000
         assert_eq!(get_k8(0xE000), 0x00);
         // LDI R16, 0xFF = 1110 1111 0000 1111 = 0xEF0F
@@ -553,7 +572,7 @@ mod tests {
         // PUSH R31 = 0x93FF (actually 0x93EF for R31? Let's verify the encoding)
         // PUSH Rr: 1001 001r rrrr 1111, so PUSH R31 = 1001 0011 1111 1111 = 0x93FF
         assert!(is_push(0x93FF));
-        
+
         // POP R0 = 0x900F
         assert!(is_pop(0x900F));
     }

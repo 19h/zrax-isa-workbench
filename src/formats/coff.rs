@@ -157,8 +157,18 @@ pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str
         machine::POWERPC => (Isa::Ppc, 32, Endianness::Little, None),
         machine::POWERPCFP => (Isa::Ppc, 32, Endianness::Little, Some("FP")),
         machine::IA64 => (Isa::Ia64, 64, Endianness::Little, None),
-        machine::TRICORE => (Isa::Unknown(0x0520), 32, Endianness::Little, Some("TriCore")),
-        machine::EBC => (Isa::Unknown(0x0EBC), 64, Endianness::Little, Some("EFI Byte Code")),
+        machine::TRICORE => (
+            Isa::Unknown(0x0520),
+            32,
+            Endianness::Little,
+            Some("TriCore"),
+        ),
+        machine::EBC => (
+            Isa::Unknown(0x0EBC),
+            64,
+            Endianness::Little,
+            Some("EFI Byte Code"),
+        ),
         machine::RISCV32 => (Isa::RiscV32, 32, Endianness::Little, None),
         machine::RISCV64 => (Isa::RiscV64, 64, Endianness::Little, None),
         machine::RISCV128 => (Isa::RiscV128, 128, Endianness::Little, None),
@@ -296,8 +306,7 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
         ..Default::default()
     };
 
-    let mut result =
-        ClassificationResult::from_format(isa, bitwidth, endianness, FileFormat::Coff);
+    let mut result = ClassificationResult::from_format(isa, bitwidth, endianness, FileFormat::Coff);
     result.variant = variant;
     result.metadata = metadata;
 

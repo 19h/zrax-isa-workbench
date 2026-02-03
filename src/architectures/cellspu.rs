@@ -366,10 +366,7 @@ pub fn is_branch(instr: u32) -> bool {
     let op11 = extract_opcode_11(instr);
 
     // RI16 branches
-    if matches!(
-        op9,
-        0x064 | 0x060 | 0x066 | 0x062 | 0x040 | 0x042
-    ) {
+    if matches!(op9, 0x064 | 0x060 | 0x066 | 0x062 | 0x040 | 0x042) {
         return true;
     }
 

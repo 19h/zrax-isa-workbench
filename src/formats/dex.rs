@@ -4,7 +4,7 @@
 //! Related formats include ODEX (Optimized DEX), VDEX, and ART image files.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{read_u32};
+use crate::formats::read_u32;
 use crate::types::{
     ClassificationMetadata, ClassificationResult, Endianness, FileFormat, Isa, Variant,
 };
@@ -137,13 +137,24 @@ fn parse_dex(data: &[u8], version: [u8; 3], is_odex: bool) -> Result<Classificat
     };
 
     let format_name = if is_odex { "ODEX" } else { "DEX" };
-    let format = if is_odex { FileFormat::Odex } else { FileFormat::Dex };
+    let format = if is_odex {
+        FileFormat::Odex
+    } else {
+        FileFormat::Dex
+    };
 
-    let mut notes = vec![format!("{} file version {}", format_name, version_str.trim())];
+    let mut notes = vec![format!(
+        "{} file version {}",
+        format_name,
+        version_str.trim()
+    )];
     notes.push(format!("Target: {}", android_version));
     notes.push(format!("File size: {} bytes", file_size));
     notes.push(format!("Header size: {} bytes", header_size));
-    notes.push(format!("Endianness: {}", if little_endian { "little" } else { "big" }));
+    notes.push(format!(
+        "Endianness: {}",
+        if little_endian { "little" } else { "big" }
+    ));
     notes.push(format!("Strings: {}", string_ids_size));
     notes.push(format!("Types: {}", type_ids_size));
     notes.push(format!("Prototypes: {}", proto_ids_size));
@@ -190,12 +201,8 @@ fn parse_vdex(data: &[u8], version: [u8; 4]) -> Result<ClassificationResult> {
         ..Default::default()
     };
 
-    let mut result = ClassificationResult::from_format(
-        Isa::Dalvik,
-        32,
-        Endianness::Little,
-        FileFormat::Vdex,
-    );
+    let mut result =
+        ClassificationResult::from_format(Isa::Dalvik, 32, Endianness::Little, FileFormat::Vdex);
     result.variant = Variant::new(format!("VDEX {}", version_str.trim()));
     result.metadata = metadata;
 

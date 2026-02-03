@@ -85,19 +85,43 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
         });
     }
 
-    // Find the best match
-    let best = scores
-        .iter()
-        .max_by(|a, b| a.raw_score.cmp(&b.raw_score))
-        .unwrap();
+    // Find the best and second-best matches
+    let mut sorted_scores: Vec<_> = scores.iter().collect();
+    sorted_scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
 
-    // Calculate confidence
+    let best = sorted_scores[0];
+    let second_best = sorted_scores.get(1);
+
+    // Calculate confidence using multiple factors:
+    // 1. Share of total (original method)
+    // 2. Margin over second place (how decisive is the win?)
+    // 3. Absolute score threshold (does it look like real code at all?)
     let total_positive: i64 = scores.iter().map(|s| s.raw_score.max(0)).sum();
-    let confidence = if total_positive > 0 {
+
+    let share_confidence = if total_positive > 0 {
         best.raw_score.max(0) as f64 / total_positive as f64
     } else {
         0.0
     };
+
+    // Margin confidence: how much better is the winner than second place?
+    let margin_confidence = if let Some(second) = second_best {
+        if second.raw_score > 0 {
+            // Margin as a ratio: if winner is 50% higher than second, margin = 0.5
+            let margin = (best.raw_score - second.raw_score) as f64 / second.raw_score as f64;
+            // Scale margin to a confidence: margin of 0.2 (20% better) → ~0.5 confidence
+            // margin of 1.0 (100% better) → ~0.9 confidence
+            (margin / (margin + 0.25)).min(0.95)
+        } else {
+            0.95 // If second place has no score, winner is very confident
+        }
+    } else {
+        0.95
+    };
+
+    // Combined confidence: use the higher of share or margin-based confidence
+    // This helps when many architectures score but one clearly dominates
+    let confidence = share_confidence.max(margin_confidence * 0.8);
 
     if confidence < options.min_confidence {
         return Err(ClassifierError::HeuristicInconclusive {
@@ -107,12 +131,8 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
     }
 
     // Build result
-    let mut result = ClassificationResult::from_heuristics(
-        best.isa,
-        best.bitwidth,
-        best.endianness,
-        confidence,
-    );
+    let mut result =
+        ClassificationResult::from_heuristics(best.isa, best.bitwidth, best.endianness, confidence);
     result.source = ClassificationSource::Heuristic;
     result.format = FileFormat::Raw;
 
@@ -468,11 +488,33 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 32,
     });
 
-    // Calculate normalized confidence
+    // Calculate confidence using margin-based approach
+    // Sort by score to find winner and runner-up
+    scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+
     let total_positive: i64 = scores.iter().map(|s| s.raw_score.max(0)).sum();
-    if total_positive > 0 {
-        for score in &mut scores {
-            score.confidence = score.raw_score.max(0) as f64 / total_positive as f64;
+
+    if total_positive > 0 && !scores.is_empty() {
+        let best_score = scores[0].raw_score.max(0);
+        let second_score = scores.get(1).map(|s| s.raw_score.max(0)).unwrap_or(0);
+
+        // Calculate margin confidence for winner
+        let margin_conf = if second_score > 0 {
+            let margin = (best_score - second_score) as f64 / second_score as f64;
+            (margin / (margin + 0.25)).min(0.95)
+        } else {
+            0.95
+        };
+
+        for (i, score) in scores.iter_mut().enumerate() {
+            let share = score.raw_score.max(0) as f64 / total_positive as f64;
+
+            // For the top scorer, also consider margin of victory
+            if i == 0 {
+                score.confidence = share.max(margin_conf * 0.8);
+            } else {
+                score.confidence = share;
+            }
         }
     }
 
@@ -480,7 +522,11 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
 }
 
 /// Get the top N architecture candidates.
-pub fn top_candidates(data: &[u8], n: usize, options: &ClassifierOptions) -> Vec<ArchitectureScore> {
+pub fn top_candidates(
+    data: &[u8],
+    n: usize,
+    options: &ClassifierOptions,
+) -> Vec<ArchitectureScore> {
     let mut scores = score_all_architectures(data, options);
     scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
     scores.truncate(n);
@@ -495,16 +541,16 @@ mod tests {
     fn test_x86_detection() {
         // Common x86-64 prologue with multiple distinctive patterns
         let data = [
-            0x55,             // push rbp
+            0x55, // push rbp
             0x48, 0x89, 0xE5, // mov rbp, rsp
             0x48, 0x83, 0xEC, 0x20, // sub rsp, 0x20
             0x48, 0x89, 0x7D, 0xF8, // mov [rbp-8], rdi
             0x48, 0x89, 0x75, 0xF0, // mov [rbp-16], rsi
-            0x90,             // nop
-            0x90,             // nop
+            0x90, // nop
+            0x90, // nop
             0x48, 0x83, 0xC4, 0x20, // add rsp, 0x20
-            0x5D,             // pop rbp
-            0xC3,             // ret
+            0x5D, // pop rbp
+            0xC3, // ret
         ];
 
         // Use thorough options with 15% threshold for small heuristic samples
@@ -548,8 +594,8 @@ mod tests {
             0x13, 0x00, 0x00, 0x00, // nop = 25 pts
             0x13, 0x00, 0x00, 0x00, // nop = 25 pts
             0x67, 0x80, 0x00, 0x00, // ret (jalr x0, x1, 0) = 30 pts
-            0x01, 0x00,             // c.nop = 20 pts (compressed)
-            0x82, 0x80,             // c.ret = 25 pts (compressed)
+            0x01, 0x00, // c.nop = 20 pts (compressed)
+            0x82, 0x80, // c.ret = 25 pts (compressed)
         ];
 
         // Use thorough options with 15% threshold for heuristic detection

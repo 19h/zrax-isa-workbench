@@ -457,12 +457,8 @@ fn parse_dtb(data: &[u8]) -> Result<ClassificationResult> {
     };
 
     // DTB is ISA-independent
-    let mut result = ClassificationResult::from_format(
-        Isa::Unknown(0),
-        0,
-        Endianness::Big,
-        FileFormat::Dtb,
-    );
+    let mut result =
+        ClassificationResult::from_format(Isa::Unknown(0), 0, Endianness::Big, FileFormat::Dtb);
     result.variant = Variant::new("FDT");
     result.metadata = metadata;
 

@@ -6,22 +6,22 @@
 
 /// Instruction format groups (bits 15:12).
 pub mod format {
-    pub const FMT_0: u8 = 0x0;   // Misc: MOV, shifts, etc.
-    pub const FMT_1: u8 = 0x1;   // MOV.L @(disp,Rn), Rm
-    pub const FMT_2: u8 = 0x2;   // MOV.x @Rm, Rn / MOV.x Rm, @Rn
-    pub const FMT_3: u8 = 0x3;   // CMP, ADD, SUB
-    pub const FMT_4: u8 = 0x4;   // Misc: shifts, system
-    pub const FMT_5: u8 = 0x5;   // MOV.L @(disp,Rm), Rn
-    pub const FMT_6: u8 = 0x6;   // MOV.x @Rm, Rn (extended)
-    pub const FMT_7: u8 = 0x7;   // ADD #imm, Rn
-    pub const FMT_8: u8 = 0x8;   // Branches (BT, BF, etc.)
-    pub const FMT_9: u8 = 0x9;   // MOV.W @(disp,PC), Rn
-    pub const FMT_A: u8 = 0xA;   // BRA
-    pub const FMT_B: u8 = 0xB;   // BSR
-    pub const FMT_C: u8 = 0xC;   // Misc immediate ops
-    pub const FMT_D: u8 = 0xD;   // MOV.L @(disp,PC), Rn
-    pub const FMT_E: u8 = 0xE;   // MOV #imm, Rn
-    pub const FMT_F: u8 = 0xF;   // FPU instructions
+    pub const FMT_0: u8 = 0x0; // Misc: MOV, shifts, etc.
+    pub const FMT_1: u8 = 0x1; // MOV.L @(disp,Rn), Rm
+    pub const FMT_2: u8 = 0x2; // MOV.x @Rm, Rn / MOV.x Rm, @Rn
+    pub const FMT_3: u8 = 0x3; // CMP, ADD, SUB
+    pub const FMT_4: u8 = 0x4; // Misc: shifts, system
+    pub const FMT_5: u8 = 0x5; // MOV.L @(disp,Rm), Rn
+    pub const FMT_6: u8 = 0x6; // MOV.x @Rm, Rn (extended)
+    pub const FMT_7: u8 = 0x7; // ADD #imm, Rn
+    pub const FMT_8: u8 = 0x8; // Branches (BT, BF, etc.)
+    pub const FMT_9: u8 = 0x9; // MOV.W @(disp,PC), Rn
+    pub const FMT_A: u8 = 0xA; // BRA
+    pub const FMT_B: u8 = 0xB; // BSR
+    pub const FMT_C: u8 = 0xC; // Misc immediate ops
+    pub const FMT_D: u8 = 0xD; // MOV.L @(disp,PC), Rn
+    pub const FMT_E: u8 = 0xE; // MOV #imm, Rn
+    pub const FMT_F: u8 = 0xF; // FPU instructions
 }
 
 /// Format 0 sub-opcodes (bits 3:0 for specific instructions).
@@ -40,24 +40,24 @@ pub mod fmt0_ops {
 /// Format 4 sub-opcodes (system/shift operations).
 pub mod fmt4_ops {
     // Format: 0100 nnnn xxxx xxxx
-    pub const SHLL: u8 = 0x00;   // 0100 nnnn 0000 0000
-    pub const SHLR: u8 = 0x01;   // 0100 nnnn 0000 0001
-    pub const ROTL: u8 = 0x04;   // 0100 nnnn 0000 0100
-    pub const ROTR: u8 = 0x05;   // 0100 nnnn 0000 0101
-    pub const ROTCL: u8 = 0x24;  // 0100 nnnn 0010 0100
-    pub const ROTCR: u8 = 0x25;  // 0100 nnnn 0010 0101
-    pub const SHLL2: u8 = 0x08;  // 0100 nnnn 0000 1000
-    pub const SHLR2: u8 = 0x09;  // 0100 nnnn 0000 1001
-    pub const SHLL8: u8 = 0x18;  // 0100 nnnn 0001 1000
-    pub const SHLR8: u8 = 0x19;  // 0100 nnnn 0001 1001
+    pub const SHLL: u8 = 0x00; // 0100 nnnn 0000 0000
+    pub const SHLR: u8 = 0x01; // 0100 nnnn 0000 0001
+    pub const ROTL: u8 = 0x04; // 0100 nnnn 0000 0100
+    pub const ROTR: u8 = 0x05; // 0100 nnnn 0000 0101
+    pub const ROTCL: u8 = 0x24; // 0100 nnnn 0010 0100
+    pub const ROTCR: u8 = 0x25; // 0100 nnnn 0010 0101
+    pub const SHLL2: u8 = 0x08; // 0100 nnnn 0000 1000
+    pub const SHLR2: u8 = 0x09; // 0100 nnnn 0000 1001
+    pub const SHLL8: u8 = 0x18; // 0100 nnnn 0001 1000
+    pub const SHLR8: u8 = 0x19; // 0100 nnnn 0001 1001
     pub const SHLL16: u8 = 0x28; // 0100 nnnn 0010 1000
     pub const SHLR16: u8 = 0x29; // 0100 nnnn 0010 1001
-    pub const DT: u8 = 0x10;     // 0100 nnnn 0001 0000 (decrement and test)
+    pub const DT: u8 = 0x10; // 0100 nnnn 0001 0000 (decrement and test)
     pub const CMP_PL: u8 = 0x15; // 0100 nnnn 0001 0101
     pub const CMP_PZ: u8 = 0x11; // 0100 nnnn 0001 0001
-    pub const JSR: u8 = 0x0B;    // 0100 mmmm 0000 1011
-    pub const JMP: u8 = 0x2B;    // 0100 mmmm 0010 1011
-    pub const TAS: u8 = 0x1B;    // 0100 nnnn 0001 1011
+    pub const JSR: u8 = 0x0B; // 0100 mmmm 0000 1011
+    pub const JMP: u8 = 0x2B; // 0100 mmmm 0010 1011
+    pub const TAS: u8 = 0x1B; // 0100 nnnn 0001 1011
     pub const LDS_MACH: u8 = 0x0A;
     pub const LDS_MACL: u8 = 0x1A;
     pub const LDS_PR: u8 = 0x2A;
@@ -68,62 +68,62 @@ pub mod fmt4_ops {
 
 /// Format 8 sub-opcodes (conditional branches).
 pub mod fmt8_ops {
-    pub const BT: u8 = 0x9;    // 1000 1001 dddd dddd
-    pub const BF: u8 = 0xB;    // 1000 1011 dddd dddd
-    pub const BT_S: u8 = 0xD;  // 1000 1101 dddd dddd (delay slot)
-    pub const BF_S: u8 = 0xF;  // 1000 1111 dddd dddd (delay slot)
+    pub const BT: u8 = 0x9; // 1000 1001 dddd dddd
+    pub const BF: u8 = 0xB; // 1000 1011 dddd dddd
+    pub const BT_S: u8 = 0xD; // 1000 1101 dddd dddd (delay slot)
+    pub const BF_S: u8 = 0xF; // 1000 1111 dddd dddd (delay slot)
 }
 
 /// Common SuperH instruction patterns.
 pub mod patterns {
     /// NOP.
     pub const NOP: u16 = 0x0009;
-    
+
     /// RTS (return from subroutine).
     pub const RTS: u16 = 0x000B;
-    
+
     /// RTE (return from exception).
     pub const RTE: u16 = 0x002B;
-    
+
     /// SLEEP.
     pub const SLEEP: u16 = 0x001B;
-    
+
     /// CLRT (clear T bit).
     pub const CLRT: u16 = 0x0008;
-    
+
     /// SETT (set T bit).
     pub const SETT: u16 = 0x0018;
-    
+
     /// CLRMAC.
     pub const CLRMAC: u16 = 0x0028;
-    
+
     /// DIV0U (divide step setup).
     pub const DIV0U: u16 = 0x0019;
-    
+
     /// TRAPA #imm mask (0xC3xx).
     pub const TRAPA_MASK: u16 = 0xFF00;
     pub const TRAPA_VAL: u16 = 0xC300;
-    
+
     /// BRA mask (0xAxxx).
     pub const BRA_MASK: u16 = 0xF000;
     pub const BRA_VAL: u16 = 0xA000;
-    
+
     /// BSR mask (0xBxxx).
     pub const BSR_MASK: u16 = 0xF000;
     pub const BSR_VAL: u16 = 0xB000;
-    
+
     /// JSR @Rm pattern (0x4m0B).
     pub const JSR_MASK: u16 = 0xF0FF;
     pub const JSR_VAL: u16 = 0x400B;
-    
+
     /// JMP @Rm pattern (0x4m2B).
     pub const JMP_MASK: u16 = 0xF0FF;
     pub const JMP_VAL: u16 = 0x402B;
-    
+
     /// MOV #imm, Rn pattern (0xEnii).
     pub const MOV_IMM_MASK: u16 = 0xF000;
     pub const MOV_IMM_VAL: u16 = 0xE000;
-    
+
     /// ADD #imm, Rn pattern (0x7nii).
     pub const ADD_IMM_MASK: u16 = 0xF000;
     pub const ADD_IMM_VAL: u16 = 0x7000;
@@ -199,9 +199,9 @@ pub fn is_return(instr: u16) -> bool {
 pub fn is_branch(instr: u16) -> bool {
     let fmt = get_format(instr);
     match fmt {
-        format::FMT_8 => true,   // BT, BF, BT/S, BF/S
-        format::FMT_A => true,   // BRA
-        format::FMT_B => true,   // BSR
+        format::FMT_8 => true, // BT, BF, BT/S, BF/S
+        format::FMT_A => true, // BRA
+        format::FMT_B => true, // BSR
         _ => false,
     }
 }
@@ -248,32 +248,45 @@ pub fn is_conditional_branch(instr: u16) -> bool {
         return false;
     }
     let subop = (instr >> 8) & 0x0F;
-    matches!(subop as u8, fmt8_ops::BT | fmt8_ops::BF | fmt8_ops::BT_S | fmt8_ops::BF_S)
+    matches!(
+        subop as u8,
+        fmt8_ops::BT | fmt8_ops::BF | fmt8_ops::BT_S | fmt8_ops::BF_S
+    )
 }
 
 /// Check if instruction has a delay slot.
 pub fn has_delay_slot(instr: u16) -> bool {
     // BRA, BSR, JMP, JSR, RTS, RTE all have delay slots
     // BT/S, BF/S also have delay slots
-    is_bra(instr) || is_bsr(instr) || is_jmp(instr) || is_jsr(instr) ||
-    instr == patterns::RTS || instr == patterns::RTE ||
-    {
-        let fmt = get_format(instr);
-        if fmt == format::FMT_8 {
-            let subop = (instr >> 8) & 0x0F;
-            subop as u8 == fmt8_ops::BT_S || subop as u8 == fmt8_ops::BF_S
-        } else {
-            false
+    is_bra(instr)
+        || is_bsr(instr)
+        || is_jmp(instr)
+        || is_jsr(instr)
+        || instr == patterns::RTS
+        || instr == patterns::RTE
+        || {
+            let fmt = get_format(instr);
+            if fmt == format::FMT_8 {
+                let subop = (instr >> 8) & 0x0F;
+                subop as u8 == fmt8_ops::BT_S || subop as u8 == fmt8_ops::BF_S
+            } else {
+                false
+            }
         }
-    }
 }
 
 /// Check if instruction is a MOV.
 pub fn is_mov(instr: u16) -> bool {
     let fmt = get_format(instr);
-    matches!(fmt,
-        format::FMT_1 | format::FMT_2 | format::FMT_5 | format::FMT_6 |
-        format::FMT_9 | format::FMT_D | format::FMT_E
+    matches!(
+        fmt,
+        format::FMT_1
+            | format::FMT_2
+            | format::FMT_5
+            | format::FMT_6
+            | format::FMT_9
+            | format::FMT_D
+            | format::FMT_E
     )
 }
 
@@ -302,28 +315,80 @@ pub const STRONG_INDICATORS: &[u16] = &[
 /// Check if a 16-bit value looks like a valid SH instruction.
 pub fn is_likely_valid(instr: u16) -> bool {
     let fmt = get_format(instr);
-    
+
     match fmt {
         format::FMT_0 => {
             // Many format 0 instructions have specific patterns
             let low = instr & 0x00FF;
-            matches!(low,
-                0x02 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 | 0x08 | 0x09 |
-                0x0A | 0x0B | 0x0C | 0x0D | 0x0E | 0x0F | 0x18 | 0x19 |
-                0x1B | 0x28 | 0x29 | 0x2B
+            matches!(
+                low,
+                0x02 | 0x03
+                    | 0x04
+                    | 0x05
+                    | 0x06
+                    | 0x07
+                    | 0x08
+                    | 0x09
+                    | 0x0A
+                    | 0x0B
+                    | 0x0C
+                    | 0x0D
+                    | 0x0E
+                    | 0x0F
+                    | 0x18
+                    | 0x19
+                    | 0x1B
+                    | 0x28
+                    | 0x29
+                    | 0x2B
             )
         }
-        format::FMT_1 | format::FMT_2 | format::FMT_3 | format::FMT_5 |
-        format::FMT_6 | format::FMT_7 | format::FMT_9 | format::FMT_A |
-        format::FMT_B | format::FMT_D | format::FMT_E => true,
+        format::FMT_1
+        | format::FMT_2
+        | format::FMT_3
+        | format::FMT_5
+        | format::FMT_6
+        | format::FMT_7
+        | format::FMT_9
+        | format::FMT_A
+        | format::FMT_B
+        | format::FMT_D
+        | format::FMT_E => true,
         format::FMT_4 => {
             // Many format 4 opcodes
             let subop = get_subop_ext(instr);
-            matches!(subop,
-                0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 |
-                0x08 | 0x09 | 0x0A | 0x0B | 0x0E | 0x0F | 0x10 | 0x11 |
-                0x15 | 0x18 | 0x19 | 0x1A | 0x1B | 0x1E | 0x24 | 0x25 |
-                0x26 | 0x27 | 0x28 | 0x29 | 0x2A | 0x2B | 0x2E
+            matches!(
+                subop,
+                0x00 | 0x01
+                    | 0x02
+                    | 0x03
+                    | 0x04
+                    | 0x05
+                    | 0x06
+                    | 0x07
+                    | 0x08
+                    | 0x09
+                    | 0x0A
+                    | 0x0B
+                    | 0x0E
+                    | 0x0F
+                    | 0x10
+                    | 0x11
+                    | 0x15
+                    | 0x18
+                    | 0x19
+                    | 0x1A
+                    | 0x1B
+                    | 0x1E
+                    | 0x24
+                    | 0x25
+                    | 0x26
+                    | 0x27
+                    | 0x28
+                    | 0x29
+                    | 0x2A
+                    | 0x2B
+                    | 0x2E
             )
         }
         format::FMT_8 => {

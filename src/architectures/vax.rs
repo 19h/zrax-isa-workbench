@@ -509,6 +509,7 @@ pub fn score(data: &[u8]) -> i64 {
     let mut i = 0;
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
+    let mut halt_run: u32 = 0;
 
     while i < data.len() {
         let op = data[i];
@@ -526,12 +527,28 @@ pub fn score(data: &[u8]) -> i64 {
 
         valid_count += 1;
 
+        // Track runs of HALT (0x00) - likely padding, not real code
+        if op == opcode::HALT {
+            halt_run += 1;
+            if halt_run <= 1 {
+                // Single HALT is plausible
+                total_score += 3;
+            } else if halt_run > 4 {
+                // Many HALTs in a row is suspicious - likely padding
+                total_score -= 1;
+            }
+            i += len;
+            continue;
+        } else {
+            halt_run = 0;
+        }
+
         // Score based on instruction type
         match op {
             // Very strong indicators
             opcode::RET | opcode::RSB => total_score += 15,
             opcode::NOP => total_score += 8,
-            opcode::HALT => total_score += 5, // Less common but distinctive
+            opcode::HALT => unreachable!(), // Handled above
 
             // Common branches
             opcode::BNEQ | opcode::BEQL => total_score += 8,

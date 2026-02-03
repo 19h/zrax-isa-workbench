@@ -131,13 +131,13 @@ pub fn known_extensions(isa: Isa) -> Vec<(&'static str, ExtensionCategory)> {
         ],
         Isa::RiscV32 | Isa::RiscV64 | Isa::RiscV128 => vec![
             // Standard
-            ("M", ExtensionCategory::Other),     // Multiply/Divide
-            ("A", ExtensionCategory::Atomic),    // Atomic
+            ("M", ExtensionCategory::Other),  // Multiply/Divide
+            ("A", ExtensionCategory::Atomic), // Atomic
             ("F", ExtensionCategory::FloatingPoint), // Single-precision FP
             ("D", ExtensionCategory::FloatingPoint), // Double-precision FP
             ("Q", ExtensionCategory::FloatingPoint), // Quad-precision FP
             ("C", ExtensionCategory::Compressed), // Compressed
-            ("V", ExtensionCategory::Simd),       // Vector
+            ("V", ExtensionCategory::Simd),   // Vector
             ("H", ExtensionCategory::Virtualization), // Hypervisor
             // Zicsr, Zifencei
             ("Zicsr", ExtensionCategory::System),

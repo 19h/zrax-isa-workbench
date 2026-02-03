@@ -28,13 +28,13 @@ pub mod opcode {
 
 /// Common RISC-V instruction patterns.
 pub mod patterns {
-    pub const NOP: u32 = 0x00000013;     // addi x0, x0, 0
-    pub const RET: u32 = 0x00008067;     // jalr x0, x1, 0
-    pub const ECALL: u32 = 0x00000073;   // ecall
-    pub const EBREAK: u32 = 0x00100073;  // ebreak
-    pub const C_NOP: u16 = 0x0001;       // c.nop
-    pub const C_RET: u16 = 0x8082;       // c.jr ra / c.ret
-    pub const C_EBREAK: u16 = 0x9002;    // c.ebreak
+    pub const NOP: u32 = 0x00000013; // addi x0, x0, 0
+    pub const RET: u32 = 0x00008067; // jalr x0, x1, 0
+    pub const ECALL: u32 = 0x00000073; // ecall
+    pub const EBREAK: u32 = 0x00100073; // ebreak
+    pub const C_NOP: u16 = 0x0001; // c.nop
+    pub const C_RET: u16 = 0x8082; // c.jr ra / c.ret
+    pub const C_EBREAK: u16 = 0x9002; // c.ebreak
 }
 
 /// Determine instruction length from first bytes.
@@ -128,8 +128,16 @@ pub fn uses_a_extension(instr: u32) -> bool {
 /// Check if instruction uses F/D extension.
 pub fn uses_fd_extension(instr: u32) -> bool {
     let op = get_opcode(instr);
-    matches!(op, opcode::LOAD_FP | opcode::STORE_FP | opcode::OP_FP
-        | opcode::MADD | opcode::MSUB | opcode::NMSUB | opcode::NMADD)
+    matches!(
+        op,
+        opcode::LOAD_FP
+            | opcode::STORE_FP
+            | opcode::OP_FP
+            | opcode::MADD
+            | opcode::MSUB
+            | opcode::NMSUB
+            | opcode::NMADD
+    )
 }
 
 /// Check if instruction uses V extension.
@@ -150,7 +158,7 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
 
     while i < data.len() {
         let instr_len = instruction_length(&data[i..]);
-        
+
         if instr_len == 2 {
             // Compressed instruction (16-bit)
             if i + 2 > data.len() {

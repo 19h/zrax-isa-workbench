@@ -5,22 +5,22 @@
 
 /// First word opcode groups (bits 15:12).
 pub mod opcode_group {
-    pub const BITOP_MOVEP_IMM: u8 = 0x0;   // Bit operations, MOVEP, immediate
-    pub const MOVE_BYTE: u8 = 0x1;         // MOVE.B
-    pub const MOVE_LONG: u8 = 0x2;         // MOVE.L
-    pub const MOVE_WORD: u8 = 0x3;         // MOVE.W
-    pub const MISC: u8 = 0x4;              // Miscellaneous
+    pub const BITOP_MOVEP_IMM: u8 = 0x0; // Bit operations, MOVEP, immediate
+    pub const MOVE_BYTE: u8 = 0x1; // MOVE.B
+    pub const MOVE_LONG: u8 = 0x2; // MOVE.L
+    pub const MOVE_WORD: u8 = 0x3; // MOVE.W
+    pub const MISC: u8 = 0x4; // Miscellaneous
     pub const ADDQ_SUBQ_SCC_DBCC: u8 = 0x5; // Quick add/sub, set/branch on condition
-    pub const BCC_BSR_BRA: u8 = 0x6;       // Branches
-    pub const MOVEQ: u8 = 0x7;             // MOVEQ
-    pub const OR_DIV_SBCD: u8 = 0x8;       // OR, DIV, SBCD
-    pub const SUB_SUBX: u8 = 0x9;          // SUB, SUBX
-    pub const RESERVED_A: u8 = 0xA;        // A-line (unassigned/emulator)
-    pub const CMP_EOR: u8 = 0xB;           // CMP, EOR
-    pub const AND_MUL_ABCD_EXG: u8 = 0xC;  // AND, MUL, ABCD, EXG
-    pub const ADD_ADDX: u8 = 0xD;          // ADD, ADDX
-    pub const SHIFT_ROTATE: u8 = 0xE;      // Shift and rotate
-    pub const RESERVED_F: u8 = 0xF;        // F-line (coprocessor/emulator)
+    pub const BCC_BSR_BRA: u8 = 0x6; // Branches
+    pub const MOVEQ: u8 = 0x7; // MOVEQ
+    pub const OR_DIV_SBCD: u8 = 0x8; // OR, DIV, SBCD
+    pub const SUB_SUBX: u8 = 0x9; // SUB, SUBX
+    pub const RESERVED_A: u8 = 0xA; // A-line (unassigned/emulator)
+    pub const CMP_EOR: u8 = 0xB; // CMP, EOR
+    pub const AND_MUL_ABCD_EXG: u8 = 0xC; // AND, MUL, ABCD, EXG
+    pub const ADD_ADDX: u8 = 0xD; // ADD, ADDX
+    pub const SHIFT_ROTATE: u8 = 0xE; // Shift and rotate
+    pub const RESERVED_F: u8 = 0xF; // F-line (coprocessor/emulator)
 }
 
 /// Group 4 (miscellaneous) operations.
@@ -62,63 +62,63 @@ pub mod misc_ops {
 pub mod patterns {
     /// NOP.
     pub const NOP: u16 = 0x4E71;
-    
+
     /// RTS (return from subroutine).
     pub const RTS: u16 = 0x4E75;
-    
+
     /// RTE (return from exception).
     pub const RTE: u16 = 0x4E73;
-    
+
     /// RTR (return and restore CCR).
     pub const RTR: u16 = 0x4E77;
-    
+
     /// ILLEGAL instruction.
     pub const ILLEGAL: u16 = 0x4AFC;
-    
+
     /// TRAP #0.
     pub const TRAP_0: u16 = 0x4E40;
-    
+
     /// RESET.
     pub const RESET: u16 = 0x4E70;
-    
+
     /// STOP.
     pub const STOP: u16 = 0x4E72;
-    
+
     /// TRAPV.
     pub const TRAPV: u16 = 0x4E76;
-    
+
     /// JSR (absolute long) mask.
     pub const JSR_MASK: u16 = 0xFFC0;
     pub const JSR_VAL: u16 = 0x4E80;
-    
+
     /// JMP (absolute long) mask.
     pub const JMP_MASK: u16 = 0xFFC0;
     pub const JMP_VAL: u16 = 0x4EC0;
-    
+
     /// LEA mask.
     pub const LEA_MASK: u16 = 0xF1C0;
     pub const LEA_VAL: u16 = 0x41C0;
-    
+
     /// LINK mask.
     pub const LINK_MASK: u16 = 0xFFF8;
     pub const LINK_VAL: u16 = 0x4E50;
-    
+
     /// UNLK mask.
     pub const UNLK_MASK: u16 = 0xFFF8;
     pub const UNLK_VAL: u16 = 0x4E58;
-    
+
     /// BSR (branch to subroutine) - 8-bit displacement.
     pub const BSR_BYTE: u16 = 0x6100;
     /// BSR with 16-bit displacement marker.
     pub const BSR_WORD: u16 = 0x6100;
-    
+
     /// BRA (branch always) - 8-bit displacement.
     pub const BRA_BYTE: u16 = 0x6000;
-    
+
     /// MOVEM to memory mask.
     pub const MOVEM_TO_MEM_MASK: u16 = 0xFB80;
     pub const MOVEM_TO_MEM_VAL: u16 = 0x4880;
-    
+
     /// MOVEM from memory mask.
     pub const MOVEM_FROM_MEM_MASK: u16 = 0xFB80;
     pub const MOVEM_FROM_MEM_VAL: u16 = 0x4C80;
@@ -126,41 +126,41 @@ pub mod patterns {
 
 /// Condition codes for Bcc/DBcc/Scc instructions.
 pub mod condition {
-    pub const TRUE: u8 = 0x0;   // T (always true)
-    pub const FALSE: u8 = 0x1;  // F (always false)
-    pub const HI: u8 = 0x2;     // Higher (unsigned >)
-    pub const LS: u8 = 0x3;     // Lower or same (unsigned <=)
-    pub const CC: u8 = 0x4;     // Carry clear (HI or same)
-    pub const CS: u8 = 0x5;     // Carry set (LO)
-    pub const NE: u8 = 0x6;     // Not equal
-    pub const EQ: u8 = 0x7;     // Equal
-    pub const VC: u8 = 0x8;     // Overflow clear
-    pub const VS: u8 = 0x9;     // Overflow set
-    pub const PL: u8 = 0xA;     // Plus (positive)
-    pub const MI: u8 = 0xB;     // Minus (negative)
-    pub const GE: u8 = 0xC;     // Greater or equal (signed)
-    pub const LT: u8 = 0xD;     // Less than (signed)
-    pub const GT: u8 = 0xE;     // Greater than (signed)
-    pub const LE: u8 = 0xF;     // Less or equal (signed)
+    pub const TRUE: u8 = 0x0; // T (always true)
+    pub const FALSE: u8 = 0x1; // F (always false)
+    pub const HI: u8 = 0x2; // Higher (unsigned >)
+    pub const LS: u8 = 0x3; // Lower or same (unsigned <=)
+    pub const CC: u8 = 0x4; // Carry clear (HI or same)
+    pub const CS: u8 = 0x5; // Carry set (LO)
+    pub const NE: u8 = 0x6; // Not equal
+    pub const EQ: u8 = 0x7; // Equal
+    pub const VC: u8 = 0x8; // Overflow clear
+    pub const VS: u8 = 0x9; // Overflow set
+    pub const PL: u8 = 0xA; // Plus (positive)
+    pub const MI: u8 = 0xB; // Minus (negative)
+    pub const GE: u8 = 0xC; // Greater or equal (signed)
+    pub const LT: u8 = 0xD; // Less than (signed)
+    pub const GT: u8 = 0xE; // Greater than (signed)
+    pub const LE: u8 = 0xF; // Less or equal (signed)
 }
 
 /// Addressing mode encodings.
 pub mod addr_mode {
-    pub const DATA_REG: u8 = 0b000;        // Dn
-    pub const ADDR_REG: u8 = 0b001;        // An
-    pub const ADDR_IND: u8 = 0b010;        // (An)
-    pub const ADDR_IND_POST: u8 = 0b011;   // (An)+
-    pub const ADDR_IND_PRE: u8 = 0b100;    // -(An)
-    pub const ADDR_IND_DISP: u8 = 0b101;   // (d16,An)
-    pub const ADDR_IND_INDEX: u8 = 0b110;  // (d8,An,Xn)
-    pub const SPECIAL: u8 = 0b111;         // Special modes (reg field determines)
-    
+    pub const DATA_REG: u8 = 0b000; // Dn
+    pub const ADDR_REG: u8 = 0b001; // An
+    pub const ADDR_IND: u8 = 0b010; // (An)
+    pub const ADDR_IND_POST: u8 = 0b011; // (An)+
+    pub const ADDR_IND_PRE: u8 = 0b100; // -(An)
+    pub const ADDR_IND_DISP: u8 = 0b101; // (d16,An)
+    pub const ADDR_IND_INDEX: u8 = 0b110; // (d8,An,Xn)
+    pub const SPECIAL: u8 = 0b111; // Special modes (reg field determines)
+
     // Special mode register field values
-    pub const ABS_SHORT: u8 = 0b000;       // (xxx).W
-    pub const ABS_LONG: u8 = 0b001;        // (xxx).L
-    pub const PC_DISP: u8 = 0b010;         // (d16,PC)
-    pub const PC_INDEX: u8 = 0b011;        // (d8,PC,Xn)
-    pub const IMMEDIATE: u8 = 0b100;       // #<data>
+    pub const ABS_SHORT: u8 = 0b000; // (xxx).W
+    pub const ABS_LONG: u8 = 0b001; // (xxx).L
+    pub const PC_DISP: u8 = 0b010; // (d16,PC)
+    pub const PC_INDEX: u8 = 0b011; // (d8,PC,Xn)
+    pub const IMMEDIATE: u8 = 0b100; // #<data>
 }
 
 /// Extract opcode group (bits 15:12).
@@ -211,21 +211,29 @@ pub fn get_moveq_data(instr: u16) -> i8 {
 /// Extract ADDQ/SUBQ data (bits 11:9, 0 means 8).
 pub fn get_quick_data(instr: u16) -> u8 {
     let data = ((instr >> 9) & 0x07) as u8;
-    if data == 0 { 8 } else { data }
+    if data == 0 {
+        8
+    } else {
+        data
+    }
 }
 
 /// Determine instruction length (basic, not accounting for all extensions).
 /// Returns minimum length; actual length may be longer due to extension words.
 pub fn base_instruction_length(instr: u16) -> usize {
     let group = get_opcode_group(instr);
-    
+
     match group {
         opcode_group::MISC => {
             // Many misc instructions are 2 bytes, but some have extensions
-            if instr == patterns::NOP || instr == patterns::RTS ||
-               instr == patterns::RTE || instr == patterns::RTR ||
-               instr == patterns::ILLEGAL || instr == patterns::RESET ||
-               instr == patterns::TRAPV {
+            if instr == patterns::NOP
+                || instr == patterns::RTS
+                || instr == patterns::RTE
+                || instr == patterns::RTR
+                || instr == patterns::ILLEGAL
+                || instr == patterns::RESET
+                || instr == patterns::TRAPV
+            {
                 2
             } else if (instr & 0xFFF0) == patterns::TRAP_0 {
                 2
@@ -271,14 +279,14 @@ pub fn is_branch(instr: u16) -> bool {
 
 /// Check if instruction is BSR (call).
 pub fn is_bsr(instr: u16) -> bool {
-    get_opcode_group(instr) == opcode_group::BCC_BSR_BRA &&
-    get_condition(instr) == 0x01 // BSR uses condition code 0001
+    get_opcode_group(instr) == opcode_group::BCC_BSR_BRA && get_condition(instr) == 0x01
+    // BSR uses condition code 0001
 }
 
 /// Check if instruction is BRA (unconditional branch).
 pub fn is_bra(instr: u16) -> bool {
-    get_opcode_group(instr) == opcode_group::BCC_BSR_BRA &&
-    get_condition(instr) == 0x00 // BRA uses condition code 0000
+    get_opcode_group(instr) == opcode_group::BCC_BSR_BRA && get_condition(instr) == 0x00
+    // BRA uses condition code 0000
 }
 
 /// Check if instruction is JSR.
@@ -319,7 +327,10 @@ pub fn is_lea(instr: u16) -> bool {
 /// Check if instruction is a MOVE.
 pub fn is_move(instr: u16) -> bool {
     let group = get_opcode_group(instr);
-    matches!(group, opcode_group::MOVE_BYTE | opcode_group::MOVE_WORD | opcode_group::MOVE_LONG)
+    matches!(
+        group,
+        opcode_group::MOVE_BYTE | opcode_group::MOVE_WORD | opcode_group::MOVE_LONG
+    )
 }
 
 /// Check if instruction is MOVEQ.
@@ -329,8 +340,8 @@ pub fn is_moveq(instr: u16) -> bool {
 
 /// Check if instruction is MOVEM.
 pub fn is_movem(instr: u16) -> bool {
-    ((instr & patterns::MOVEM_TO_MEM_MASK) == patterns::MOVEM_TO_MEM_VAL) ||
-    ((instr & patterns::MOVEM_FROM_MEM_MASK) == patterns::MOVEM_FROM_MEM_VAL)
+    ((instr & patterns::MOVEM_TO_MEM_MASK) == patterns::MOVEM_TO_MEM_VAL)
+        || ((instr & patterns::MOVEM_FROM_MEM_MASK) == patterns::MOVEM_FROM_MEM_VAL)
 }
 
 /// Check if instruction is ILLEGAL.

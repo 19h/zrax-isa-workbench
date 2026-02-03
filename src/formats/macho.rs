@@ -4,7 +4,7 @@
 //! including fat/universal binaries.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{read_u32};
+use crate::formats::read_u32;
 use crate::types::{
     ClassificationMetadata, ClassificationResult, Endianness, Extension, ExtensionCategory,
     FileFormat, Isa, Variant,
@@ -482,10 +482,7 @@ pub fn parse(data: &[u8], bits: u8, big_endian: bool) -> Result<ClassificationRe
     // Build metadata
     let metadata = ClassificationMetadata {
         raw_machine: Some(cpu_type),
-        notes: vec![format!(
-            "CPU subtype: 0x{:08X}",
-            cpu_subtype
-        )],
+        notes: vec![format!("CPU subtype: 0x{:08X}", cpu_subtype)],
         ..Default::default()
     };
 
@@ -664,8 +661,8 @@ pub fn parse_fat_all(data: &[u8]) -> Result<Vec<FatArchEntry>> {
             None => Variant::default(),
         };
 
-    // Extract extensions from CPU type/subtype
-    let extensions = extensions_from_cpu(cpu_type, cpu_subtype);
+        // Extract extensions from CPU type/subtype
+        let extensions = extensions_from_cpu(cpu_type, cpu_subtype);
 
         let mut classification =
             ClassificationResult::from_format(isa, bits, endianness, FileFormat::MachO);

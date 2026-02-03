@@ -14,7 +14,7 @@ pub mod opcode {
     pub const BC: u8 = 16;
     pub const SC: u8 = 17;
     pub const B: u8 = 18;
-    pub const XL_FORM: u8 = 19;  // CR ops, bclr, bcctr, etc.
+    pub const XL_FORM: u8 = 19; // CR ops, bclr, bcctr, etc.
     pub const RLWIMI: u8 = 20;
     pub const RLWINM: u8 = 21;
     pub const RLWNM: u8 = 23;
@@ -24,7 +24,7 @@ pub mod opcode {
     pub const XORIS: u8 = 27;
     pub const ANDI_DOT: u8 = 28;
     pub const ANDIS_DOT: u8 = 29;
-    pub const X_FORM: u8 = 31;  // Extended ops
+    pub const X_FORM: u8 = 31; // Extended ops
     pub const LWZ: u8 = 32;
     pub const LWZU: u8 = 33;
     pub const LBZ: u8 = 34;
@@ -49,7 +49,7 @@ pub mod opcode {
     pub const STFSU: u8 = 53;
     pub const STFD: u8 = 54;
     pub const STFDU: u8 = 55;
-    pub const LD_STD: u8 = 58;  // LD, LDU, LWA
+    pub const LD_STD: u8 = 58; // LD, LDU, LWA
     pub const FP_SINGLE: u8 = 59;
     pub const STD: u8 = 62;
     pub const FP_DOUBLE: u8 = 63;
@@ -57,8 +57,8 @@ pub mod opcode {
 
 /// XL-form extended opcodes.
 pub mod xl_xo {
-    pub const BCLR: u16 = 16;    // Branch conditional to LR
-    pub const BCCTR: u16 = 528;  // Branch conditional to CTR
+    pub const BCLR: u16 = 16; // Branch conditional to LR
+    pub const BCCTR: u16 = 528; // Branch conditional to CTR
     pub const CRAND: u16 = 257;
     pub const CRNAND: u16 = 225;
     pub const CROR: u16 = 449;
@@ -84,13 +84,13 @@ pub mod x_xo {
 
 /// Common PowerPC patterns.
 pub mod patterns {
-    pub const NOP: u32 = 0x60000000;       // ori 0,0,0
-    pub const BLR: u32 = 0x4E800020;       // blr
-    pub const BCTR: u32 = 0x4E800420;      // bctr
-    pub const SC: u32 = 0x44000002;        // sc
-    pub const TRAP: u32 = 0x7FE00008;      // trap
-    pub const MFLR_R0: u32 = 0x7C0802A6;   // mflr r0
-    pub const MTLR_R0: u32 = 0x7C0803A6;   // mtlr r0
+    pub const NOP: u32 = 0x60000000; // ori 0,0,0
+    pub const BLR: u32 = 0x4E800020; // blr
+    pub const BCTR: u32 = 0x4E800420; // bctr
+    pub const SC: u32 = 0x44000002; // sc
+    pub const TRAP: u32 = 0x7FE00008; // trap
+    pub const MFLR_R0: u32 = 0x7C0802A6; // mflr r0
+    pub const MTLR_R0: u32 = 0x7C0803A6; // mtlr r0
 }
 
 /// Extract primary opcode.

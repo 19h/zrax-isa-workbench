@@ -83,9 +83,19 @@ pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str
 
         machine::IA64 => (Isa::Ia64, 64, Endianness::Little, None),
 
-        machine::TRICORE => (Isa::Unknown(0x0520), 32, Endianness::Little, Some("TriCore")),
+        machine::TRICORE => (
+            Isa::Unknown(0x0520),
+            32,
+            Endianness::Little,
+            Some("TriCore"),
+        ),
 
-        machine::EBC => (Isa::Unknown(0x0EBC), 64, Endianness::Little, Some("EFI Byte Code")),
+        machine::EBC => (
+            Isa::Unknown(0x0EBC),
+            64,
+            Endianness::Little,
+            Some("EFI Byte Code"),
+        ),
 
         machine::RISCV32 => (Isa::RiscV32, 32, Endianness::Little, None),
         machine::RISCV64 => (Isa::RiscV64, 64, Endianness::Little, None),

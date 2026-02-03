@@ -292,11 +292,144 @@ pub fn score(data: &[u8]) -> i64 {
     let mut total_score: i64 = 0;
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
+    let mut zero_run: u32 = 0;
 
     // i860 is little-endian, 4-byte aligned
     let mut i = 0;
     while i + 3 < data.len() {
         let instr = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // Handle all-zero pattern specially - likely padding, not real LD_B
+        if instr == 0x00000000 {
+            zero_run += 1;
+            if zero_run > 2 {
+                // Long runs of zeros are padding, penalize
+                total_score -= 1;
+            }
+            i += 4;
+            continue;
+        } else {
+            zero_run = 0;
+        }
+
+        // Also handle all-ones (0xFFFFFFFF) as likely invalid
+        if instr == 0xFFFFFFFF {
+            invalid_count += 1;
+            total_score -= 2;
+            i += 4;
+            continue;
+        }
+
+        // Common padding patterns
+        if instr == 0x5A5A5A5A || instr == 0xDEADBEEF || instr == 0xCAFEBABE || instr == 0xFEEDFACE
+        {
+            total_score -= 3;
+            i += 4;
+            continue;
+        }
+
+        // Detect Thumb-2 instruction patterns that could false-positive as i860
+        // Thumb-2 BL: first halfword F000-F7FF, second halfword D000-DFFF or F800-FFFF
+        // When read as little-endian 32-bit: 0xDxxxFxxx or 0xFxxxFxxx
+        // Also detect Thumb-2 32-bit prefixes in general
+        {
+            let hw1 = (instr >> 16) as u16; // Second halfword (in memory order)
+            let hw0 = (instr & 0xFFFF) as u16; // First halfword
+            let hw0_prefix = (hw0 >> 11) & 0x1F;
+            let hw1_prefix = (hw1 >> 11) & 0x1F;
+
+            // Check if both halfwords look like Thumb-2 32-bit instruction halves
+            // First half: 0b11101xx, 0b11110xx, 0b11111xx (0x1D, 0x1E, 0x1F)
+            let is_thumb2_prefix = matches!(hw0_prefix, 0x1D | 0x1E | 0x1F);
+
+            // Common Thumb-2 32-bit patterns:
+            // BL/BLX: hw0 = F000-F7FF, hw1 = C000-DFFF (BL) or E000-EFFF (BLX)
+            if is_thumb2_prefix {
+                // BL instruction: F0xx Dxxx or F0xx Fxxx patterns
+                if (hw0 & 0xF800) == 0xF000
+                    && ((hw1 & 0xD000) == 0xD000 || (hw1 & 0xD000) == 0x9000)
+                {
+                    // Strong Thumb-2 BL pattern
+                    total_score -= 8;
+                    i += 4;
+                    continue;
+                }
+
+                // Thumb-2 LDR.W / STR.W: F8xx xxxx or F85x, F84x patterns
+                if (hw0 & 0xFF00) == 0xF800 || (hw0 & 0xFFF0) == 0xF8D0 || (hw0 & 0xFFF0) == 0xF8C0
+                {
+                    total_score -= 6;
+                    i += 4;
+                    continue;
+                }
+
+                // Generic 32-bit Thumb-2 - mild penalty
+                total_score -= 3;
+            }
+
+            // Thumb-2 PUSH.W/POP.W: E92Dxxxx / E8BDxxxx
+            if (instr & 0xFFFFE000) == 0xE92D0000 || (instr & 0xFFFFE000) == 0xE8BD0000 {
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
+
+            // Detect 16-bit Thumb pairs that look like valid i860
+            // BX LR (4770) paired with something
+            if hw0 == 0x4770 || hw1 == 0x4770 {
+                total_score -= 5;
+            }
+
+            // PUSH/POP 16-bit: B4xx/BCxx, B5xx/BDxx
+            if (hw0 & 0xFE00) == 0xB400
+                || (hw0 & 0xFE00) == 0xBC00
+                || (hw1 & 0xFE00) == 0xB400
+                || (hw1 & 0xFE00) == 0xBC00
+            {
+                total_score -= 4;
+            }
+
+            // NOP.N (BF00) - very common Thumb marker
+            if hw0 == 0xBF00 || hw1 == 0xBF00 {
+                total_score -= 4;
+            }
+
+            // LDR Rt, [PC, #imm] - PC-relative load (48xx-4Fxx)
+            if (hw0 & 0xF800) == 0x4800 || (hw1 & 0xF800) == 0x4800 {
+                total_score -= 3;
+            }
+
+            // CBZ/CBNZ (B1xx, B3xx, B9xx, BBxx)
+            if (hw0 & 0xF500) == 0xB100
+                || (hw0 & 0xF500) == 0xB900
+                || (hw1 & 0xF500) == 0xB100
+                || (hw1 & 0xF500) == 0xB900
+            {
+                total_score -= 4;
+            }
+
+            // Thumb LDR.W/STR.W patterns that don't have Thumb-2 prefix
+            // 5Fxx patterns are common in Thumb code
+            if (hw0 & 0xFF00) == 0x5F00 || (hw1 & 0xFF00) == 0x5F00 {
+                total_score -= 3;
+            }
+
+            // Conditional branch B<cond> (Dxxx except DE/DF)
+            if ((hw0 & 0xF000) == 0xD000 && (hw0 & 0x0F00) < 0x0E00)
+                || ((hw1 & 0xF000) == 0xD000 && (hw1 & 0x0F00) < 0x0E00)
+            {
+                total_score -= 3;
+            }
+
+            // Unconditional branch B (E0xx-E7FF - 16-bit)
+            // Note: E8xx-EFFF are 32-bit Thumb-2 instructions
+            if ((hw0 & 0xF800) == 0xE000 && (hw0 & 0x0800) == 0x0000)
+                || ((hw1 & 0xF800) == 0xE000 && (hw1 & 0x0800) == 0x0000)
+            {
+                total_score -= 3;
+            }
+        }
+
         let op = extract_opcode(instr);
         let format = instruction_format(op);
 
@@ -350,6 +483,24 @@ pub fn score(data: &[u8]) -> i64 {
                 }
             }
             Format::Fpu => {
+                // Check for patterns that look like AArch64 system instructions
+                // AArch64 MRS/MSR: 0xD53xxxxx / 0xD51xxxxx - these have specific bit patterns
+                // that don't match valid i860 FPU instructions
+                let top12 = instr >> 20;
+                if top12 == 0xD53 || top12 == 0xD51 || top12 == 0xD50 {
+                    // This looks like AArch64 system instruction, not i860 FPU
+                    total_score -= 5;
+                    i += 4;
+                    continue;
+                }
+
+                // Also check for AArch64 return instructions (0xD65Fxxxx, 0xD69Fxxxx)
+                if (instr & 0xFFFF0000) == 0xD65F0000 || (instr & 0xFFFF0000) == 0xD69F0000 {
+                    total_score -= 5;
+                    i += 4;
+                    continue;
+                }
+
                 // FPU operations - distinctive for i860
                 total_score += 8;
 

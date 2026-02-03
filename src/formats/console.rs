@@ -315,8 +315,7 @@ fn parse_self_ps4(data: &[u8], is_ps5: bool) -> Result<ClassificationResult> {
         ..Default::default()
     };
 
-    let mut result =
-        ClassificationResult::from_format(Isa::X86_64, 64, Endianness::Little, format);
+    let mut result = ClassificationResult::from_format(Isa::X86_64, 64, Endianness::Little, format);
     result.variant = Variant::new(platform);
     result.metadata = metadata;
 
@@ -354,9 +353,21 @@ fn parse_nso(data: &[u8]) -> Result<ClassificationResult> {
 
     let mut notes = vec!["NSO (Nintendo Switch)".to_string()];
     notes.push(format!("Version: {}", version));
-    notes.push(format!(".text: {} bytes (compressed: {})", text_size, flags & 1 != 0));
-    notes.push(format!(".rodata: {} bytes (compressed: {})", ro_size, flags & 2 != 0));
-    notes.push(format!(".data: {} bytes (compressed: {})", data_size, flags & 4 != 0));
+    notes.push(format!(
+        ".text: {} bytes (compressed: {})",
+        text_size,
+        flags & 1 != 0
+    ));
+    notes.push(format!(
+        ".rodata: {} bytes (compressed: {})",
+        ro_size,
+        flags & 2 != 0
+    ));
+    notes.push(format!(
+        ".data: {} bytes (compressed: {})",
+        data_size,
+        flags & 4 != 0
+    ));
     notes.push(format!(".bss: {} bytes", bss_size));
 
     let metadata = ClassificationMetadata {
@@ -509,7 +520,7 @@ mod tests {
         data[0..4].copy_from_slice(&NSO_MAGIC);
         // Flags
         data[12..16].copy_from_slice(&7u32.to_le_bytes()); // All compressed
-        // Text size
+                                                           // Text size
         data[24..28].copy_from_slice(&0x10000u32.to_le_bytes());
         data
     }

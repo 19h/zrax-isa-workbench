@@ -770,7 +770,11 @@ fn parse_aarch64_gnu_properties(data: &[u8], is_64: bool, little_endian: bool) -
 }
 
 /// Parse a GNU property note section/segment.
-fn parse_gnu_property_note(data: &[u8], is_64: bool, little_endian: bool) -> Option<Vec<Extension>> {
+fn parse_gnu_property_note(
+    data: &[u8],
+    is_64: bool,
+    little_endian: bool,
+) -> Option<Vec<Extension>> {
     let mut extensions = Vec::new();
     let mut offset = 0;
 
@@ -804,7 +808,8 @@ fn parse_gnu_property_note(data: &[u8], is_64: bool, little_endian: bool) -> Opt
                     let mut prop_offset = desc_start;
                     while prop_offset + 8 <= desc_end {
                         let pr_type = read_u32(data, prop_offset, little_endian).ok()?;
-                        let pr_datasz = read_u32(data, prop_offset + 4, little_endian).ok()? as usize;
+                        let pr_datasz =
+                            read_u32(data, prop_offset + 4, little_endian).ok()? as usize;
 
                         prop_offset += 8;
 
@@ -813,7 +818,9 @@ fn parse_gnu_property_note(data: &[u8], is_64: bool, little_endian: bool) -> Opt
                         }
 
                         // GNU_PROPERTY_AARCH64_FEATURE_1_AND
-                        if pr_type == gnu_property::GNU_PROPERTY_AARCH64_FEATURE_1_AND && pr_datasz >= 4 {
+                        if pr_type == gnu_property::GNU_PROPERTY_AARCH64_FEATURE_1_AND
+                            && pr_datasz >= 4
+                        {
                             let features = read_u32(data, prop_offset, little_endian).ok()?;
 
                             if features & gnu_property::GNU_PROPERTY_AARCH64_FEATURE_1_BTI != 0 {
@@ -948,10 +955,7 @@ fn parse_ppc64_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
         _ => "",
     };
 
-    (
-        Variant::with_abi("PowerPC64", abi_name),
-        Vec::new(),
-    )
+    (Variant::with_abi("PowerPC64", abi_name), Vec::new())
 }
 
 /// Parse SuperH ELF flags.

@@ -28,7 +28,7 @@ pub fn analyze_with_options(
 /// This is a fast preliminary check before full analysis.
 pub fn quick_check_isa(data: &[u8], isa: crate::types::Isa) -> bool {
     use crate::types::Isa;
-    
+
     if data.len() < 4 {
         return false;
     }
@@ -37,29 +37,28 @@ pub fn quick_check_isa(data: &[u8], isa: crate::types::Isa) -> bool {
         Isa::X86 | Isa::X86_64 => {
             // Look for common x86 patterns
             data.iter().take(1000).any(|&b| {
-                matches!(b, 
+                matches!(
+                    b,
                     0x55 |  // push ebp/rbp
                     0x90 |  // nop
                     0xC3 |  // ret
-                    0xCC    // int3
+                    0xCC // int3
                 )
             })
         }
-        
+
         Isa::AArch64 => {
             // Check for 4-byte alignment and common patterns
             if data.len() < 4 {
                 return false;
             }
-            
+
             for i in (0..data.len().min(1000)).step_by(4) {
                 if i + 4 > data.len() {
                     break;
                 }
-                let word = u32::from_le_bytes([
-                    data[i], data[i + 1], data[i + 2], data[i + 3]
-                ]);
-                
+                let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
                 // NOP, RET, or common branch patterns
                 if word == 0xD503201F || word == 0xD65F03C0 || (word >> 26) == 0x25 {
                     return true;
@@ -67,21 +66,19 @@ pub fn quick_check_isa(data: &[u8], isa: crate::types::Isa) -> bool {
             }
             false
         }
-        
+
         Isa::Arm => {
             // Look for ARM condition codes (E = always)
             if data.len() < 4 {
                 return false;
             }
-            
+
             for i in (0..data.len().min(1000)).step_by(4) {
                 if i + 4 > data.len() {
                     break;
                 }
-                let word = u32::from_le_bytes([
-                    data[i], data[i + 1], data[i + 2], data[i + 3]
-                ]);
-                
+                let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
                 // Check condition field (should be 0-14)
                 let cond = (word >> 28) & 0xF;
                 if cond == 0xE {
@@ -93,27 +90,25 @@ pub fn quick_check_isa(data: &[u8], isa: crate::types::Isa) -> bool {
             }
             false
         }
-        
+
         Isa::RiscV32 | Isa::RiscV64 => {
             // Look for RISC-V patterns
             let limit = data.len().min(1000);
             for i in 0..limit {
                 // Check for 32-bit instruction (bits [1:0] = 11)
                 if data[i] & 0x03 == 0x03 && i + 4 <= limit {
-                    let word = u32::from_le_bytes([
-                        data[i], data[i + 1], data[i + 2], data[i + 3]
-                    ]);
-                    
+                    let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
                     // NOP (addi x0,x0,0) or RET
                     if word == 0x00000013 || word == 0x00008067 {
                         return true;
                     }
                 }
-                
+
                 // Check for compressed instruction
                 if data[i] & 0x03 != 0x03 && i + 2 <= limit {
                     let half = u16::from_le_bytes([data[i], data[i + 1]]);
-                    
+
                     // C.NOP or C.RET
                     if half == 0x0001 || half == 0x8082 {
                         return true;
@@ -122,47 +117,41 @@ pub fn quick_check_isa(data: &[u8], isa: crate::types::Isa) -> bool {
             }
             false
         }
-        
+
         Isa::Mips | Isa::Mips64 => {
             // Check for MIPS patterns (big-endian check first)
             for i in (0..data.len().min(1000)).step_by(4) {
                 if i + 4 > data.len() {
                     break;
                 }
-                
+
                 // Try big-endian
-                let word_be = u32::from_be_bytes([
-                    data[i], data[i + 1], data[i + 2], data[i + 3]
-                ]);
-                
+                let word_be = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
                 // NOP or JR $ra
                 if word_be == 0x00000000 || word_be == 0x03E00008 {
                     return true;
                 }
-                
+
                 // Try little-endian
-                let word_le = u32::from_le_bytes([
-                    data[i], data[i + 1], data[i + 2], data[i + 3]
-                ]);
-                
+                let word_le = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
                 if word_le == 0x00000000 || word_le == 0x03E00008 {
                     return true;
                 }
             }
             false
         }
-        
+
         Isa::Ppc | Isa::Ppc64 => {
             // PowerPC is big-endian
             for i in (0..data.len().min(1000)).step_by(4) {
                 if i + 4 > data.len() {
                     break;
                 }
-                
-                let word = u32::from_be_bytes([
-                    data[i], data[i + 1], data[i + 2], data[i + 3]
-                ]);
-                
+
+                let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
                 // NOP or BLR
                 if word == 0x60000000 || word == 0x4E800020 {
                     return true;
@@ -170,7 +159,7 @@ pub fn quick_check_isa(data: &[u8], isa: crate::types::Isa) -> bool {
             }
             false
         }
-        
+
         _ => false,
     }
 }

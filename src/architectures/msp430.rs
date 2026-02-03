@@ -7,67 +7,67 @@
 pub mod format {
     /// Single-operand format: [15:12]=0001, [11:7]=opcode, [6]=B/W, [5:4]=As, [3:0]=reg
     pub const SINGLE_OP: u8 = 0x1;
-    
+
     /// Two-operand format: [15:12]=opcode, [11:8]=src, [7]=Ad, [6]=B/W, [5:4]=As, [3:0]=dst
     /// Opcodes 4-F
-    
+
     /// Jump format: [15:13]=001, [12:10]=condition, [9:0]=offset
     pub const JUMP: u8 = 0x1; // Actually detected by bits 15:13 = 001
 }
 
 /// Single-operand opcodes (when bits 15:12 = 0001).
 pub mod single_op {
-    pub const RRC: u8 = 0x00;   // Rotate right through carry
-    pub const SWPB: u8 = 0x01;  // Swap bytes
-    pub const RRA: u8 = 0x02;   // Rotate right arithmetic
-    pub const SXT: u8 = 0x03;   // Sign extend
-    pub const PUSH: u8 = 0x04;  // Push
-    pub const CALL: u8 = 0x05;  // Call
-    pub const RETI: u8 = 0x06;  // Return from interrupt
+    pub const RRC: u8 = 0x00; // Rotate right through carry
+    pub const SWPB: u8 = 0x01; // Swap bytes
+    pub const RRA: u8 = 0x02; // Rotate right arithmetic
+    pub const SXT: u8 = 0x03; // Sign extend
+    pub const PUSH: u8 = 0x04; // Push
+    pub const CALL: u8 = 0x05; // Call
+    pub const RETI: u8 = 0x06; // Return from interrupt
 }
 
 /// Two-operand opcodes (bits 15:12).
 pub mod two_op {
-    pub const MOV: u8 = 0x4;    // Move
-    pub const ADD: u8 = 0x5;    // Add
-    pub const ADDC: u8 = 0x6;   // Add with carry
-    pub const SUBC: u8 = 0x7;   // Subtract with carry
-    pub const SUB: u8 = 0x8;    // Subtract
-    pub const CMP: u8 = 0x9;    // Compare
-    pub const DADD: u8 = 0xA;   // Decimal add
-    pub const BIT: u8 = 0xB;    // Bit test
-    pub const BIC: u8 = 0xC;    // Bit clear
-    pub const BIS: u8 = 0xD;    // Bit set
-    pub const XOR: u8 = 0xE;    // Exclusive or
-    pub const AND: u8 = 0xF;    // And
+    pub const MOV: u8 = 0x4; // Move
+    pub const ADD: u8 = 0x5; // Add
+    pub const ADDC: u8 = 0x6; // Add with carry
+    pub const SUBC: u8 = 0x7; // Subtract with carry
+    pub const SUB: u8 = 0x8; // Subtract
+    pub const CMP: u8 = 0x9; // Compare
+    pub const DADD: u8 = 0xA; // Decimal add
+    pub const BIT: u8 = 0xB; // Bit test
+    pub const BIC: u8 = 0xC; // Bit clear
+    pub const BIS: u8 = 0xD; // Bit set
+    pub const XOR: u8 = 0xE; // Exclusive or
+    pub const AND: u8 = 0xF; // And
 }
 
 /// Jump conditions (bits 12:10 when bits 15:13 = 001).
 pub mod jump_cond {
-    pub const JNE: u8 = 0x0;    // Jump if not equal/zero
-    pub const JEQ: u8 = 0x1;    // Jump if equal/zero
-    pub const JNC: u8 = 0x2;    // Jump if no carry
-    pub const JC: u8 = 0x3;     // Jump if carry
-    pub const JN: u8 = 0x4;     // Jump if negative
-    pub const JGE: u8 = 0x5;    // Jump if greater or equal
-    pub const JL: u8 = 0x6;     // Jump if less
-    pub const JMP: u8 = 0x7;    // Jump unconditionally
+    pub const JNE: u8 = 0x0; // Jump if not equal/zero
+    pub const JEQ: u8 = 0x1; // Jump if equal/zero
+    pub const JNC: u8 = 0x2; // Jump if no carry
+    pub const JC: u8 = 0x3; // Jump if carry
+    pub const JN: u8 = 0x4; // Jump if negative
+    pub const JGE: u8 = 0x5; // Jump if greater or equal
+    pub const JL: u8 = 0x6; // Jump if less
+    pub const JMP: u8 = 0x7; // Jump unconditionally
 }
 
 /// Addressing modes (As/Ad fields).
 pub mod addr_mode {
-    pub const REGISTER: u8 = 0b00;       // Rn
-    pub const INDEXED: u8 = 0b01;        // X(Rn) or symbolic/absolute
-    pub const INDIRECT: u8 = 0b10;       // @Rn
-    pub const INDIRECT_INC: u8 = 0b11;   // @Rn+ or immediate
+    pub const REGISTER: u8 = 0b00; // Rn
+    pub const INDEXED: u8 = 0b01; // X(Rn) or symbolic/absolute
+    pub const INDIRECT: u8 = 0b10; // @Rn
+    pub const INDIRECT_INC: u8 = 0b11; // @Rn+ or immediate
 }
 
 /// Register numbers.
 pub mod reg {
-    pub const PC: u8 = 0;   // Program counter
-    pub const SP: u8 = 1;   // Stack pointer
-    pub const SR: u8 = 2;   // Status register
-    pub const CG: u8 = 3;   // Constant generator
+    pub const PC: u8 = 0; // Program counter
+    pub const SP: u8 = 1; // Stack pointer
+    pub const SR: u8 = 2; // Status register
+    pub const CG: u8 = 3; // Constant generator
     pub const R4: u8 = 4;
     pub const R5: u8 = 5;
     pub const R6: u8 = 6;
@@ -87,34 +87,34 @@ pub mod patterns {
     /// NOP (MOV #0, R3 or other equivalent).
     /// Common NOP encoding: MOV R3, R3 = 0x4303
     pub const NOP: u16 = 0x4303;
-    
+
     /// RET (MOV @SP+, PC) = 0x4130
     pub const RET: u16 = 0x4130;
-    
+
     /// RETI = 0x1300
     pub const RETI: u16 = 0x1300;
-    
+
     /// BR (branch - MOV src, PC).
     pub const BR_MASK: u16 = 0xF08F;
-    pub const BR_VAL: u16 = 0x4000;  // MOV to PC
-    
+    pub const BR_VAL: u16 = 0x4000; // MOV to PC
+
     /// CALL mask (single-operand, opcode=5).
     pub const CALL_MASK: u16 = 0xFF80;
     pub const CALL_VAL: u16 = 0x1280;
-    
+
     /// PUSH mask (single-operand, opcode=4).
     pub const PUSH_MASK: u16 = 0xFF80;
     pub const PUSH_VAL: u16 = 0x1200;
-    
+
     /// POP (emulated: MOV @SP+, dst).
     /// Can be detected as MOV with As=11, src=SP
-    
+
     /// CLR (emulated: MOV #0, dst).
-    
+
     /// Jump instruction mask.
     pub const JUMP_MASK: u16 = 0xE000;
     pub const JUMP_VAL: u16 = 0x2000;
-    
+
     /// Unconditional JMP mask.
     pub const JMP_MASK: u16 = 0xFC00;
     pub const JMP_VAL: u16 = 0x3C00;
@@ -195,15 +195,15 @@ pub fn is_two_op_format(instr: u16) -> bool {
 /// Calculate number of extension words needed.
 pub fn extension_words(instr: u16) -> usize {
     let mut count = 0;
-    
+
     if is_jump_format(instr) {
         return 0;
     }
-    
+
     if is_single_op_format(instr) {
         let as_mode = get_as(instr);
         let reg = get_single_reg(instr);
-        
+
         // Indexed mode needs extension word
         if as_mode == addr_mode::INDEXED {
             count += 1;
@@ -213,27 +213,28 @@ pub fn extension_words(instr: u16) -> usize {
             count += 1;
         }
     }
-    
+
     if is_two_op_format(instr) {
         let as_mode = get_as(instr);
         let ad_mode = get_ad(instr);
         let src = get_src_reg(instr);
         let dst = get_dst_reg(instr);
-        
+
         // Source extension word
         if as_mode == addr_mode::INDEXED {
             count += 1;
         }
         if as_mode == addr_mode::INDIRECT_INC && src == reg::PC {
-            count += 1;  // Immediate mode
+            count += 1; // Immediate mode
         }
-        
+
         // Destination extension word
-        if ad_mode == 1 {  // Indexed addressing
+        if ad_mode == 1 {
+            // Indexed addressing
             count += 1;
         }
     }
-    
+
     count
 }
 
@@ -327,33 +328,29 @@ pub fn is_br(instr: u16) -> bool {
 }
 
 /// Strong indicator patterns for heuristic detection.
-pub const STRONG_INDICATORS: &[u16] = &[
-    patterns::NOP,
-    patterns::RET,
-    patterns::RETI,
-];
+pub const STRONG_INDICATORS: &[u16] = &[patterns::NOP, patterns::RET, patterns::RETI];
 
 /// Check if instruction looks like valid MSP430 code.
 pub fn is_likely_valid(instr: u16) -> bool {
     let op = get_opcode(instr);
-    
+
     // Jump format
     if is_jump_format(instr) {
         return true;
     }
-    
+
     // Single operand format (opcode 1)
     if op == 0x1 {
         let sub_op = get_single_op(instr);
         // Valid sub-opcodes are 0-6
         return sub_op <= 6;
     }
-    
+
     // Two-operand format (opcodes 4-F)
     if op >= 0x4 && op <= 0xF {
         return true;
     }
-    
+
     // Reserved/invalid opcodes
     false
 }
@@ -449,7 +446,7 @@ mod tests {
         // JMP .+0 = 0x3C00
         assert!(is_jump_format(0x3C00));
         assert!(is_jmp(0x3C00));
-        
+
         // JEQ .+4 = 0x2402
         assert!(is_jump_format(0x2402));
         assert!(is_conditional_jump(0x2402));

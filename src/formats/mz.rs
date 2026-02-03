@@ -150,7 +150,12 @@ fn parse_mz(data: &[u8]) -> Result<ClassificationResult> {
 
     // Calculate file size
     let file_size = if pages > 0 {
-        ((pages - 1) as u32 * 512) + if bytes_last_page > 0 { bytes_last_page as u32 } else { 512 }
+        ((pages - 1) as u32 * 512)
+            + if bytes_last_page > 0 {
+                bytes_last_page as u32
+            } else {
+                512
+            }
     } else {
         0
     };
@@ -159,7 +164,10 @@ fn parse_mz(data: &[u8]) -> Result<ClassificationResult> {
     notes.push(format!("Entry: {:04X}:{:04X}", cs, ip));
     notes.push(format!("Stack: {:04X}:{:04X}", ss, sp));
     notes.push(format!("Size: {} bytes ({} pages)", file_size, pages));
-    notes.push(format!("Relocations: {} at offset 0x{:04X}", relocs, reloc_offset));
+    notes.push(format!(
+        "Relocations: {} at offset 0x{:04X}",
+        relocs, reloc_offset
+    ));
     notes.push(format!("Header size: {} paragraphs", header_paragraphs));
 
     if overlay > 0 {
@@ -313,7 +321,11 @@ fn parse_le_lx(data: &[u8], is_lx: bool, cpu: u16, os: u16) -> Result<Classifica
     };
 
     let format_name = if is_lx { "LX" } else { "LE" };
-    let format = if is_lx { FileFormat::Lx } else { FileFormat::Le };
+    let format = if is_lx {
+        FileFormat::Lx
+    } else {
+        FileFormat::Le
+    };
 
     let module_type = if module_flags & 0x00008000 != 0 {
         "DLL"
@@ -330,10 +342,7 @@ fn parse_le_lx(data: &[u8], is_lx: bool, cpu: u16, os: u16) -> Result<Classifica
     notes.push(format!("CPU: {}", cpu_name));
     notes.push(format!("Type: {}", module_type));
     notes.push(format!("Pages: {}", module_pages));
-    notes.push(format!(
-        "Entry: object {}:0x{:08X}",
-        eip_object, eip_offset
-    ));
+    notes.push(format!("Entry: object {}:0x{:08X}", eip_object, eip_offset));
 
     if byte_order != 0 || word_order != 0 {
         notes.push(format!(
@@ -414,7 +423,7 @@ mod tests {
         data[ne_off + 1] = b'E';
         data[ne_off + 2] = 5; // linker major
         data[ne_off + 3] = 0; // linker minor
-        // Target OS
+                              // Target OS
         data[ne_off + 0x36] = ne_os::WINDOWS;
         // Segment count
         data[ne_off + 0x1C..ne_off + 0x1E].copy_from_slice(&4u16.to_le_bytes());

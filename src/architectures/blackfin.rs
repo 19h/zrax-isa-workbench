@@ -137,7 +137,10 @@ pub fn is_return(word: u16) -> bool {
 /// Check if instruction is a branch/jump.
 pub fn is_branch(word: u16) -> bool {
     let range = word & opcode::SYSTEM_CONTROL_MASK;
-    matches!(range, opcode::COND_BRANCH | opcode::SHORT_JUMP | opcode::SHORT_CALL)
+    matches!(
+        range,
+        opcode::COND_BRANCH | opcode::SHORT_JUMP | opcode::SHORT_CALL
+    )
 }
 
 /// Check if instruction is a NOP or sync.
@@ -194,9 +197,25 @@ pub fn score(data: &[u8]) -> i64 {
     let mut i = 0;
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
+    let mut zero_run: u32 = 0;
 
     while i + 1 < data.len() {
         let word = u16::from_le_bytes([data[i], data[i + 1]]);
+
+        // Handle zero words carefully - likely padding, not real NOPs
+        if word == 0x0000 {
+            zero_run += 1;
+            if zero_run <= 2 {
+                total_score += 2; // Small bonus for isolated zeros
+            } else if zero_run > 8 {
+                total_score -= 1; // Penalize long zero runs (padding)
+            }
+            i += 2;
+            continue;
+        } else {
+            zero_run = 0;
+        }
+
         let high_byte = (word >> 8) as u8;
         let instr_len = instruction_length(&data[i..]);
 
@@ -218,6 +237,7 @@ pub fn score(data: &[u8]) -> i64 {
             if is_return(word) {
                 total_score += 15; // Returns are strong indicators
             } else if word == opcode::NOP {
+                // NOP is 0x0000 which we handle above
                 total_score += 5;
             } else if is_nop_or_sync(word) {
                 total_score += 8; // Sync instructions are DSP-specific

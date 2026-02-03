@@ -75,10 +75,10 @@ pub mod funct {
 
 /// Common MIPS patterns.
 pub mod patterns {
-    pub const NOP: u32 = 0x00000000;      // sll $0, $0, 0
-    pub const JR_RA: u32 = 0x03E00008;    // jr $ra
-    pub const SYSCALL: u32 = 0x0000000C;  // syscall
-    pub const BREAK: u32 = 0x0000000D;    // break
+    pub const NOP: u32 = 0x00000000; // sll $0, $0, 0
+    pub const JR_RA: u32 = 0x03E00008; // jr $ra
+    pub const SYSCALL: u32 = 0x0000000C; // syscall
+    pub const BREAK: u32 = 0x0000000D; // break
 }
 
 /// Extract opcode from instruction.
@@ -211,15 +211,47 @@ fn score_word(word: u32) -> i64 {
 pub fn score(data: &[u8]) -> (i64, i64) {
     let mut score_be: i64 = 0;
     let mut score_le: i64 = 0;
+    let mut zero_run = 0u32;
+    let mut last_word = 0u32;
+    let mut repeat_count = 0u32;
 
     // MIPS instructions are 4 bytes, aligned
     for i in (0..data.len().saturating_sub(3)).step_by(4) {
         // Big-endian
         let word_be = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-        score_be += score_word(word_be);
-
         // Little-endian
         let word_le = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // Handle zero padding - while 0x00000000 is MIPS NOP, long runs suggest padding
+        if word_be == 0x00000000 {
+            zero_run += 1;
+            if zero_run <= 2 {
+                // First few NOPs are OK
+                score_be += 10;
+                score_le += 10;
+            } else if zero_run > 4 {
+                // Long runs are likely padding, penalize
+                score_be -= 3;
+                score_le -= 3;
+            }
+            last_word = word_be;
+            continue;
+        }
+        zero_run = 0;
+
+        // Detect repeated non-zero patterns (padding)
+        if word_be == last_word {
+            repeat_count += 1;
+            if repeat_count > 4 {
+                // Likely padding, not code - skip
+                continue;
+            }
+        } else {
+            repeat_count = 0;
+        }
+        last_word = word_be;
+
+        score_be += score_word(word_be);
         score_le += score_word(word_le);
     }
 

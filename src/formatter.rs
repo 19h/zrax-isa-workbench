@@ -4,8 +4,8 @@
 //! in various output formats (human-readable, JSON, compact).
 
 use crate::types::{
-    DetectionPayload, ExtensionDetection, FormatDetection, IsaCandidate,
-    IsaClassification, MetadataEntry, Note, NoteLevel,
+    DetectionPayload, ExtensionDetection, FormatDetection, IsaCandidate, IsaClassification,
+    MetadataEntry, Note, NoteLevel,
 };
 use std::path::Path;
 
@@ -139,17 +139,10 @@ impl PayloadFormatter for HumanFormatter {
         }
 
         let mut s = String::new();
-        s.push_str(&format!(
-            "  ISA:        {} ({})\n",
-            isa.isa,
-            isa.isa.name()
-        ));
+        s.push_str(&format!("  ISA:        {} ({})\n", isa.isa, isa.isa.name()));
         s.push_str(&format!("  Bitwidth:   {}-bit\n", isa.bitwidth));
         s.push_str(&format!("  Endianness: {}\n", isa.endianness));
-        s.push_str(&format!(
-            "  Confidence: {:.1}%\n",
-            isa.confidence * 100.0
-        ));
+        s.push_str(&format!("  Confidence: {:.1}%\n", isa.confidence * 100.0));
 
         if let Some(ref variant) = isa.variant {
             if !variant.name.is_empty() {
@@ -632,7 +625,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Endianness, ExtensionCategory, ExtensionSource, FileFormat, Isa, ClassificationSource};
+    use crate::types::{
+        ClassificationSource, Endianness, ExtensionCategory, ExtensionSource, FileFormat, Isa,
+    };
     use std::path::PathBuf;
 
     fn sample_payload() -> DetectionPayload {
@@ -640,7 +635,11 @@ mod tests {
             FormatDetection::new(FileFormat::Elf),
             IsaClassification::from_format(Isa::X86_64, 64, Endianness::Little),
         )
-        .with_extension(ExtensionDetection::from_code("AVX2", ExtensionCategory::Simd, 0.95))
+        .with_extension(ExtensionDetection::from_code(
+            "AVX2",
+            ExtensionCategory::Simd,
+            0.95,
+        ))
         .with_metadata(MetadataEntry::entry_point(0x401000))
     }
 

@@ -46,8 +46,8 @@ pub enum PrefixKind {
 pub fn classify_prefix(byte: u8) -> PrefixKind {
     match byte {
         0x26 | 0x2E | 0x36 | 0x3E | 0x64 | 0x65 => PrefixKind::Legacy, // Segment
-        0x66 | 0x67 => PrefixKind::Legacy, // Operand/Address size
-        0xF0 | 0xF2 | 0xF3 => PrefixKind::Legacy, // Lock/Rep
+        0x66 | 0x67 => PrefixKind::Legacy,                             // Operand/Address size
+        0xF0 | 0xF2 | 0xF3 => PrefixKind::Legacy,                      // Lock/Rep
         0x40..=0x4F => PrefixKind::Rex,
         0xC5 => PrefixKind::Vex2,
         0xC4 => PrefixKind::Vex3,
@@ -124,7 +124,7 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             b if b == opcodes::CALL_REL32 => score += 8,
             b if b == opcodes::JMP_REL32 => score += 5,
             b if b == opcodes::JMP_REL8 => score += 3,
-            0x8D => score += 3, // LEA
+            0x8D => score += 3,        // LEA
             0xB8..=0xBF => score += 2, // MOV immediate
             0x70..=0x7F => score += 3, // Conditional jumps
             _ => {}

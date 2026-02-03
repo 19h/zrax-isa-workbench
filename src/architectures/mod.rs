@@ -58,13 +58,13 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::M68k | Isa::ColdFire => Endianness::Big,
         Isa::Parisc => Endianness::Big,
         Isa::McstElbrus => Endianness::Big,
-        Isa::Jvm => Endianness::Big,     // JVM is big-endian
-        Isa::Dalvik => Endianness::Little, // DEX is little-endian
+        Isa::Jvm => Endianness::Big,         // JVM is big-endian
+        Isa::Dalvik => Endianness::Little,   // DEX is little-endian
         Isa::Blackfin => Endianness::Little, // Blackfin is little-endian
-        Isa::Ia64 => Endianness::Little, // Itanium is little-endian
-        Isa::Vax => Endianness::Little,  // VAX is little-endian
-        Isa::I860 => Endianness::Little, // i860 is little-endian
-        Isa::CellSpu => Endianness::Big, // Cell SPU is big-endian
+        Isa::Ia64 => Endianness::Little,     // Itanium is little-endian
+        Isa::Vax => Endianness::Little,      // VAX is little-endian
+        Isa::I860 => Endianness::Little,     // i860 is little-endian
+        Isa::CellSpu => Endianness::Big,     // Cell SPU is big-endian
 
         // Bi-endian (default to little)
         Isa::Arm => Endianness::Little,
@@ -93,10 +93,10 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::S390 | Isa::S390x => 2,
         Isa::M68k | Isa::ColdFire => 2,
         Isa::Z80 | Isa::Mcs6502 | Isa::W65816 => 1,
-        Isa::Jvm => 1,     // JVM bytecode is byte-aligned
-        Isa::Wasm => 1,    // WASM bytecode is byte-aligned
-        Isa::Dalvik => 2,  // DEX bytecode is 2-byte aligned
-        Isa::Vax => 1,     // VAX is byte-aligned (variable 1-37 bytes)
+        Isa::Jvm => 1,      // JVM bytecode is byte-aligned
+        Isa::Wasm => 1,     // WASM bytecode is byte-aligned
+        Isa::Dalvik => 2,   // DEX bytecode is 2-byte aligned
+        Isa::Vax => 1,      // VAX is byte-aligned (variable 1-37 bytes)
         Isa::Blackfin => 2, // Blackfin is 16-bit aligned (variable 16/32/64-bit)
 
         // Fixed 32-bit, 4-byte aligned

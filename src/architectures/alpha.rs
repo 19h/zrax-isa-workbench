@@ -33,9 +33,35 @@ pub const OP_BRANCH_END: u32 = 0x3F;
 /// in bits 26-31.
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
+    let mut last_word = 0u32;
+    let mut repeat_count = 0u32;
+    let mut zero_run = 0u32;
 
     for i in (0..data.len().saturating_sub(3)).step_by(4) {
         let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // Track zero runs
+        if word == 0x00000000 {
+            zero_run += 1;
+            if zero_run > 2 {
+                score -= 3;
+            }
+            last_word = word;
+            continue;
+        }
+        zero_run = 0;
+
+        // Track repeated patterns (padding)
+        if word == last_word {
+            repeat_count += 1;
+            if repeat_count > 4 {
+                continue; // Skip padding
+            }
+        } else {
+            repeat_count = 0;
+        }
+        last_word = word;
+
         let opcode = (word >> 26) & 0x3F;
 
         // NOP (bis $31, $31, $31 or unop)
@@ -66,7 +92,7 @@ pub fn score(data: &[u8]) -> i64 {
             _ => {}
         }
 
-        if word == 0x0000_0000 || word == 0xFFFF_FFFF {
+        if word == 0xFFFF_FFFF {
             score -= 5;
         }
     }

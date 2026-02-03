@@ -903,7 +903,18 @@ pub fn detect_alpha_extensions(data: &[u8]) -> Vec<Extension> {
             // PERR: 0x31, PKLB: 0x37, PKWB: 0x36, UNPKBL: 0x35, UNPKBW: 0x34
             if matches!(
                 function,
-                0x1A | 0x1B | 0x31 | 0x34 | 0x35 | 0x36 | 0x37 | 0x38 | 0x39 | 0x3A | 0x3B | 0x78 | 0x79
+                0x1A | 0x1B
+                    | 0x31
+                    | 0x34
+                    | 0x35
+                    | 0x36
+                    | 0x37
+                    | 0x38
+                    | 0x39
+                    | 0x3A
+                    | 0x3B
+                    | 0x78
+                    | 0x79
             ) {
                 extensions.insert(("MVI", ExtensionCategory::Simd));
             }
@@ -1238,7 +1249,8 @@ pub fn detect_arm32_extensions(data: &[u8], endianness: Endianness) -> Vec<Exten
         }
 
         // REV, REV16, REVSH (byte reverse)
-        if (word & 0x0FFF0FF0) == 0x06BF0F30 || (word & 0x0FFF0FF0) == 0x06BF0FB0
+        if (word & 0x0FFF0FF0) == 0x06BF0F30
+            || (word & 0x0FFF0FF0) == 0x06BF0FB0
             || (word & 0x0FFF0FF0) == 0x06FF0FB0
         {
             extensions.insert(("SIMDv1", ExtensionCategory::Simd));

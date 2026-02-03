@@ -115,12 +115,17 @@ pub fn parse(data: &[u8], variant: ArVariant) -> Result<ClassificationResult> {
 
         // Read size
         let size_str = String::from_utf8_lossy(
-            &data[offset + ar_header::SIZE_OFFSET..offset + ar_header::SIZE_OFFSET + ar_header::SIZE_SIZE],
+            &data[offset + ar_header::SIZE_OFFSET
+                ..offset + ar_header::SIZE_OFFSET + ar_header::SIZE_SIZE],
         );
         let size: usize = size_str.trim().parse().unwrap_or(0);
 
         // Skip special entries
-        if !name.is_empty() && !name.starts_with('/') && name != "__.SYMDEF" && !name.starts_with("#1/") {
+        if !name.is_empty()
+            && !name.starts_with('/')
+            && name != "__.SYMDEF"
+            && !name.starts_with("#1/")
+        {
             if member_names.len() < 10 {
                 member_names.push(name);
             }
@@ -164,12 +169,8 @@ pub fn parse(data: &[u8], variant: ArVariant) -> Result<ClassificationResult> {
     };
 
     // ar archives are ISA-independent containers
-    let mut result = ClassificationResult::from_format(
-        Isa::Unknown(0),
-        0,
-        Endianness::Little,
-        format,
-    );
+    let mut result =
+        ClassificationResult::from_format(Isa::Unknown(0), 0, Endianness::Little, format);
     result.variant = Variant::new(variant_name);
     result.metadata = metadata;
 

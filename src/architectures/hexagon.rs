@@ -7,18 +7,18 @@
 pub mod packet {
     /// Parse bits (bits 15:14) indicate packet boundary.
     pub const PARSE_BITS_MASK: u32 = 0x0000C000;
-    
+
     /// End of packet marker (parse bits = 11).
     pub const END_OF_PACKET: u32 = 0x0000C000;
-    
+
     /// Not end of packet (parse bits = 00, 01, 10).
     pub fn is_end_of_packet(instr: u32) -> bool {
         (instr & PARSE_BITS_MASK) == END_OF_PACKET
     }
-    
+
     /// Minimum packet size in bytes.
     pub const MIN_PACKET_SIZE: usize = 4;
-    
+
     /// Maximum packet size in bytes (4 instructions).
     pub const MAX_PACKET_SIZE: usize = 16;
 }
@@ -47,26 +47,26 @@ pub mod iclass {
 pub mod patterns {
     /// NOP.
     pub const NOP: u32 = 0x7F000000;
-    
+
     /// Alternative NOP encoding.
-    pub const NOP_ALT: u32 = 0x7F00C000;  // With end-of-packet
-    
+    pub const NOP_ALT: u32 = 0x7F00C000; // With end-of-packet
+
     /// JUMPR R31 (return) - approximate pattern.
     /// Actual encoding varies by version.
     pub const JUMPR_LR_MASK: u32 = 0xFFE03FFF;
-    pub const JUMPR_LR_VAL: u32 = 0x52800000;  // jumpr r31
-    
+    pub const JUMPR_LR_VAL: u32 = 0x52800000; // jumpr r31
+
     /// DEALLOC_RETURN - common return pattern.
     pub const DEALLOC_RETURN: u32 = 0x961EC01E;
-    
+
     /// ALLOCFRAME - function prologue.
     pub const ALLOCFRAME_MASK: u32 = 0xFFFFE000;
     pub const ALLOCFRAME_VAL: u32 = 0xA09DC000;
-    
+
     /// Loop setup patterns.
     pub const LOOP0_MASK: u32 = 0xFFE00000;
     pub const LOOP0_VAL: u32 = 0x60000000;
-    
+
     /// Constant extender prefix.
     pub const EXTENDER_MASK: u32 = 0xF0000000;
     pub const EXTENDER_VAL: u32 = 0x00000000;
@@ -91,17 +91,17 @@ pub mod version {
 pub mod reg {
     /// General purpose registers R0-R31.
     pub const R0: u8 = 0;
-    pub const R29: u8 = 29;  // SP
-    pub const R30: u8 = 30;  // FP
-    pub const R31: u8 = 31;  // LR
-    
+    pub const R29: u8 = 29; // SP
+    pub const R30: u8 = 30; // FP
+    pub const R31: u8 = 31; // LR
+
     /// Stack pointer alias.
     pub const SP: u8 = 29;
     /// Frame pointer alias.
     pub const FP: u8 = 30;
     /// Link register alias.
     pub const LR: u8 = 31;
-    
+
     /// Predicate registers P0-P3.
     pub const P0: u8 = 0;
     pub const P1: u8 = 1;
@@ -127,15 +127,13 @@ pub fn is_end_of_packet(instr: u32) -> bool {
 /// Check if instruction is a constant extender.
 pub fn is_extender(instr: u32) -> bool {
     // Constant extenders have specific encoding
-    (instr & patterns::EXTENDER_MASK) == patterns::EXTENDER_VAL &&
-    get_iclass(instr) == 0x0
+    (instr & patterns::EXTENDER_MASK) == patterns::EXTENDER_VAL && get_iclass(instr) == 0x0
 }
 
 /// Check if instruction is NOP.
 pub fn is_nop(instr: u32) -> bool {
     // NOP can have different parse bits
-    (instr & 0xFFFF0000) == (patterns::NOP & 0xFFFF0000) ||
-    instr == patterns::NOP_ALT
+    (instr & 0xFFFF0000) == (patterns::NOP & 0xFFFF0000) || instr == patterns::NOP_ALT
 }
 
 /// Check if instruction is likely a return.
@@ -143,8 +141,7 @@ pub fn is_return(instr: u32) -> bool {
     // Various return patterns
     // jumpr r31
     // dealloc_return
-    instr == patterns::DEALLOC_RETURN ||
-    (instr & patterns::JUMPR_LR_MASK) == patterns::JUMPR_LR_VAL
+    instr == patterns::DEALLOC_RETURN || (instr & patterns::JUMPR_LR_MASK) == patterns::JUMPR_LR_VAL
 }
 
 /// Check if instruction is ALLOCFRAME (function prologue).
@@ -176,8 +173,8 @@ pub fn is_predicated(instr: u32) -> bool {
     // Check for predicate encoding bits
     let iclass = get_iclass(instr);
     match iclass {
-        0..=3 => (instr & 0x08000000) != 0,  // ALU32
-        _ => false, // Simplified
+        0..=3 => (instr & 0x08000000) != 0, // ALU32
+        _ => false,                         // Simplified
     }
 }
 
@@ -223,10 +220,10 @@ pub fn packet_length(data: &[u8]) -> Option<usize> {
     if data.len() < 4 {
         return None;
     }
-    
+
     let mut offset = 0;
     let mut count = 0;
-    
+
     while offset + 4 <= data.len() && count < 4 {
         let instr = u32::from_le_bytes([
             data[offset],
@@ -234,47 +231,43 @@ pub fn packet_length(data: &[u8]) -> Option<usize> {
             data[offset + 2],
             data[offset + 3],
         ]);
-        
+
         count += 1;
         offset += 4;
-        
+
         if is_end_of_packet(instr) {
             return Some(count);
         }
     }
-    
+
     // No end-of-packet found within 4 instructions
     None
 }
 
 /// Strong indicator patterns for heuristic detection.
-pub const STRONG_INDICATORS: &[u32] = &[
-    patterns::NOP,
-    patterns::NOP_ALT,
-    patterns::DEALLOC_RETURN,
-];
+pub const STRONG_INDICATORS: &[u32] = &[patterns::NOP, patterns::NOP_ALT, patterns::DEALLOC_RETURN];
 
 /// Check if instruction looks like valid Hexagon code.
 pub fn is_likely_valid(instr: u32) -> bool {
     let iclass = get_iclass(instr);
-    
+
     // All instruction classes 0-F are potentially valid
     // But we can check for some obviously invalid patterns
-    
+
     // Check that parse bits are valid (00, 01, 10, or 11)
     // All values are valid, so no check needed there
-    
+
     // NOP pattern
     if is_nop(instr) {
         return true;
     }
-    
+
     // Check for valid instruction class patterns
     match iclass {
-        0x0..=0x3 => true,  // ALU32
-        0x4..=0x7 => true,  // XTYPE/Load/Store
-        0x8..=0xB => true,  // ALU64/Multiply
-        0xC..=0xF => true,  // Extended
+        0x0..=0x3 => true, // ALU32
+        0x4..=0x7 => true, // XTYPE/Load/Store
+        0x8..=0xB => true, // ALU64/Multiply
+        0xC..=0xF => true, // Extended
         _ => false,
     }
 }
@@ -285,17 +278,17 @@ pub mod features {
     pub fn has_hvx(version: u8) -> bool {
         version >= super::version::V60
     }
-    
+
     /// Check if version supports HVX v62 features.
     pub fn has_hvx_v62(version: u8) -> bool {
         version >= super::version::V62
     }
-    
+
     /// Check if version supports HVX v65 features.
     pub fn has_hvx_v65(version: u8) -> bool {
         version >= super::version::V65
     }
-    
+
     /// Check if version supports HVX v66 features.
     pub fn has_hvx_v66(version: u8) -> bool {
         version >= super::version::V66
@@ -326,12 +319,12 @@ pub fn score(data: &[u8]) -> i64 {
         if is_alu32(word) {
             score += 2;
         }
-        
+
         // XTYPE/Memory
         if is_xtype(word) {
             score += 2;
         }
-        
+
         // ALU64/M
         if is_alu64(word) {
             score += 2;
@@ -380,13 +373,13 @@ mod tests {
     #[test]
     fn test_packet_length() {
         // Single instruction packet (end marker set)
-        let single = [0x00u8, 0xC0, 0x00, 0x7F];  // NOP with end marker
+        let single = [0x00u8, 0xC0, 0x00, 0x7F]; // NOP with end marker
         assert_eq!(packet_length(&single), Some(1));
-        
+
         // Two instruction packet
         let double = [
-            0x00u8, 0x00, 0x00, 0x10,  // First instruction (no end)
-            0x00, 0xC0, 0x00, 0x7F,    // Second instruction (end)
+            0x00u8, 0x00, 0x00, 0x10, // First instruction (no end)
+            0x00, 0xC0, 0x00, 0x7F, // Second instruction (end)
         ];
         assert_eq!(packet_length(&double), Some(2));
     }
@@ -396,10 +389,10 @@ mod tests {
         assert!(is_alu32(0x10000000));
         assert!(is_alu32(0x30000000));
         assert!(!is_alu32(0x50000000));
-        
+
         assert!(is_xtype(0x40000000));
         assert!(is_xtype(0x70000000));
-        
+
         assert!(is_alu64(0x80000000));
         assert!(is_alu64(0xB0000000));
     }
@@ -409,7 +402,7 @@ mod tests {
         assert!(!features::has_hvx(version::V5));
         assert!(features::has_hvx(version::V60));
         assert!(features::has_hvx(version::V73));
-        
+
         assert!(features::has_hvx_v66(version::V66));
         assert!(features::has_hvx_v66(version::V73));
         assert!(!features::has_hvx_v66(version::V65));

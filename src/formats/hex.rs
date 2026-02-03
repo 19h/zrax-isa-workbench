@@ -177,7 +177,10 @@ fn parse_intel_hex(data: &[u8], is_32bit: bool) -> Result<ClassificationResult> 
     notes.push(format!("Data bytes: {}", data_bytes));
 
     if min_addr != u64::MAX {
-        notes.push(format!("Address range: 0x{:X} - 0x{:X}", min_addr, max_addr));
+        notes.push(format!(
+            "Address range: 0x{:X} - 0x{:X}",
+            min_addr, max_addr
+        ));
     }
     if !has_eof {
         notes.push("Warning: No EOF record".to_string());
@@ -295,7 +298,10 @@ fn parse_srec(data: &[u8], addr_size: u8) -> Result<ClassificationResult> {
     notes.push(format!("Data bytes: {}", data_bytes));
 
     if min_addr != u64::MAX {
-        notes.push(format!("Address range: 0x{:X} - 0x{:X}", min_addr, max_addr));
+        notes.push(format!(
+            "Address range: 0x{:X} - 0x{:X}",
+            min_addr, max_addr
+        ));
     }
     if has_header {
         notes.push("Has header record".to_string());
@@ -315,11 +321,14 @@ fn parse_srec(data: &[u8], addr_size: u8) -> Result<ClassificationResult> {
         Endianness::Big,
         FileFormat::Srec,
     );
-    result.variant = Variant::new(format!("S{}", match addr_size {
-        4 => "3",
-        3 => "2",
-        _ => "1",
-    }));
+    result.variant = Variant::new(format!(
+        "S{}",
+        match addr_size {
+            4 => "3",
+            3 => "2",
+            _ => "1",
+        }
+    ));
     result.metadata = metadata;
 
     Ok(result)
@@ -363,7 +372,10 @@ fn parse_ti_txt(data: &[u8]) -> Result<ClassificationResult> {
     notes.push(format!("Data bytes: {}", data_bytes));
 
     if min_addr != u64::MAX {
-        notes.push(format!("Address range: 0x{:X} - 0x{:X}", min_addr, max_addr));
+        notes.push(format!(
+            "Address range: 0x{:X} - 0x{:X}",
+            min_addr, max_addr
+        ));
     }
 
     let metadata = ClassificationMetadata {
@@ -374,12 +386,8 @@ fn parse_ti_txt(data: &[u8]) -> Result<ClassificationResult> {
     };
 
     // TI-TXT is commonly used for MSP430
-    let mut result = ClassificationResult::from_format(
-        Isa::Msp430,
-        16,
-        Endianness::Little,
-        FileFormat::TiTxt,
-    );
+    let mut result =
+        ClassificationResult::from_format(Isa::Msp430, 16, Endianness::Little, FileFormat::TiTxt);
     result.variant = Variant::new("TI-TXT");
     result.metadata = metadata;
 
@@ -403,7 +411,10 @@ mod tests {
     fn test_detect_intel_hex() {
         let data = b":10010000214601360121470136007EFE09D2190140\n:00000001FF\n";
         let variant = detect(data);
-        assert!(matches!(variant, Some(HexVariant::IntelHex { is_32bit: false })));
+        assert!(matches!(
+            variant,
+            Some(HexVariant::IntelHex { is_32bit: false })
+        ));
     }
 
     #[test]

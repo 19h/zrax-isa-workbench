@@ -5,23 +5,23 @@
 
 /// Instruction format (bits 31:30).
 pub mod format {
-    pub const BRANCH_SETHI: u8 = 0b00;  // Branches and SETHI
-    pub const CALL: u8 = 0b01;          // CALL instruction
-    pub const ARITHMETIC: u8 = 0b10;    // Arithmetic/logic
-    pub const LOAD_STORE: u8 = 0b11;    // Load/Store
+    pub const BRANCH_SETHI: u8 = 0b00; // Branches and SETHI
+    pub const CALL: u8 = 0b01; // CALL instruction
+    pub const ARITHMETIC: u8 = 0b10; // Arithmetic/logic
+    pub const LOAD_STORE: u8 = 0b11; // Load/Store
 }
 
 /// op2 field for format 0 instructions (bits 24:22).
 pub mod op2 {
-    pub const UNIMP: u8 = 0;    // Unimplemented (trap)
-    pub const BICC: u8 = 2;     // Branch on integer condition
-    pub const SETHI: u8 = 4;    // Set high 22 bits
-    pub const FBFCC: u8 = 6;    // Branch on FP condition
-    pub const CBCCC: u8 = 7;    // Branch on coprocessor condition
-    // SPARC V9 additions
-    pub const BPR: u8 = 3;      // Branch on register
-    pub const BPCC: u8 = 1;     // Branch on condition with prediction
-    pub const FBPFCC: u8 = 5;   // FP branch with prediction
+    pub const UNIMP: u8 = 0; // Unimplemented (trap)
+    pub const BICC: u8 = 2; // Branch on integer condition
+    pub const SETHI: u8 = 4; // Set high 22 bits
+    pub const FBFCC: u8 = 6; // Branch on FP condition
+    pub const CBCCC: u8 = 7; // Branch on coprocessor condition
+                             // SPARC V9 additions
+    pub const BPR: u8 = 3; // Branch on register
+    pub const BPCC: u8 = 1; // Branch on condition with prediction
+    pub const FBPFCC: u8 = 5; // FP branch with prediction
 }
 
 /// op3 field for format 2 (arithmetic) instructions (bits 24:19).
@@ -34,11 +34,11 @@ pub mod op3_arith {
     pub const ANDN: u8 = 0x05;
     pub const ORN: u8 = 0x06;
     pub const XNOR: u8 = 0x07;
-    pub const ADDX: u8 = 0x08;  // Add with carry (ADDcc in V9)
-    pub const MULX: u8 = 0x09;  // Multiply 64-bit (V9)
+    pub const ADDX: u8 = 0x08; // Add with carry (ADDcc in V9)
+    pub const MULX: u8 = 0x09; // Multiply 64-bit (V9)
     pub const UMUL: u8 = 0x0A;
     pub const SMUL: u8 = 0x0B;
-    pub const SUBX: u8 = 0x0C;  // Subtract with carry
+    pub const SUBX: u8 = 0x0C; // Subtract with carry
     pub const UDIVX: u8 = 0x0D; // Unsigned divide 64-bit (V9)
     pub const UDIV: u8 = 0x0E;
     pub const SDIV: u8 = 0x0F;
@@ -61,52 +61,52 @@ pub mod op3_arith {
     pub const TADDCCTV: u8 = 0x22;
     pub const TSUBCCTV: u8 = 0x23;
     pub const MULSCC: u8 = 0x24;
-    pub const SLL: u8 = 0x25;   // Shift left logical
-    pub const SRL: u8 = 0x26;   // Shift right logical
-    pub const SRA: u8 = 0x27;   // Shift right arithmetic
-    pub const RDY: u8 = 0x28;   // Read Y register
+    pub const SLL: u8 = 0x25; // Shift left logical
+    pub const SRL: u8 = 0x26; // Shift right logical
+    pub const SRA: u8 = 0x27; // Shift right arithmetic
+    pub const RDY: u8 = 0x28; // Read Y register
     pub const RDPSR: u8 = 0x29; // Read PSR
     pub const RDWIM: u8 = 0x2A; // Read WIM
     pub const RDTBR: u8 = 0x2B; // Read TBR
     pub const MOVCC: u8 = 0x2C; // Conditional move (V9)
     pub const SDIVX: u8 = 0x2D; // Signed divide 64-bit (V9)
-    pub const POPC: u8 = 0x2E;  // Population count (V9)
-    pub const MOVR: u8 = 0x2F;  // Move on register condition (V9)
-    pub const WRY: u8 = 0x30;   // Write Y register
+    pub const POPC: u8 = 0x2E; // Population count (V9)
+    pub const MOVR: u8 = 0x2F; // Move on register condition (V9)
+    pub const WRY: u8 = 0x30; // Write Y register
     pub const WRPSR: u8 = 0x31; // Write PSR (V8), SAVED/RESTORED (V9)
     pub const WRWIM: u8 = 0x32; // Write WIM (V8), WRPR (V9)
     pub const WRTBR: u8 = 0x33; // Write TBR
     pub const FPOP1: u8 = 0x34; // FP operate type 1
     pub const FPOP2: u8 = 0x35; // FP operate type 2
-    pub const JMPL: u8 = 0x38;  // Jump and link
-    pub const RETT: u8 = 0x39;  // Return from trap (V8), RETURN (V9)
-    pub const TICC: u8 = 0x3A;  // Trap on condition
+    pub const JMPL: u8 = 0x38; // Jump and link
+    pub const RETT: u8 = 0x39; // Return from trap (V8), RETURN (V9)
+    pub const TICC: u8 = 0x3A; // Trap on condition
     pub const FLUSH: u8 = 0x3B; // Flush instruction memory
-    pub const SAVE: u8 = 0x3C;  // Save register window
+    pub const SAVE: u8 = 0x3C; // Save register window
     pub const RESTORE: u8 = 0x3D; // Restore register window
-    pub const DONE: u8 = 0x3E;  // Done (V9)
+    pub const DONE: u8 = 0x3E; // Done (V9)
     pub const RETRY: u8 = 0x3F; // Retry (V9)
 }
 
 /// op3 field for format 3 (load/store) instructions.
 pub mod op3_mem {
-    pub const LD: u8 = 0x00;    // Load word
-    pub const LDUB: u8 = 0x01;  // Load unsigned byte
-    pub const LDUH: u8 = 0x02;  // Load unsigned halfword
-    pub const LDD: u8 = 0x03;   // Load doubleword
-    pub const ST: u8 = 0x04;    // Store word
-    pub const STB: u8 = 0x05;   // Store byte
-    pub const STH: u8 = 0x06;   // Store halfword
-    pub const STD: u8 = 0x07;   // Store doubleword
-    pub const LDSB: u8 = 0x09;  // Load signed byte
-    pub const LDSH: u8 = 0x0A;  // Load signed halfword
+    pub const LD: u8 = 0x00; // Load word
+    pub const LDUB: u8 = 0x01; // Load unsigned byte
+    pub const LDUH: u8 = 0x02; // Load unsigned halfword
+    pub const LDD: u8 = 0x03; // Load doubleword
+    pub const ST: u8 = 0x04; // Store word
+    pub const STB: u8 = 0x05; // Store byte
+    pub const STH: u8 = 0x06; // Store halfword
+    pub const STD: u8 = 0x07; // Store doubleword
+    pub const LDSB: u8 = 0x09; // Load signed byte
+    pub const LDSH: u8 = 0x0A; // Load signed halfword
     pub const LDSTUB: u8 = 0x0D; // Load-store unsigned byte (atomic)
-    pub const SWAP: u8 = 0x0F;  // Swap word
-    pub const LDA: u8 = 0x10;   // Load from alternate space
+    pub const SWAP: u8 = 0x0F; // Swap word
+    pub const LDA: u8 = 0x10; // Load from alternate space
     pub const LDUBA: u8 = 0x11;
     pub const LDUHA: u8 = 0x12;
     pub const LDDA: u8 = 0x13;
-    pub const STA: u8 = 0x14;   // Store to alternate space
+    pub const STA: u8 = 0x14; // Store to alternate space
     pub const STBA: u8 = 0x15;
     pub const STHA: u8 = 0x16;
     pub const STDA: u8 = 0x17;
@@ -114,66 +114,66 @@ pub mod op3_mem {
     pub const LDSHA: u8 = 0x1A;
     pub const LDSTUBA: u8 = 0x1D;
     pub const SWAPA: u8 = 0x1F;
-    pub const LDF: u8 = 0x20;   // Load FP
+    pub const LDF: u8 = 0x20; // Load FP
     pub const LDFSR: u8 = 0x21; // Load FP state register
-    pub const LDDF: u8 = 0x23;  // Load double FP
-    pub const STF: u8 = 0x24;   // Store FP
+    pub const LDDF: u8 = 0x23; // Load double FP
+    pub const STF: u8 = 0x24; // Store FP
     pub const STFSR: u8 = 0x25; // Store FP state register
     pub const STDFQ: u8 = 0x26; // Store double FP queue
-    pub const STDF: u8 = 0x27;  // Store double FP
-    // V9 64-bit loads/stores
-    pub const LDX: u8 = 0x0B;   // Load extended word
-    pub const STX: u8 = 0x0E;   // Store extended word
-    pub const LDXA: u8 = 0x1B;  // Load extended from alternate space
-    pub const STXA: u8 = 0x1E;  // Store extended to alternate space
+    pub const STDF: u8 = 0x27; // Store double FP
+                               // V9 64-bit loads/stores
+    pub const LDX: u8 = 0x0B; // Load extended word
+    pub const STX: u8 = 0x0E; // Store extended word
+    pub const LDXA: u8 = 0x1B; // Load extended from alternate space
+    pub const STXA: u8 = 0x1E; // Store extended to alternate space
     pub const PREFETCH: u8 = 0x2D; // Prefetch (V9)
-    pub const CAS: u8 = 0x3C;   // Compare and swap (V9)
-    pub const CASX: u8 = 0x3E;  // Compare and swap extended (V9)
+    pub const CAS: u8 = 0x3C; // Compare and swap (V9)
+    pub const CASX: u8 = 0x3E; // Compare and swap extended (V9)
 }
 
 /// Condition codes for branches.
 pub mod cond {
-    pub const NEVER: u8 = 0;    // Never (N)
-    pub const EQUAL: u8 = 1;    // Equal (E/Z)
-    pub const LE: u8 = 2;       // Less or equal (LE)
-    pub const LESS: u8 = 3;     // Less (L)
-    pub const LEU: u8 = 4;      // Less or equal unsigned (LEU)
-    pub const CS: u8 = 5;       // Carry set (CS/LU)
-    pub const NEG: u8 = 6;      // Negative (N)
-    pub const VS: u8 = 7;       // Overflow set (VS)
-    pub const ALWAYS: u8 = 8;   // Always (A)
-    pub const NE: u8 = 9;       // Not equal (NE/NZ)
-    pub const GT: u8 = 10;      // Greater (G)
-    pub const GE: u8 = 11;      // Greater or equal (GE)
-    pub const GTU: u8 = 12;     // Greater unsigned (GU)
-    pub const CC: u8 = 13;      // Carry clear (CC/GEU)
-    pub const POS: u8 = 14;     // Positive (P)
-    pub const VC: u8 = 15;      // Overflow clear (VC)
+    pub const NEVER: u8 = 0; // Never (N)
+    pub const EQUAL: u8 = 1; // Equal (E/Z)
+    pub const LE: u8 = 2; // Less or equal (LE)
+    pub const LESS: u8 = 3; // Less (L)
+    pub const LEU: u8 = 4; // Less or equal unsigned (LEU)
+    pub const CS: u8 = 5; // Carry set (CS/LU)
+    pub const NEG: u8 = 6; // Negative (N)
+    pub const VS: u8 = 7; // Overflow set (VS)
+    pub const ALWAYS: u8 = 8; // Always (A)
+    pub const NE: u8 = 9; // Not equal (NE/NZ)
+    pub const GT: u8 = 10; // Greater (G)
+    pub const GE: u8 = 11; // Greater or equal (GE)
+    pub const GTU: u8 = 12; // Greater unsigned (GU)
+    pub const CC: u8 = 13; // Carry clear (CC/GEU)
+    pub const POS: u8 = 14; // Positive (P)
+    pub const VC: u8 = 15; // Overflow clear (VC)
 }
 
 /// Common SPARC instruction patterns.
 pub mod patterns {
     /// NOP (sethi 0, %g0).
     pub const NOP: u32 = 0x01000000;
-    
+
     /// RETL (jmpl %o7+8, %g0) - Return from leaf function.
     pub const RETL: u32 = 0x81C3E008;
-    
+
     /// RET (jmpl %i7+8, %g0) - Return from non-leaf function.
     pub const RET: u32 = 0x81C7E008;
-    
+
     /// RESTORE %g0, %g0, %g0 - Common after RET.
     pub const RESTORE: u32 = 0x81E80000;
-    
+
     /// SAVE %sp, -N, %sp pattern (high bits).
     pub const SAVE_MASK: u32 = 0x81E02000;
-    
+
     /// TA 0 - Trap always (syscall on some systems).
     pub const TA_0: u32 = 0x91D02000;
-    
+
     /// ILLTRAP - Illegal instruction trap.
     pub const ILLTRAP: u32 = 0x00000000;
-    
+
     /// UNIMP - Unimplemented instruction.
     pub const UNIMP_MASK: u32 = 0x00000000;
 }
@@ -268,7 +268,10 @@ pub fn is_branch(instr: u32) -> bool {
         return false;
     }
     let op2 = get_op2(instr);
-    matches!(op2, op2::BICC | op2::FBFCC | op2::CBCCC | op2::BPR | op2::BPCC | op2::FBPFCC)
+    matches!(
+        op2,
+        op2::BICC | op2::FBFCC | op2::CBCCC | op2::BPR | op2::BPCC | op2::FBPFCC
+    )
 }
 
 /// Check if instruction is unconditional branch (BA).
@@ -310,10 +313,20 @@ pub fn is_load(instr: u32) -> bool {
     let op3 = get_op3(instr);
     matches!(
         op3,
-        op3_mem::LD | op3_mem::LDUB | op3_mem::LDUH | op3_mem::LDD |
-        op3_mem::LDSB | op3_mem::LDSH | op3_mem::LDA | op3_mem::LDUBA |
-        op3_mem::LDUHA | op3_mem::LDDA | op3_mem::LDF | op3_mem::LDDF |
-        op3_mem::LDX | op3_mem::LDXA
+        op3_mem::LD
+            | op3_mem::LDUB
+            | op3_mem::LDUH
+            | op3_mem::LDD
+            | op3_mem::LDSB
+            | op3_mem::LDSH
+            | op3_mem::LDA
+            | op3_mem::LDUBA
+            | op3_mem::LDUHA
+            | op3_mem::LDDA
+            | op3_mem::LDF
+            | op3_mem::LDDF
+            | op3_mem::LDX
+            | op3_mem::LDXA
     )
 }
 
@@ -326,9 +339,18 @@ pub fn is_store(instr: u32) -> bool {
     let op3 = get_op3(instr);
     matches!(
         op3,
-        op3_mem::ST | op3_mem::STB | op3_mem::STH | op3_mem::STD |
-        op3_mem::STA | op3_mem::STBA | op3_mem::STHA | op3_mem::STDA |
-        op3_mem::STF | op3_mem::STDF | op3_mem::STX | op3_mem::STXA
+        op3_mem::ST
+            | op3_mem::STB
+            | op3_mem::STH
+            | op3_mem::STD
+            | op3_mem::STA
+            | op3_mem::STBA
+            | op3_mem::STHA
+            | op3_mem::STDA
+            | op3_mem::STF
+            | op3_mem::STDF
+            | op3_mem::STX
+            | op3_mem::STXA
     )
 }
 
@@ -344,19 +366,43 @@ pub fn is_sethi(instr: u32) -> bool {
 
 /// Valid op3 values for arithmetic format (for heuristics).
 pub const VALID_ARITH_OP3: &[u8] = &[
-    op3_arith::ADD, op3_arith::AND, op3_arith::OR, op3_arith::XOR,
-    op3_arith::SUB, op3_arith::ANDN, op3_arith::ORN, op3_arith::XNOR,
-    op3_arith::ADDCC, op3_arith::ANDCC, op3_arith::ORCC, op3_arith::XORCC,
-    op3_arith::SUBCC, op3_arith::SLL, op3_arith::SRL, op3_arith::SRA,
-    op3_arith::JMPL, op3_arith::SAVE, op3_arith::RESTORE,
+    op3_arith::ADD,
+    op3_arith::AND,
+    op3_arith::OR,
+    op3_arith::XOR,
+    op3_arith::SUB,
+    op3_arith::ANDN,
+    op3_arith::ORN,
+    op3_arith::XNOR,
+    op3_arith::ADDCC,
+    op3_arith::ANDCC,
+    op3_arith::ORCC,
+    op3_arith::XORCC,
+    op3_arith::SUBCC,
+    op3_arith::SLL,
+    op3_arith::SRL,
+    op3_arith::SRA,
+    op3_arith::JMPL,
+    op3_arith::SAVE,
+    op3_arith::RESTORE,
 ];
 
 /// Valid op3 values for load/store format (for heuristics).
 pub const VALID_MEM_OP3: &[u8] = &[
-    op3_mem::LD, op3_mem::LDUB, op3_mem::LDUH, op3_mem::LDD,
-    op3_mem::ST, op3_mem::STB, op3_mem::STH, op3_mem::STD,
-    op3_mem::LDSB, op3_mem::LDSH, op3_mem::LDF, op3_mem::LDDF,
-    op3_mem::STF, op3_mem::STDF,
+    op3_mem::LD,
+    op3_mem::LDUB,
+    op3_mem::LDUH,
+    op3_mem::LDD,
+    op3_mem::ST,
+    op3_mem::STB,
+    op3_mem::STH,
+    op3_mem::STD,
+    op3_mem::LDSB,
+    op3_mem::LDSH,
+    op3_mem::LDF,
+    op3_mem::LDDF,
+    op3_mem::STF,
+    op3_mem::STDF,
 ];
 
 /// Score likelihood of SPARC code.
@@ -458,7 +504,7 @@ mod tests {
         // SAVE %sp, -96, %sp
         let save_instr: u32 = 0x9DE3BFA0;
         assert!(is_save(save_instr));
-        
+
         assert!(is_restore(patterns::RESTORE));
     }
 

@@ -4,7 +4,7 @@
 //! architectures: m68k, ARM, Blackfin, RISC-V, Xtensa.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{read_u32};
+use crate::formats::read_u32;
 use crate::types::{
     ClassificationMetadata, ClassificationResult, Endianness, FileFormat, Isa, Variant,
 };
@@ -117,8 +117,7 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
         ..Default::default()
     };
 
-    let mut result =
-        ClassificationResult::from_format(isa, 32, Endianness::Big, FileFormat::Bflt);
+    let mut result = ClassificationResult::from_format(isa, 32, Endianness::Big, FileFormat::Bflt);
     result.variant = Variant::new(format!("v{}", rev));
     result.metadata = metadata;
 

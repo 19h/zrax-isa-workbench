@@ -88,7 +88,10 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
     let mut notes = vec!["PEF (Preferred Executable Format)".to_string()];
     notes.push(format!("Architecture: {}", arch_name));
     notes.push(format!("Format version: {}", format_version));
-    notes.push(format!("Sections: {} ({} instantiated)", section_count, inst_section_count));
+    notes.push(format!(
+        "Sections: {} ({} instantiated)",
+        section_count, inst_section_count
+    ));
 
     // Version info
     if current_version > 0 {

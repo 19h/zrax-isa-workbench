@@ -593,10 +593,7 @@ pub fn is_control(op: u8) -> bool {
 pub fn is_call(op: u8) -> bool {
     matches!(
         op,
-        opcode::CALL
-            | opcode::CALL_INDIRECT
-            | opcode::RETURN_CALL
-            | opcode::RETURN_CALL_INDIRECT
+        opcode::CALL | opcode::CALL_INDIRECT | opcode::RETURN_CALL | opcode::RETURN_CALL_INDIRECT
     )
 }
 
@@ -664,7 +661,12 @@ pub fn estimate_instruction_length(data: &[u8], offset: usize) -> usize {
             if offset + 1 < data.len() {
                 // Block type is either 0x40 (empty) or a valtype
                 let bt = data[offset + 1];
-                if bt == 0x40 || matches!(bt, valtype::I32 | valtype::I64 | valtype::F32 | valtype::F64) {
+                if bt == 0x40
+                    || matches!(
+                        bt,
+                        valtype::I32 | valtype::I64 | valtype::F32 | valtype::F64
+                    )
+                {
                     2
                 } else {
                     // Signed LEB128 type index
@@ -730,8 +732,8 @@ pub fn estimate_instruction_length(data: &[u8], offset: usize) -> usize {
                 0
             }
         }
-        opcode::F32_CONST => 5,  // 1 + 4 bytes
-        opcode::F64_CONST => 9,  // 1 + 8 bytes
+        opcode::F32_CONST => 5, // 1 + 4 bytes
+        opcode::F64_CONST => 9, // 1 + 8 bytes
 
         // Reference null with type
         opcode::REF_NULL => 2,
@@ -892,10 +894,16 @@ mod tests {
         assert_eq!(estimate_instruction_length(&[opcode::BLOCK, 0x40], 0), 2);
 
         // local.get with index 0
-        assert_eq!(estimate_instruction_length(&[opcode::LOCAL_GET, 0x00], 0), 2);
+        assert_eq!(
+            estimate_instruction_length(&[opcode::LOCAL_GET, 0x00], 0),
+            2
+        );
 
         // i32.const with value 42
-        assert_eq!(estimate_instruction_length(&[opcode::I32_CONST, 0x2A], 0), 2);
+        assert_eq!(
+            estimate_instruction_length(&[opcode::I32_CONST, 0x2A], 0),
+            2
+        );
 
         // f32.const (1 + 4 bytes)
         assert_eq!(
@@ -927,8 +935,10 @@ mod tests {
     fn test_score_simple_function() {
         // Simple function: local.get 0, i32.const 1, i32.add, return
         let code = [
-            opcode::LOCAL_GET, 0x00,
-            opcode::I32_CONST, 0x01,
+            opcode::LOCAL_GET,
+            0x00,
+            opcode::I32_CONST,
+            0x01,
             opcode::I32_ADD,
             opcode::RETURN,
         ];
@@ -940,9 +950,12 @@ mod tests {
     fn test_score_block_structure() {
         // block, i32.const 1, br_if 0, end
         let code = [
-            opcode::BLOCK, 0x40,  // Empty block
-            opcode::I32_CONST, 0x01,
-            opcode::BR_IF, 0x00,
+            opcode::BLOCK,
+            0x40, // Empty block
+            opcode::I32_CONST,
+            0x01,
+            opcode::BR_IF,
+            0x00,
             opcode::END,
         ];
         let s = score(&code);
@@ -952,10 +965,7 @@ mod tests {
     #[test]
     fn test_score_unbalanced() {
         // Unbalanced: block without end
-        let code = [
-            opcode::BLOCK, 0x40,
-            opcode::I32_CONST, 0x01,
-        ];
+        let code = [opcode::BLOCK, 0x40, opcode::I32_CONST, 0x01];
         let s = score(&code);
         // Should have penalty but not crash
         assert!(s >= 0);

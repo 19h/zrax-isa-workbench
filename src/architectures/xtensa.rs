@@ -151,7 +151,7 @@ mod tests {
         // NOP.N encoding varies, but needs bit 3 set to be recognized as narrow
         // Using 0x3D (0011_1101) which has bit 3 set
         let code = [0x3D, 0x0F]; // A narrow instruction pattern
-        // This may not be exactly NOP.N but tests narrow instruction path
+                                 // This may not be exactly NOP.N but tests narrow instruction path
         let s = score(&code);
         // Just verify it doesn't panic and processes as narrow
         assert!(s >= 0);

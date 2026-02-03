@@ -422,9 +422,9 @@ mod tests {
     fn test_jvm_scoring() {
         // Simple Java method: aload_0, invokespecial, return
         let code = [
-            0x2A,       // aload_0
+            0x2A, // aload_0
             0xB7, 0x00, 0x01, // invokespecial #1
-            0xB1,       // return
+            0xB1, // return
         ];
         assert!(score_jvm(&code) > 0);
     }
@@ -435,8 +435,8 @@ mod tests {
         let code = [
             0x20, 0x00, // local.get 0
             0x41, 0x01, // i32.const 1
-            0x6A,       // i32.add
-            0x0B,       // end
+            0x6A, // i32.add
+            0x0B, // end
         ];
         assert!(score_wasm(&code) > 0);
     }

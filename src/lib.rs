@@ -204,19 +204,15 @@ pub fn classify_bytes_with_options(
 
     // Detect extensions if requested
     if options.detect_extensions {
-        let code_extensions =
-            extensions::detect_from_code(data, result.isa, result.endianness);
+        let code_extensions = extensions::detect_from_code(data, result.isa, result.endianness);
 
         // Merge code-detected extensions with format-detected extensions
         if result.extensions.is_empty() {
             result.extensions = code_extensions;
         } else if !code_extensions.is_empty() {
             // Merge, avoiding duplicates by name
-            let existing: std::collections::HashSet<String> = result
-                .extensions
-                .iter()
-                .map(|e| e.name.clone())
-                .collect();
+            let existing: std::collections::HashSet<String> =
+                result.extensions.iter().map(|e| e.name.clone()).collect();
             for ext in code_extensions {
                 if !existing.contains(&ext.name) {
                     result.extensions.push(ext);
@@ -282,8 +278,7 @@ pub fn detect_bytes(data: &[u8]) -> Result<DetectionPayload> {
 ///   - Analysis notes
 pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<DetectionPayload> {
     use types::{
-        DetectionPayload, ExtensionDetection, ExtensionSource,
-        IsaCandidate, IsaClassification,
+        DetectionPayload, ExtensionDetection, ExtensionSource, IsaCandidate, IsaClassification,
     };
 
     // Detect file format
@@ -297,14 +292,16 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
             (
                 IsaClassification::from_format(result.isa, result.bitwidth, result.endianness)
                     .with_variant(result.variant.clone()),
-                result.extensions.iter().map(|e| {
-                    ExtensionDetection {
+                result
+                    .extensions
+                    .iter()
+                    .map(|e| ExtensionDetection {
                         name: e.name.clone(),
                         category: e.category,
                         confidence: e.confidence,
                         source: ExtensionSource::FormatAttribute,
-                    }
-                }).collect::<Vec<_>>(),
+                    })
+                    .collect::<Vec<_>>(),
                 extract_metadata(&result),
             )
         }
@@ -483,11 +480,22 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
                         b.endianness,
                         b.confidence,
                     );
-                    let candidate_list: Vec<IsaCandidate> = candidates
-                        .iter()
-                        .filter(|c| c.raw_score > 0)
+                    // Sort by raw_score descending to get top candidates
+                    let mut sorted_candidates: Vec<_> =
+                        candidates.iter().filter(|c| c.raw_score > 0).collect();
+                    sorted_candidates.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+                    let candidate_list: Vec<IsaCandidate> = sorted_candidates
+                        .into_iter()
                         .take(10)
-                        .map(|c| IsaCandidate::new(c.isa, c.bitwidth, c.endianness, c.raw_score, c.confidence))
+                        .map(|c| {
+                            IsaCandidate::new(
+                                c.isa,
+                                c.bitwidth,
+                                c.endianness,
+                                c.raw_score,
+                                c.confidence,
+                            )
+                        })
                         .collect();
 
                     let mut payload = DetectionPayload::new(format_detection, primary)
@@ -526,12 +534,10 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
 
     // Add code-detected extensions if requested
     if options.detect_extensions {
-        let code_exts = extensions::detect_from_code(data, payload.primary.isa, payload.primary.endianness);
-        let existing: std::collections::HashSet<String> = payload
-            .extensions
-            .iter()
-            .map(|e| e.name.clone())
-            .collect();
+        let code_exts =
+            extensions::detect_from_code(data, payload.primary.isa, payload.primary.endianness);
+        let existing: std::collections::HashSet<String> =
+            payload.extensions.iter().map(|e| e.name.clone()).collect();
 
         for ext in code_exts {
             if !existing.contains(&ext.name) {

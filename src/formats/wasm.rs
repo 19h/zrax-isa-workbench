@@ -4,7 +4,7 @@
 //! It's designed as a portable compilation target for programming languages.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{read_u32};
+use crate::formats::read_u32;
 use crate::types::{
     ClassificationMetadata, ClassificationResult, Endianness, FileFormat, Isa, Variant,
 };
@@ -130,7 +130,8 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
                 if let Some(name_len) = read_leb128_u32(data, &mut name_off) {
                     let name_len = name_len as usize;
                     if name_off + name_len <= section_end {
-                        if let Ok(name) = std::str::from_utf8(&data[name_off..name_off + name_len]) {
+                        if let Ok(name) = std::str::from_utf8(&data[name_off..name_off + name_len])
+                        {
                             custom_sections.push(name.to_string());
                         }
                     }

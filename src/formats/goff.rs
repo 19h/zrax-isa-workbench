@@ -13,21 +13,21 @@ pub const GOFF_MARKER: u8 = 0x03;
 
 /// GOFF record types (in PTV byte 1, bits 0-3).
 pub mod record_type {
-    pub const HDR: u8 = 0xF0;  // Header record (masked)
-    pub const ESD: u8 = 0x00;  // External Symbol Dictionary
-    pub const TXT: u8 = 0x10;  // Text record
-    pub const RLD: u8 = 0x20;  // Relocation Dictionary
-    pub const LEN: u8 = 0x30;  // Length record
-    pub const END: u8 = 0x40;  // End record
+    pub const HDR: u8 = 0xF0; // Header record (masked)
+    pub const ESD: u8 = 0x00; // External Symbol Dictionary
+    pub const TXT: u8 = 0x10; // Text record
+    pub const RLD: u8 = 0x20; // Relocation Dictionary
+    pub const LEN: u8 = 0x30; // Length record
+    pub const END: u8 = 0x40; // End record
 }
 
 /// GOFF ESD symbol types.
 pub mod esd_type {
-    pub const SD: u8 = 0x00;   // Section Definition
-    pub const ED: u8 = 0x01;   // Element Definition
-    pub const LD: u8 = 0x02;   // Label Definition
-    pub const PR: u8 = 0x03;   // Part Reference
-    pub const ER: u8 = 0x04;   // External Reference
+    pub const SD: u8 = 0x00; // Section Definition
+    pub const ED: u8 = 0x01; // Element Definition
+    pub const LD: u8 = 0x02; // Label Definition
+    pub const PR: u8 = 0x03; // Part Reference
+    pub const ER: u8 = 0x04; // External Reference
 }
 
 /// GOFF record size (fixed length records).

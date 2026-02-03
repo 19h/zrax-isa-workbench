@@ -119,12 +119,21 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
     // Java version
     let java_version = major_version_to_java(major_version);
     if let Some(ver) = java_version {
-        notes.push(format!("Target: {} (class version {}.{})", ver, major_version, minor_version));
+        notes.push(format!(
+            "Target: {} (class version {}.{})",
+            ver, major_version, minor_version
+        ));
     } else {
-        notes.push(format!("Class version: {}.{}", major_version, minor_version));
+        notes.push(format!(
+            "Class version: {}.{}",
+            major_version, minor_version
+        ));
     }
 
-    notes.push(format!("Constant pool entries: {}", constant_pool_count - 1));
+    notes.push(format!(
+        "Constant pool entries: {}",
+        constant_pool_count - 1
+    ));
 
     // Try to parse access flags and class info if we can skip the constant pool
     // This requires parsing the entire constant pool, which is complex
@@ -138,12 +147,8 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
 
     let variant_name = java_version.unwrap_or("Unknown").to_string();
 
-    let mut result = ClassificationResult::from_format(
-        Isa::Jvm,
-        32,
-        Endianness::Big,
-        FileFormat::JavaClass,
-    );
+    let mut result =
+        ClassificationResult::from_format(Isa::Jvm, 32, Endianness::Big, FileFormat::JavaClass);
     result.variant = Variant::new(variant_name);
     result.metadata = metadata;
 

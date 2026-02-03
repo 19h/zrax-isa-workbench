@@ -553,7 +553,7 @@ pub fn instruction_length(bytecode: &[u8], offset: usize) -> usize {
                 | opcode::DSTORE
                 | opcode::ASTORE
                 | opcode::RET => 4, // wide + opcode + 2-byte index
-                opcode::IINC => 6,  // wide + opcode + 2-byte index + 2-byte const
+                opcode::IINC => 6, // wide + opcode + 2-byte index + 2-byte const
                 _ => 0,
             }
         }
@@ -580,13 +580,14 @@ pub fn is_return(op: u8) -> bool {
 pub fn is_branch(op: u8) -> bool {
     matches!(
         op,
-        opcode::IFEQ..=opcode::IF_ACMPNE
-            | opcode::GOTO
-            | opcode::JSR
-            | opcode::IFNULL
-            | opcode::IFNONNULL
-            | opcode::GOTO_W
-            | opcode::JSR_W
+        opcode::IFEQ
+            ..=opcode::IF_ACMPNE
+                | opcode::GOTO
+                | opcode::JSR
+                | opcode::IFNULL
+                | opcode::IFNONNULL
+                | opcode::GOTO_W
+                | opcode::JSR_W
     )
 }
 
@@ -747,7 +748,10 @@ mod tests {
         // 3-byte instructions
         assert_eq!(instruction_length(&[opcode::SIPUSH, 0x00, 0x01], 0), 3);
         assert_eq!(instruction_length(&[opcode::GOTO, 0x00, 0x10], 0), 3);
-        assert_eq!(instruction_length(&[opcode::INVOKEVIRTUAL, 0x00, 0x01], 0), 3);
+        assert_eq!(
+            instruction_length(&[opcode::INVOKEVIRTUAL, 0x00, 0x01], 0),
+            3
+        );
 
         // 5-byte instructions
         assert_eq!(
@@ -787,11 +791,11 @@ mod tests {
     fn test_score_simple_method() {
         // Simple method: aload_0, getfield #1, ireturn
         let bytecode = [
-            opcode::ALOAD_0,      // Load this
-            opcode::GETFIELD,     // Get field
+            opcode::ALOAD_0,  // Load this
+            opcode::GETFIELD, // Get field
             0x00,
             0x01,
-            opcode::IRETURN,      // Return int
+            opcode::IRETURN, // Return int
         ];
         let s = score(&bytecode);
         assert!(s > 0, "Score should be positive for valid bytecode");
@@ -801,11 +805,11 @@ mod tests {
     fn test_score_constructor() {
         // Typical constructor pattern: aload_0, invokespecial <init>, return
         let bytecode = [
-            opcode::ALOAD_0,      // Load this
+            opcode::ALOAD_0,       // Load this
             opcode::INVOKESPECIAL, // Call super.<init>
             0x00,
             0x01,
-            opcode::RETURN,       // Return void
+            opcode::RETURN, // Return void
         ];
         let s = score(&bytecode);
         assert!(s > 10, "Constructor pattern should score well");

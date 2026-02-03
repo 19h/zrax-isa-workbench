@@ -137,7 +137,8 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
         (Isa::Unknown(0), 0, Endianness::Little)
     };
 
-    let mut result = ClassificationResult::from_format(isa, bitwidth, endianness, FileFormat::FatElf);
+    let mut result =
+        ClassificationResult::from_format(isa, bitwidth, endianness, FileFormat::FatElf);
     result.variant = Variant::new(format!("{} architectures", num_records));
     result.metadata = metadata;
 
@@ -182,7 +183,8 @@ mod tests {
     use super::*;
 
     fn make_fatelf_header(num_records: u8) -> Vec<u8> {
-        let mut data = vec![0u8; FATELF_HEADER_SIZE + num_records as usize * FATELF_RECORD_SIZE + 64];
+        let mut data =
+            vec![0u8; FATELF_HEADER_SIZE + num_records as usize * FATELF_RECORD_SIZE + 64];
 
         // Magic
         data[0..4].copy_from_slice(&FATELF_MAGIC.to_le_bytes());

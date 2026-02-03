@@ -27,51 +27,51 @@ pub mod magic {
 /// BSD Machine IDs (MID values from a_midmag field).
 pub mod mid {
     pub const ZERO: u8 = 0;
-    pub const SUN010: u8 = 1;        // Sun 68010/68020
-    pub const SUN020: u8 = 2;        // Sun 68020
-    pub const PC386: u8 = 100;       // i386 BSD
-    pub const HP200: u8 = 200;       // HP 200
-    pub const I386: u8 = 134;        // i386 BSD
-    pub const M68K: u8 = 135;        // Motorola 68K
-    pub const M68K4K: u8 = 136;      // m68k 4k page size
-    pub const NS32532: u8 = 137;     // NS32532
-    pub const SPARC: u8 = 138;       // SPARC
-    pub const PMAX: u8 = 139;        // MIPS (DECstation)
-    pub const VAX: u8 = 140;         // VAX
-    pub const ALPHA: u8 = 141;       // Alpha
-    pub const MIPS: u8 = 151;        // MIPS
-    pub const ARM6: u8 = 143;        // ARM
-    pub const HP300: u8 = 144;       // HP 300
-    pub const HPUX: u8 = 145;        // HP-UX
-    pub const HPUX800: u8 = 146;     // HP-UX 800
+    pub const SUN010: u8 = 1; // Sun 68010/68020
+    pub const SUN020: u8 = 2; // Sun 68020
+    pub const PC386: u8 = 100; // i386 BSD
+    pub const HP200: u8 = 200; // HP 200
+    pub const I386: u8 = 134; // i386 BSD
+    pub const M68K: u8 = 135; // Motorola 68K
+    pub const M68K4K: u8 = 136; // m68k 4k page size
+    pub const NS32532: u8 = 137; // NS32532
+    pub const SPARC: u8 = 138; // SPARC
+    pub const PMAX: u8 = 139; // MIPS (DECstation)
+    pub const VAX: u8 = 140; // VAX
+    pub const ALPHA: u8 = 141; // Alpha
+    pub const MIPS: u8 = 151; // MIPS
+    pub const ARM6: u8 = 143; // ARM
+    pub const HP300: u8 = 144; // HP 300
+    pub const HPUX: u8 = 145; // HP-UX
+    pub const HPUX800: u8 = 146; // HP-UX 800
 }
 
 /// Plan 9 magic values.
 /// Formula: _MAGIC(b) = ((((4*b)+0)*b)+7)
 pub mod plan9_magic {
-    pub const A_MAGIC: u32 = 0x00000107;  // MC68020 (263)
-    pub const I_MAGIC: u32 = 0x00000197;  // Intel 386 (407)
-    pub const J_MAGIC: u32 = 0x00000263;  // Intel 960 (611) - unused
-    pub const K_MAGIC: u32 = 0x0000022B;  // SPARC (555)
-    pub const V_MAGIC: u32 = 0x00000367;  // MIPS 3000 BE (871)
-    pub const X_MAGIC: u32 = 0x00000463;  // ATT DSP 3210 (1123) - unused
-    pub const M_MAGIC: u32 = 0x00000567;  // MIPS 4000 BE (1383)
-    pub const D_MAGIC: u32 = 0x0000067B;  // MIPS 4000 LE (1659) - unused
-    pub const E_MAGIC: u32 = 0x0000051F;  // ARM (1311)
-    pub const Q_MAGIC: u32 = 0x00000597;  // PowerPC (1431)
-    pub const N_MAGIC: u32 = 0x00000627;  // MIPS 4000 LE (1575)
-    pub const L_MAGIC: u32 = 0x00000693;  // DEC Alpha (1683)
-    pub const P_MAGIC: u32 = 0x00000733;  // MIPS 4000 LE (1843) - unused
-    pub const U_MAGIC: u32 = 0x000007E3;  // SPARC 64 (2019)
-    pub const S_MAGIC: u32 = 0x00000893;  // AMD64 (2195)
-    pub const T_MAGIC: u32 = 0x00000973;  // AMD64 (2419) - unused
-    pub const R_MAGIC: u32 = 0x000009BF;  // ARM64 (2495)
+    pub const A_MAGIC: u32 = 0x00000107; // MC68020 (263)
+    pub const I_MAGIC: u32 = 0x00000197; // Intel 386 (407)
+    pub const J_MAGIC: u32 = 0x00000263; // Intel 960 (611) - unused
+    pub const K_MAGIC: u32 = 0x0000022B; // SPARC (555)
+    pub const V_MAGIC: u32 = 0x00000367; // MIPS 3000 BE (871)
+    pub const X_MAGIC: u32 = 0x00000463; // ATT DSP 3210 (1123) - unused
+    pub const M_MAGIC: u32 = 0x00000567; // MIPS 4000 BE (1383)
+    pub const D_MAGIC: u32 = 0x0000067B; // MIPS 4000 LE (1659) - unused
+    pub const E_MAGIC: u32 = 0x0000051F; // ARM (1311)
+    pub const Q_MAGIC: u32 = 0x00000597; // PowerPC (1431)
+    pub const N_MAGIC: u32 = 0x00000627; // MIPS 4000 LE (1575)
+    pub const L_MAGIC: u32 = 0x00000693; // DEC Alpha (1683)
+    pub const P_MAGIC: u32 = 0x00000733; // MIPS 4000 LE (1843) - unused
+    pub const U_MAGIC: u32 = 0x000007E3; // SPARC 64 (2019)
+    pub const S_MAGIC: u32 = 0x00000893; // AMD64 (2195)
+    pub const T_MAGIC: u32 = 0x00000973; // AMD64 (2419) - unused
+    pub const R_MAGIC: u32 = 0x000009BF; // ARM64 (2495)
 }
 
 /// Minix a.out magic values.
 pub mod minix_magic {
-    pub const MINIX_COMBID: u32 = 0x04100301;  // Combined I&D
-    pub const MINIX_SEPID: u32 = 0x04200301;   // Separate I&D
+    pub const MINIX_COMBID: u32 = 0x04100301; // Combined I&D
+    pub const MINIX_SEPID: u32 = 0x04200301; // Separate I&D
 }
 
 /// BSD a.out header size.
@@ -183,10 +183,7 @@ pub fn detect(data: &[u8]) -> Option<AoutVariant> {
 
     // Also check big-endian BSD (some m68k systems)
     let bsd_magic_be = u16::from_be_bytes([data[0], data[1]]);
-    if matches!(
-        bsd_magic_be,
-        magic::OMAGIC | magic::NMAGIC | magic::ZMAGIC
-    ) {
+    if matches!(bsd_magic_be, magic::OMAGIC | magic::NMAGIC | magic::ZMAGIC) {
         let mid_be = data[3];
         return Some(AoutVariant::Bsd {
             mid: mid_be,
@@ -228,7 +225,10 @@ fn parse_bsd(data: &[u8], mid: u8, aout_magic: u16) -> Result<ClassificationResu
 
     let mut notes = vec![format!("BSD a.out ({})", magic_name)];
     notes.push(format!("MID: {} ({})", mid, mid_name(mid)));
-    notes.push(format!("Text: {} bytes, Data: {} bytes", text_size, data_size));
+    notes.push(format!(
+        "Text: {} bytes, Data: {} bytes",
+        text_size, data_size
+    ));
 
     let metadata = ClassificationMetadata {
         entry_point: Some(entry as u64),
@@ -304,7 +304,10 @@ fn parse_plan9(data: &[u8], magic: u32) -> Result<ClassificationResult> {
 
     let mut notes = vec!["Plan 9 a.out".to_string()];
     notes.push(format!("Architecture: {}", arch_name));
-    notes.push(format!("Text: {} bytes, Data: {} bytes", text_size, data_size));
+    notes.push(format!(
+        "Text: {} bytes, Data: {} bytes",
+        text_size, data_size
+    ));
 
     let metadata = ClassificationMetadata {
         entry_point: Some(entry as u64),
@@ -352,7 +355,10 @@ fn parse_minix(data: &[u8], combined_id: bool) -> Result<ClassificationResult> {
     let mut notes = vec!["Minix a.out".to_string()];
     notes.push(format!("Type: {}", id_type));
     notes.push(format!("Header: {} bytes", header_len));
-    notes.push(format!("Text: {} bytes, Data: {} bytes", text_size, data_size));
+    notes.push(format!(
+        "Text: {} bytes, Data: {} bytes",
+        text_size, data_size
+    ));
 
     let metadata = ClassificationMetadata {
         entry_point: Some(entry as u64),

@@ -250,24 +250,66 @@ impl Isa {
     /// Returns the default bitwidth for this ISA.
     pub fn default_bitwidth(&self) -> u8 {
         match self {
-            Isa::X86 | Isa::Arm | Isa::RiscV32 | Isa::Mips | Isa::Ppc
-            | Isa::S390 | Isa::Sparc | Isa::M68k | Isa::ColdFire
-            | Isa::Sh | Isa::Sh4 | Isa::Parisc | Isa::LoongArch32
-            | Isa::Arc | Isa::ArcCompact | Isa::ArcCompact2 | Isa::Xtensa
-            | Isa::MicroBlaze | Isa::Nios2 | Isa::OpenRisc | Isa::Csky
-            | Isa::V850 | Isa::Rx | Isa::TiC6000 | Isa::TiC2000 | Isa::TiC5500
-            | Isa::TiPru | Isa::Blackfin | Isa::Sharc | Isa::Hexagon
-            | Isa::Tile64 | Isa::TilePro | Isa::TileGx => 32,
+            Isa::X86
+            | Isa::Arm
+            | Isa::RiscV32
+            | Isa::Mips
+            | Isa::Ppc
+            | Isa::S390
+            | Isa::Sparc
+            | Isa::M68k
+            | Isa::ColdFire
+            | Isa::Sh
+            | Isa::Sh4
+            | Isa::Parisc
+            | Isa::LoongArch32
+            | Isa::Arc
+            | Isa::ArcCompact
+            | Isa::ArcCompact2
+            | Isa::Xtensa
+            | Isa::MicroBlaze
+            | Isa::Nios2
+            | Isa::OpenRisc
+            | Isa::Csky
+            | Isa::V850
+            | Isa::Rx
+            | Isa::TiC6000
+            | Isa::TiC2000
+            | Isa::TiC5500
+            | Isa::TiPru
+            | Isa::Blackfin
+            | Isa::Sharc
+            | Isa::Hexagon
+            | Isa::Tile64
+            | Isa::TilePro
+            | Isa::TileGx => 32,
 
-            Isa::X86_64 | Isa::AArch64 | Isa::RiscV64 | Isa::Mips64
-            | Isa::Ppc64 | Isa::S390x | Isa::Sparc64 | Isa::Ia64
-            | Isa::Alpha | Isa::LoongArch64 | Isa::Kvx | Isa::Elbrus
-            | Isa::McstElbrus | Isa::Bpf | Isa::Ebc => 64,
+            Isa::X86_64
+            | Isa::AArch64
+            | Isa::RiscV64
+            | Isa::Mips64
+            | Isa::Ppc64
+            | Isa::S390x
+            | Isa::Sparc64
+            | Isa::Ia64
+            | Isa::Alpha
+            | Isa::LoongArch64
+            | Isa::Kvx
+            | Isa::Elbrus
+            | Isa::McstElbrus
+            | Isa::Bpf
+            | Isa::Ebc => 64,
 
             Isa::RiscV128 => 128,
 
-            Isa::Avr | Isa::Avr32 | Isa::Msp430 | Isa::Pic
-            | Isa::Stm8 | Isa::Z80 | Isa::Mcs6502 | Isa::W65816 => 16,
+            Isa::Avr
+            | Isa::Avr32
+            | Isa::Msp430
+            | Isa::Pic
+            | Isa::Stm8
+            | Isa::Z80
+            | Isa::Mcs6502
+            | Isa::W65816 => 16,
 
             Isa::Pdp11 => 16,
             Isa::Vax => 32,
@@ -278,10 +320,10 @@ impl Isa {
             Isa::CellSpu => 128,
 
             // Virtual machine ISAs - bitwidth is notional
-            Isa::Wasm => 32,    // wasm32 is more common
-            Isa::Jvm => 32,     // JVM operand stack width
-            Isa::Dalvik => 32,  // Register-based 32-bit
-            Isa::Clr => 32,     // CIL stack width
+            Isa::Wasm => 32,   // wasm32 is more common
+            Isa::Jvm => 32,    // JVM operand stack width
+            Isa::Dalvik => 32, // Register-based 32-bit
+            Isa::Clr => 32,    // CIL stack width
 
             Isa::Unknown(_) => 0,
         }
@@ -702,12 +744,7 @@ pub struct ClassificationResult {
 
 impl ClassificationResult {
     /// Create a new high-confidence result from format parsing.
-    pub fn from_format(
-        isa: Isa,
-        bitwidth: u8,
-        endianness: Endianness,
-        format: FileFormat,
-    ) -> Self {
+    pub fn from_format(isa: Isa, bitwidth: u8, endianness: Endianness, format: FileFormat) -> Self {
         Self {
             isa,
             bitwidth,
@@ -722,7 +759,12 @@ impl ClassificationResult {
     }
 
     /// Create a result from heuristic analysis.
-    pub fn from_heuristics(isa: Isa, bitwidth: u8, endianness: Endianness, confidence: f64) -> Self {
+    pub fn from_heuristics(
+        isa: Isa,
+        bitwidth: u8,
+        endianness: Endianness,
+        confidence: f64,
+    ) -> Self {
         Self {
             isa,
             bitwidth,
@@ -1085,7 +1127,12 @@ impl IsaClassification {
     }
 
     /// Create from heuristic analysis.
-    pub fn from_heuristics(isa: Isa, bitwidth: u8, endianness: Endianness, confidence: f64) -> Self {
+    pub fn from_heuristics(
+        isa: Isa,
+        bitwidth: u8,
+        endianness: Endianness,
+        confidence: f64,
+    ) -> Self {
         Self {
             isa,
             bitwidth,
@@ -1120,7 +1167,13 @@ pub struct IsaCandidate {
 
 impl IsaCandidate {
     /// Create a new candidate.
-    pub fn new(isa: Isa, bitwidth: u8, endianness: Endianness, raw_score: i64, confidence: f64) -> Self {
+    pub fn new(
+        isa: Isa,
+        bitwidth: u8,
+        endianness: Endianness,
+        raw_score: i64,
+        confidence: f64,
+    ) -> Self {
         Self {
             isa,
             bitwidth,
@@ -1146,7 +1199,11 @@ pub struct ExtensionDetection {
 
 impl ExtensionDetection {
     /// Create from code pattern detection.
-    pub fn from_code(name: impl Into<String>, category: ExtensionCategory, confidence: f64) -> Self {
+    pub fn from_code(
+        name: impl Into<String>,
+        category: ExtensionCategory,
+        confidence: f64,
+    ) -> Self {
         Self {
             name: name.into(),
             category,
@@ -1206,12 +1263,20 @@ impl MetadataEntry {
 
     /// Create entry point metadata.
     pub fn entry_point(addr: u64) -> Self {
-        Self::new(MetadataKey::EntryPoint, MetadataValue::Address(addr), "Entry Point")
+        Self::new(
+            MetadataKey::EntryPoint,
+            MetadataValue::Address(addr),
+            "Entry Point",
+        )
     }
 
     /// Create section count metadata.
     pub fn section_count(count: usize) -> Self {
-        Self::new(MetadataKey::SectionCount, MetadataValue::Integer(count as u64), "Sections")
+        Self::new(
+            MetadataKey::SectionCount,
+            MetadataValue::Integer(count as u64),
+            "Sections",
+        )
     }
 
     /// Create flags metadata.
@@ -1221,7 +1286,11 @@ impl MetadataEntry {
 
     /// Create raw machine type metadata.
     pub fn raw_machine(machine: u32) -> Self {
-        Self::new(MetadataKey::RawMachine, MetadataValue::Hex(machine), "Machine Type")
+        Self::new(
+            MetadataKey::RawMachine,
+            MetadataValue::Hex(machine),
+            "Machine Type",
+        )
     }
 }
 
@@ -1355,12 +1424,8 @@ mod tests {
 
     #[test]
     fn test_classification_result() {
-        let result = ClassificationResult::from_format(
-            Isa::X86_64,
-            64,
-            Endianness::Little,
-            FileFormat::Elf,
-        );
+        let result =
+            ClassificationResult::from_format(Isa::X86_64, 64, Endianness::Little, FileFormat::Elf);
         assert!(result.is_confident());
         assert!(result.to_string().contains("x86-64"));
     }

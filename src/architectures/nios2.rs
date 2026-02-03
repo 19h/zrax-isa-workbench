@@ -66,13 +66,13 @@ pub fn score(data: &[u8]) -> i64 {
         if opcode == OP_RTYPE {
             let opx = (word >> 6) & 0x3F;
             match opx {
-                OPX_ADD => score += 8,     // ADD
-                OPX_SUB => score += 8,     // SUB
-                OPX_AND => score += 6,     // AND
-                OPX_OR => score += 6,      // OR
-                OPX_XOR => score += 6,     // XOR
+                OPX_ADD => score += 8,      // ADD
+                OPX_SUB => score += 8,      // SUB
+                OPX_AND => score += 6,      // AND
+                OPX_OR => score += 6,       // OR
+                OPX_XOR => score += 6,      // XOR
                 OPX_JMP_RET => score += 10, // RET/JMP
-                OPX_CALL => score += 10,   // CALL
+                OPX_CALL => score += 10,    // CALL
                 _ => score += 2,
             }
         }
