@@ -9,9 +9,9 @@
 //! The actual scoring logic is implemented in `crate::architectures::*::score()`.
 
 use crate::architectures::{
-    aarch64, alpha, arc, arm, avr, blackfin, cellspu, dalvik, hexagon, i860, ia64, jvm, loongarch,
-    m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv, s390x, sparc, superh, vax,
-    wasm, x86, xtensa,
+    aarch64, alpha, arc, arm, avr, blackfin, cellspu, dalvik, hexagon, i860, ia64, jvm, lanai,
+    loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv, s390x, sparc,
+    superh, vax, wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -121,6 +121,14 @@ pub fn score_msp430(data: &[u8]) -> i64 {
 #[inline]
 pub fn score_loongarch(data: &[u8]) -> i64 {
     loongarch::score(data)
+}
+
+/// Score likelihood of Lanai code.
+///
+/// Delegates to `crate::architectures::lanai::score()`.
+#[inline]
+pub fn score_lanai(data: &[u8]) -> i64 {
+    lanai::score(data)
 }
 
 /// Score likelihood of Hexagon code.
@@ -362,6 +370,17 @@ mod tests {
             0x20, 0x00, 0x00, 0x4C, // RET
         ];
         assert!(score_loongarch(&code) > 0);
+    }
+
+    #[test]
+    fn test_lanai_scoring() {
+        let code = [
+            0x92, 0x93, 0xFF, 0xFC, // st %fp, [--%sp]
+            0x02, 0x90, 0x00, 0x08, // add %sp, 0x8, %fp
+            0x22, 0x10, 0x00, 0x08, // sub %sp, 0x8, %sp
+            0x81, 0x16, 0xFF, 0xFC, // ld -4[%fp], %pc
+        ];
+        assert!(score_lanai(&code) > 0);
     }
 
     #[test]

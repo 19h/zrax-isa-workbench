@@ -16,6 +16,7 @@ pub mod hexagon;
 pub mod i860;
 pub mod ia64;
 pub mod jvm;
+pub mod lanai;
 pub mod loongarch;
 pub mod m68k;
 pub mod microblaze;
@@ -57,6 +58,7 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::S390 | Isa::S390x => Endianness::Big,
         Isa::M68k | Isa::ColdFire => Endianness::Big,
         Isa::Parisc => Endianness::Big,
+        Isa::Lanai => Endianness::Big,
         Isa::McstElbrus => Endianness::Big,
         Isa::Jvm => Endianness::Big,         // JVM is big-endian
         Isa::Dalvik => Endianness::Little,   // DEX is little-endian
@@ -108,6 +110,7 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Alpha => 4,
         Isa::Parisc => 4,
         Isa::I860 => 4,    // i860 is 32-bit fixed
+        Isa::Lanai => 4,
         Isa::CellSpu => 4, // Cell SPU is 32-bit fixed
         Isa::Ia64 => 16,   // IA-64 bundles are 128-bit (16-byte) aligned
         Isa::LoongArch32 | Isa::LoongArch64 => 4,

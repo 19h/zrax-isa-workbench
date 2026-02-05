@@ -160,6 +160,23 @@ pub fn quick_check_isa(data: &[u8], isa: crate::types::Isa) -> bool {
             false
         }
 
+        Isa::Lanai => {
+            // Lanai is big-endian with fixed 32-bit instructions
+            for i in (0..data.len().min(1000)).step_by(4) {
+                if i + 4 > data.len() {
+                    break;
+                }
+
+                let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+                // NOP, prologue push, or return via ld %pc
+                if word == 0x0000_0001 || word == 0x9293_FFFC || word == 0x8116_FFFC {
+                    return true;
+                }
+            }
+            false
+        }
+
         _ => false,
     }
 }

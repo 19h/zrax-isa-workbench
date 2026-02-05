@@ -580,7 +580,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         }
 
         // Lanai
-        0xF4 => (Isa::Unknown(0xF4), 32),
+        0xF4 => (Isa::Lanai, 32),
 
         // CEVA
         0xF5 => (Isa::Unknown(0xF5), 32),
@@ -1146,6 +1146,7 @@ mod tests {
         assert_eq!(e_machine_to_isa(0x16, 2).0, Isa::S390x);
         assert_eq!(e_machine_to_isa(0x2B, 2).0, Isa::Sparc64);
         assert_eq!(e_machine_to_isa(0xA4, 1).0, Isa::Hexagon);
+        assert_eq!(e_machine_to_isa(0xF4, 1).0, Isa::Lanai);
         assert_eq!(e_machine_to_isa(0x102, 2).0, Isa::LoongArch64);
     }
 }

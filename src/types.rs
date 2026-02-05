@@ -85,6 +85,9 @@ pub enum Isa {
     // OpenRISC
     OpenRisc,
 
+    // Lanai
+    Lanai,
+
     // C-SKY
     Csky,
 
@@ -204,6 +207,7 @@ impl Isa {
             Isa::MicroBlaze => "Xilinx MicroBlaze",
             Isa::Nios2 => "Altera Nios II",
             Isa::OpenRisc => "OpenRISC",
+            Isa::Lanai => "Lanai",
             Isa::Csky => "C-SKY",
             Isa::V850 => "NEC V850",
             Isa::Rx => "Renesas RX",
@@ -270,6 +274,7 @@ impl Isa {
             | Isa::MicroBlaze
             | Isa::Nios2
             | Isa::OpenRisc
+            | Isa::Lanai
             | Isa::Csky
             | Isa::V850
             | Isa::Rx

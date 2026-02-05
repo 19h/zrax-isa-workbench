@@ -41,6 +41,7 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::MicroBlaze, "Xilinx MicroBlaze"),
     (Isa::Nios2, "Altera Nios II"),
     (Isa::OpenRisc, "OpenRISC"),
+    (Isa::Lanai, "Lanai"),
     (Isa::Jvm, "JVM Bytecode"),
     (Isa::Wasm, "WebAssembly"),
     (Isa::Dalvik, "Dalvik Bytecode"),
@@ -403,6 +404,16 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
     scores.push(ArchitectureScore {
         isa: Isa::OpenRisc,
         raw_score: openrisc_score,
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 32,
+    });
+
+    // Lanai
+    let lanai_score = scorer::score_lanai(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Lanai,
+        raw_score: lanai_score,
         confidence: 0.0,
         endianness: Endianness::Big,
         bitwidth: 32,
