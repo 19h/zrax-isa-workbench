@@ -357,53 +357,327 @@ pub const VALID_OPCODE_PREFIXES: &[u32] = &[
 /// Analyzes raw bytes for patterns characteristic of LoongArch.
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
+    let mut valid_count = 0u32;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
+    let mut branch_count = 0u32;
+    let mut prologue_count = 0u32;
+    let mut prev_word: u32 = 0;
 
     // LoongArch is little-endian, 4-byte aligned
-    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+    let mut i = 0;
+    while i + 3 < data.len() {
         let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
 
-        // NOP
+        // Skip padding
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            score -= 3;
+            i += 4;
+            continue;
+        }
+
+        // --- Cross-architecture penalties ---
+
+        // ARM32 (LE) patterns: condition 0xE in top 4 bits
+        {
+            let arm_cond = (word >> 28) & 0xF;
+            if arm_cond == 0xE {
+                let arm_type = (word >> 24) & 0xF;
+                // ARM data processing (0xE0-0xE3)
+                if arm_type <= 3 {
+                    score -= 3;
+                }
+                // ARM BL (0xEB)
+                if arm_type == 0xB {
+                    score -= 5;
+                }
+            }
+            // ARM NOP
+            if word == 0xE1A00000 || word == 0xE320F000 {
+                score -= 15;
+                i += 4;
+                continue;
+            }
+            // ARM BX LR
+            if word == 0xE12FFF1E {
+                score -= 20;
+                i += 4;
+                continue;
+            }
+            // ARM PUSH/POP
+            if (word & 0xFFFF0000) == 0xE92D0000 || (word & 0xFFFF0000) == 0xE8BD0000 {
+                score -= 10;
+                i += 4;
+                continue;
+            }
+        }
+
+        // RISC-V (LE) patterns
+        {
+            if word == 0x00000013 { score -= 10; i += 4; continue; } // RV NOP
+            if word == 0x00008067 { score -= 15; i += 4; continue; } // RV RET
+        }
+
+        // MIPS LE patterns
+        {
+            if word == 0x03E00008 { score -= 15; i += 4; continue; } // MIPS JR $ra (LE)
+        }
+
+        // Hexagon (LE) patterns
+        {
+            // Hexagon NOP (upper 16 bits = 0x7F00)
+            if (word & 0xFFFF0000) == 0x7F000000 { score -= 10; i += 4; continue; }
+            // Hexagon DEALLOC_RETURN
+            if word == 0x961EC01E { score -= 15; i += 4; continue; }
+            // Hexagon ALLOCFRAME
+            if (word & 0xFFFFE000) == 0xA09DC000 { score -= 10; i += 4; continue; }
+        }
+
+        // 16-bit LE cross-architecture penalties
+        {
+            let hw0 = u16::from_le_bytes([data[i], data[i + 1]]);
+            let hw1 = if i + 3 < data.len() { u16::from_le_bytes([data[i + 2], data[i + 3]]) } else { 0 };
+            // Thumb BX LR
+            if hw0 == 0x4770 || hw1 == 0x4770 { score -= 8; }
+            // Thumb PUSH{LR} / POP{PC}
+            if (hw0 & 0xFF00) == 0xB500 || (hw1 & 0xFF00) == 0xB500 { score -= 5; }
+            if (hw0 & 0xFF00) == 0xBD00 || (hw1 & 0xFF00) == 0xBD00 { score -= 5; }
+            // AVR RET / RETI
+            if hw0 == 0x9508 || hw1 == 0x9508 { score -= 8; }
+            if hw0 == 0x9518 || hw1 == 0x9518 { score -= 6; }
+            // MSP430 RET
+            if hw0 == 0x4130 || hw1 == 0x4130 { score -= 8; }
+            // MSP430 NOP
+            if hw0 == 0x4303 || hw1 == 0x4303 { score -= 6; }
+            // SH RTS / NOP
+            if hw0 == 0x000B || hw1 == 0x000B { score -= 8; }
+        }
+
+        // AArch64 (LE) patterns
+        {
+            let top8 = word >> 24;
+            // AArch64 RET (D65F03C0)
+            if word == 0xD65F03C0 { score -= 20; i += 4; continue; }
+            // AArch64 NOP (D503201F)
+            if word == 0xD503201F { score -= 15; i += 4; continue; }
+            // AArch64 STP/LDP with x29,x30 (common prologue/epilogue)
+            if (word & 0xFFC003E0) == 0xA90003E0 || (word & 0xFFC003E0) == 0xA94003E0 {
+                score -= 8;
+                i += 4;
+                continue;
+            }
+        }
+
+        // x86-64 patterns (byte-oriented, check common multi-byte sequences as LE words)
+        {
+            let b0 = (word & 0xFF) as u8;
+            let b01 = word & 0xFFFF;
+            // REX.W + MOV (0x48 89 or 0x48 8B) - extremely common x86-64 pattern
+            if b01 == 0x8948 || b01 == 0x8B48 { score -= 8; }
+            // x86-64 PUSH RBP (0x55) followed by REX.W MOV (0x48 89 E5 = mov rbp,rsp)
+            if word == 0x8948_5500 || word == 0xE589_4855 { score -= 15; }
+            // x86-64 RET (0xC3) as first byte
+            if b0 == 0xC3 { score -= 5; }
+            // x86-64 NOP (0x90) as first byte
+            if b0 == 0x90 { score -= 3; }
+            // x86-64 INT3 (0xCC) as first byte
+            if b0 == 0xCC { score -= 4; }
+        }
+
+        // LoongArch function prologue: ADDI.D $sp,$sp,-N followed by ST.D $ra,$sp,M
+        // ADDI.D $sp,$sp: top10=0x00B, rj=$sp(3), rd=$sp(3) → (word & 0xFFC003FF) == 0x02C00063
+        // ST.D $ra,$sp: top10=0x0A7, rj=$sp(3), rd=$ra(1) → (word & 0xFFC003FF) == 0x29C00061
+        if (prev_word & 0xFFC003FF) == 0x02C00063 && (word & 0xFFC003FF) == 0x29C00061 {
+            score += 40;
+            prologue_count += 1;
+        }
+        // Epilogue: LD.D $ra,$sp,N followed by ADDI.D $sp,$sp,+M
+        if (prev_word & 0xFFC003FF) == 0x28C00061 && (word & 0xFFC003FF) == 0x02C00063 {
+            score += 40;
+            prologue_count += 1;
+        }
+        // PC-relative addressing: PCADDU12I followed by ADDI.D/LD.D with same register
+        // PCADDU12I: (word & 0xFE000000) == 0x1C000000, rd = word & 0x1F
+        if (prev_word & 0xFE000000) == 0x1C000000 {
+            let prev_rd = prev_word & 0x1F;
+            let curr_rj = (word >> 5) & 0x1F;
+            if prev_rd == curr_rj {
+                let top10 = (word >> 22) & 0x3FF;
+                if matches!(top10, 0x00B | 0x0A3 | 0x0A0) { // ADDI.D, LD.D, LD.B
+                    score += 30;
+                }
+            }
+        }
+
+        // --- Exact match patterns (high confidence) ---
         if is_nop(word) {
             score += 25;
+            valid_count += 1;
+            i += 4;
+            continue;
         }
-
-        // RET
         if is_ret(word) {
             score += 30;
+            ret_count += 1;
+            valid_count += 1;
+            i += 4;
+            continue;
         }
-
-        // SYSCALL
         if is_syscall(word) {
             score += 20;
+            valid_count += 1;
+            i += 4;
+            continue;
         }
-
-        // BREAK
         if is_break(word) {
             score += 15;
+            valid_count += 1;
+            i += 4;
+            continue;
         }
 
-        // Check for valid instruction patterns
-        if is_branch(word) {
-            score += 3;
+        // --- Instruction-class scoring ---
+        let top6 = (word >> 26) & 0x3F;
+        let top7 = (word >> 25) & 0x7F;
+        let top10 = (word >> 22) & 0x3FF;
+        let top17 = (word >> 15) & 0x1FFFF;
+
+        let mut matched = false;
+
+        // Address formation (very distinctive, 7-bit opcode)
+        // LU12I.W: 0x14000000, mask 0xFE000000 -> top7 = 0x0A
+        // PCADDU12I: 0x1C000000, mask 0xFE000000 -> top7 = 0x0E
+        // PCALAU12I: 0x1A000000, mask 0xFE000000 -> top7 = 0x0D
+        if matches!(top7, 0x0A | 0x0D | 0x0E) {
+            score += 6;
+            valid_count += 1;
+            matched = true;
         }
 
-        if is_load(word) || is_store(word) {
-            score += 3;
+        // ALU 3-register ops (17-bit opcode)
+        if !matched {
+            let alu_match = matches!(top17,
+                0x00020 | // ADD.W (0x00100000 >> 15)
+                0x00021 | // ADD.D
+                0x00022 | // SUB.W
+                0x00023 | // SUB.D
+                0x00029 | // AND
+                0x0002A | // OR
+                0x0002B | // XOR
+                0x00028 | // NOR
+                0x0002E | // SLL.W
+                0x0002F | // SRL.W
+                0x00030 | // SRA.W
+                0x00031 | // SLL.D
+                0x00032 | // SRL.D
+                0x00033 | // SRA.D
+                0x00038 | // MUL.W
+                0x0003B | // MUL.D
+                0x00040 | // DIV.W
+                0x00044   // DIV.D
+            );
+            if alu_match {
+                score += 4;
+                valid_count += 1;
+                matched = true;
+            }
         }
 
-        // BL (call)
-        if is_bl(word) {
+        // Immediate ALU ops (10-bit opcode)
+        if !matched {
+            let imm_match = matches!(top10,
+                0x00A | // ADDI.W (0x02800000 >> 22)
+                0x00B | // ADDI.D
+                0x00D | // ANDI
+                0x00E | // ORI
+                0x00F   // XORI
+            );
+            if imm_match {
+                score += 4;
+                valid_count += 1;
+                matched = true;
+            }
+        }
+
+        // Load/Store (10-bit opcode)
+        if !matched && (is_load(word) || is_store(word)) {
+            score += 4;
+            valid_count += 1;
+            matched = true;
+        }
+
+        // FP Load/Store
+        if !matched {
+            let fp_match = matches!(top10,
+                0x0AC | // FLD.S (0x2B000000 >> 22)
+                0x0AD | // FST.S
+                0x0AE | // FLD.D
+                0x0AF   // FST.D
+            );
+            if fp_match {
+                score += 4;
+                valid_count += 1;
+                matched = true;
+            }
+        }
+
+        // Vector load/store
+        if !matched && (is_lsx(word) || is_lasx(word)) {
             score += 5;
+            valid_count += 1;
+            matched = true;
         }
 
-        // B (unconditional branch)
-        if is_b(word) {
-            score += 5;
+        // Branches (6-bit opcode in top 6 bits)
+        if !matched {
+            if is_call(word) {
+                score += 8;
+                call_count += 1;
+                valid_count += 1;
+                matched = true;
+            } else if is_return(word) {
+                score += 10;
+                ret_count += 1;
+                valid_count += 1;
+                matched = true;
+            } else if is_branch(word) {
+                // Conditional branches
+                score += 4;
+                branch_count += 1;
+                valid_count += 1;
+                matched = true;
+            }
         }
 
-        // Invalid
-        if word == 0x00000000 || word == 0xFFFFFFFF {
-            score -= 5;
+        // Unrecognized instruction - small penalty
+        if !matched {
+            score -= 1;
+        }
+
+        prev_word = word;
+        i += 4;
+    }
+
+    // Structural bonus: real code has returns and calls/branches
+    if ret_count > 0 && (call_count > 0 || branch_count > 0) {
+        score += 15;
+    }
+
+    // Structural requirement: if we processed many words but found no
+    // distinctive LoongArch patterns, reduce score.
+    // LoongArch ALU/load/store opcodes cover a significant portion of the
+    // instruction space, so random data can accumulate positive scores.
+    let total_words = data.len() / 4;
+    if total_words > 20 {
+        let distinctive = ret_count + call_count + prologue_count;
+        if valid_count == 0 {
+            score = (score as f64 * 0.08) as i64;
+        } else if distinctive == 0 {
+            // No returns or calls at all — not code
+            score = (score as f64 * 0.20) as i64;
+        } else if ret_count == 0 && branch_count < 2 {
+            // Calls but no returns and barely any branches
+            score = (score as f64 * 0.40) as i64;
         }
     }
 

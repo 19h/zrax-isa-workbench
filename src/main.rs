@@ -4,8 +4,8 @@
 
 use clap::{Parser, ValueEnum};
 use isa_classifier::{
-    detect_payload, ClassifierOptions, DetectionPayload, HumanFormatter, JsonFormatter,
-    PayloadFormatter, ShortFormatter, CandidatesFormatter,
+    detect_multi_isa, detect_payload, ClassifierOptions, DetectionPayload, HumanFormatter,
+    JsonFormatter, PayloadFormatter, ShortFormatter, CandidatesFormatter,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -37,6 +37,14 @@ struct Args {
     /// Show all candidates (for heuristic analysis)
     #[arg(short, long)]
     candidates: bool,
+
+    /// Detect multiple ISAs in firmware images (windowed analysis)
+    #[arg(long)]
+    multi_isa: bool,
+
+    /// Window size in bytes for multi-ISA detection (default: 1024)
+    #[arg(long, default_value = "1024")]
+    window_size: usize,
 
     /// Minimum confidence threshold (0.0 - 1.0)
     #[arg(long, default_value = "0.3")]
@@ -87,13 +95,25 @@ fn main() -> ExitCode {
     let mut success = true;
 
     for path in &args.files {
-        match analyze_file(path, &options, &args) {
-            Ok(()) => {}
-            Err(e) => {
-                if !args.quiet {
-                    eprintln!("Error analyzing {}: {}", path.display(), e);
+        if args.multi_isa {
+            match analyze_multi_isa(path, &args) {
+                Ok(()) => {}
+                Err(e) => {
+                    if !args.quiet {
+                        eprintln!("Error analyzing {}: {}", path.display(), e);
+                    }
+                    success = false;
                 }
-                success = false;
+            }
+        } else {
+            match analyze_file(path, &options, &args) {
+                Ok(()) => {}
+                Err(e) => {
+                    if !args.quiet {
+                        eprintln!("Error analyzing {}: {}", path.display(), e);
+                    }
+                    success = false;
+                }
             }
         }
     }
@@ -152,6 +172,82 @@ fn analyze_file(
     Ok(())
 }
 
+/// Analyze a file for multiple ISAs using windowed detection.
+fn analyze_multi_isa(
+    path: &PathBuf,
+    args: &Args,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read(path)?;
+    let detected = detect_multi_isa(&data, args.window_size);
+
+    match args.format {
+        OutputFormat::Json => {
+            #[derive(serde::Serialize)]
+            struct MultiIsaOutput {
+                file: String,
+                multi_isa: bool,
+                detected_isas: Vec<IsaEntry>,
+                primary_isa: Option<String>,
+            }
+
+            #[derive(serde::Serialize)]
+            struct IsaEntry {
+                isa: String,
+                bitwidth: u8,
+                endianness: String,
+                window_count: usize,
+                total_bytes: usize,
+                avg_score: f64,
+            }
+
+            let primary = detected.first().map(|d| d.isa.to_string());
+            let entries: Vec<IsaEntry> = detected
+                .iter()
+                .map(|d| IsaEntry {
+                    isa: d.isa.to_string(),
+                    bitwidth: d.bitwidth,
+                    endianness: d.endianness.to_string(),
+                    window_count: d.window_count,
+                    total_bytes: d.total_bytes,
+                    avg_score: d.avg_score,
+                })
+                .collect();
+
+            let output = MultiIsaOutput {
+                file: path.display().to_string(),
+                multi_isa: entries.len() > 1,
+                detected_isas: entries,
+                primary_isa: primary,
+            };
+
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        OutputFormat::Human => {
+            println!("File: {}", path.display());
+            if detected.is_empty() {
+                println!("  No ISAs detected");
+            } else {
+                println!("  Detected {} ISA(s):", detected.len());
+                for d in &detected {
+                    println!(
+                        "    {:<12} {:>3} windows, {:>6} bytes, avg_score {:.1}",
+                        d.isa.to_string(),
+                        d.window_count,
+                        d.total_bytes,
+                        d.avg_score,
+                    );
+                }
+            }
+        }
+        OutputFormat::Short => {
+            let isas: Vec<String> = detected.iter().map(|d| d.isa.to_string()).collect();
+            println!("{}: {}", path.display(), isas.join("+"));
+        }
+    }
+
+    Ok(())
+}
+
 /// Format the payload using the appropriate formatter.
 fn format_output(payload: &DetectionPayload, path: &PathBuf, args: &Args) -> String {
     match args.format {
@@ -185,6 +281,7 @@ mod tests {
         let args = Args::try_parse_from(["isa-classify", "test.bin"]).unwrap();
         assert_eq!(args.files.len(), 1);
         assert!(!args.verbose);
+        assert!(!args.multi_isa);
     }
 
     #[test]
@@ -197,5 +294,20 @@ mod tests {
     fn test_format_options() {
         let args = Args::try_parse_from(["isa-classify", "-f", "json", "test.bin"]).unwrap();
         assert!(matches!(args.format, OutputFormat::Json));
+    }
+
+    #[test]
+    fn test_multi_isa_flag() {
+        let args = Args::try_parse_from(["isa-classify", "--multi-isa", "test.bin"]).unwrap();
+        assert!(args.multi_isa);
+        assert_eq!(args.window_size, 1024);
+    }
+
+    #[test]
+    fn test_window_size() {
+        let args = Args::try_parse_from([
+            "isa-classify", "--multi-isa", "--window-size", "2048", "test.bin"
+        ]).unwrap();
+        assert_eq!(args.window_size, 2048);
     }
 }

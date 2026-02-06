@@ -269,6 +269,28 @@ pub fn score(data: &[u8]) -> i64 {
     let mut total_score: i64 = 0;
     let mut valid_bundles = 0u32;
     let mut invalid_bundles = 0u32;
+    let mut branch_count = 0u32;
+    let mut return_count = 0u32;
+    let mut load_store_count = 0u32;
+
+    // Cross-architecture penalties for 16-bit LE patterns
+    // IA64 bundles are 16 bytes; scan halfwords for distinctive patterns from other ISAs
+    {
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+            // MSP430
+            if hw == 0x4130 { total_score -= 15; } // MSP430 RET
+            if hw == 0x4303 { total_score -= 8; }  // MSP430 NOP
+            if hw == 0x1300 { total_score -= 10; } // MSP430 RETI
+            // AVR
+            if hw == 0x9508 { total_score -= 12; } // AVR RET
+            if hw == 0x9518 { total_score -= 10; } // AVR RETI
+            // Thumb
+            if hw == 0x4770 { total_score -= 10; } // Thumb BX LR
+            j += 2;
+        }
+    }
 
     // Process bundles (must be 16-byte aligned for real IA-64)
     let mut i = 0;
@@ -286,8 +308,9 @@ pub fn score(data: &[u8]) -> i64 {
 
         valid_bundles += 1;
 
-        // Score template
-        total_score += 5;
+        // Score template (reduced from 5 because 75% of random bytes
+        // produce valid templates — 24/32 valid template values)
+        total_score += 2;
 
         // Extract and score slots
         let (t0, t1, t2) = template_slot_types(template);
@@ -300,6 +323,7 @@ pub fn score(data: &[u8]) -> i64 {
             total_score += 3;
         } else if is_slot_load_store(slot0, t0) {
             total_score += 6;
+            load_store_count += 1;
         } else if is_slot_alu(slot0) {
             total_score += 4;
         }
@@ -312,6 +336,7 @@ pub fn score(data: &[u8]) -> i64 {
             total_score += 2;
         } else if is_slot_branch(slot1, t1) {
             total_score += 6;
+            branch_count += 1;
         } else if is_slot_alu(slot1) {
             total_score += 4;
         }
@@ -324,8 +349,10 @@ pub fn score(data: &[u8]) -> i64 {
             total_score += 2;
         } else if is_slot_branch(slot2, t2) {
             total_score += 6;
+            branch_count += 1;
         } else if is_slot_return(slot2, t2) {
             total_score += 10; // Returns are strong indicators
+            return_count += 1;
         } else if is_slot_compare(slot2) {
             total_score += 5;
         }
@@ -349,13 +376,32 @@ pub fn score(data: &[u8]) -> i64 {
         i += BUNDLE_SIZE;
     }
 
+    // Structural requirement: real IA-64 code must have branches, returns, or load/stores
+    // Without this, random data from 16-bit ISAs scores high because 75% of bytes[0]
+    // values produce valid templates (24/32 valid)
+    // Structural requirement: IA-64 slot matching is broad enough that random data
+    // generates false branch/load-store matches. Require meaningful counts.
+    let mut structural_ok = true;
+    if valid_bundles > 3 {
+        let distinctive = branch_count + return_count;
+        if distinctive < 2 && load_store_count < 2 {
+            // Too few distinctive patterns — likely noise
+            if distinctive == 0 && load_store_count == 0 {
+                total_score = (total_score as f64 * 0.08) as i64;
+            } else {
+                total_score = (total_score as f64 * 0.20) as i64;
+            }
+            structural_ok = false;
+        }
+    }
+
     // Adjust based on validity ratio
     if valid_bundles + invalid_bundles > 0 {
         let validity_ratio = valid_bundles as f64 / (valid_bundles + invalid_bundles) as f64;
         total_score = (total_score as f64 * validity_ratio) as i64;
 
-        // Bonus for high validity
-        if validity_ratio > 0.85 && valid_bundles > 5 {
+        // Bonus only with structural evidence
+        if structural_ok && validity_ratio > 0.85 && valid_bundles > 5 {
             total_score += 20;
         }
     }

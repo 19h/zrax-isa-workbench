@@ -445,6 +445,127 @@ pub fn score(data: &[u8]) -> i64 {
     let mut i = 0;
     while i + 3 < data.len() {
         let instr = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // Cross-architecture penalties: SPARC patterns (also big-endian 32-bit)
+        // SPARC format bits 31:30 determine instruction format:
+        //   00 = Branch/SETHI, 01 = CALL, 10 = Arithmetic, 11 = Load/Store
+        {
+            let sparc_fmt = (instr >> 30) & 0x03;
+
+            // SPARC NOP (sethi 0, %g0 = 0x01000000)
+            if instr == 0x01000000 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            // SPARC RETL (jmpl %o7+8, %g0 = 0x81C3E008)
+            if instr == 0x81C3E008 {
+                total_score -= 20;
+                i += 4;
+                continue;
+            }
+            // SPARC RET (jmpl %i7+8, %g0 = 0x81C7E008)
+            if instr == 0x81C7E008 {
+                total_score -= 20;
+                i += 4;
+                continue;
+            }
+            // SPARC RESTORE %g0, %g0, %g0 (0x81E80000)
+            if instr == 0x81E80000 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            // SPARC TA 0 (trap always = 0x91D02000)
+            if instr == 0x91D02000 {
+                total_score -= 12;
+                i += 4;
+                continue;
+            }
+
+            // SPARC CALL format (bits 31:30 = 01): covers 25% of all values
+            // but is very distinctive for SPARC
+            if sparc_fmt == 1 {
+                total_score -= 5;
+            }
+
+            // SPARC arithmetic format (bits 31:30 = 10): check for common op3 codes
+            if sparc_fmt == 2 {
+                let op3 = ((instr >> 19) & 0x3F) as u8;
+                match op3 {
+                    0x3C => { total_score -= 10; i += 4; continue; } // SAVE
+                    0x3D => { total_score -= 10; i += 4; continue; } // RESTORE
+                    0x00 | 0x02 | 0x04 | 0x10 | 0x11 | 0x12 | 0x14 => {
+                        total_score -= 3; // ADD, OR, SUB, ADDCC, etc.
+                    }
+                    0x25 | 0x26 => { total_score -= 3; } // SLL, SRL
+                    0x38 => { total_score -= 5; } // JMPL
+                    _ => {}
+                }
+            }
+
+            // SPARC Branch format (bits 31:30 = 00): check op2 field
+            if sparc_fmt == 0 {
+                let op2 = ((instr >> 22) & 0x07) as u8;
+                match op2 {
+                    2 | 6 => { total_score -= 3; } // Bicc, FBfcc
+                    4 => { total_score -= 2; } // SETHI
+                    _ => {}
+                }
+            }
+
+            // SPARC Load/Store format (bits 31:30 = 11)
+            if sparc_fmt == 3 {
+                let op3 = ((instr >> 19) & 0x3F) as u8;
+                // Common SPARC LD/ST opcodes
+                if matches!(op3, 0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x08 | 0x09 | 0x0A) {
+                    total_score -= 3;
+                }
+            }
+        }
+        // Cross-architecture penalties: PPC patterns (also big-endian 32-bit)
+        {
+            // PPC NOP (ori 0,0,0 = 0x60000000)
+            if instr == 0x60000000 {
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
+            // PPC BLR (0x4E800020)
+            if instr == 0x4E800020 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            // PPC MFLR r0 (0x7C0802A6)
+            if instr == 0x7C0802A6 {
+                total_score -= 12;
+                i += 4;
+                continue;
+            }
+            // PPC MTLR r0 (0x7C0803A6)
+            if instr == 0x7C0803A6 {
+                total_score -= 12;
+                i += 4;
+                continue;
+            }
+        }
+
+        // Cross-architecture penalties: 16-bit LE ISAs (AVR, Thumb, MSP430)
+        // When 16-bit LE data is read as 32-bit BE, check the constituent halfwords
+        {
+            let hw0 = u16::from_le_bytes([data[i], data[i + 1]]);
+            let hw1 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
+            // AVR distinctive patterns
+            if hw0 == 0x9508 || hw1 == 0x9508 { total_score -= 10; } // AVR RET
+            if hw0 == 0x9518 || hw1 == 0x9518 { total_score -= 8; }  // AVR RETI
+            if hw0 == 0x9588 || hw1 == 0x9588 { total_score -= 8; }  // AVR SLEEP
+            // Thumb BX LR
+            if hw0 == 0x4770 || hw1 == 0x4770 { total_score -= 8; }
+            // MSP430 RET
+            if hw0 == 0x4130 || hw1 == 0x4130 { total_score -= 8; }
+        }
+
         let format = determine_format(instr);
 
         if format == Format::Unknown {
@@ -489,14 +610,14 @@ pub fn score(data: &[u8]) -> i64 {
         } else if is_simd_shuffle(instr) {
             total_score += 10; // SIMD shuffles are distinctive
         } else {
-            // General valid instruction
+            // General valid instruction - keep scores low to avoid false positives
             match format {
-                Format::RR => total_score += 4,
-                Format::RRR => total_score += 6,
-                Format::RI7 => total_score += 4,
-                Format::RI10 => total_score += 4,
-                Format::RI16 => total_score += 5,
-                Format::RI18 => total_score += 5,
+                Format::RR => total_score += 2,
+                Format::RRR => total_score += 3,
+                Format::RI7 => total_score += 2,
+                Format::RI10 => total_score += 2,
+                Format::RI16 => total_score += 2,
+                Format::RI18 => total_score += 2,
                 Format::Unknown => {}
             }
         }
@@ -509,6 +630,31 @@ pub fn score(data: &[u8]) -> i64 {
         }
 
         i += 4;
+    }
+
+    // Structural requirement: Cell SPU code of meaningful size must contain
+    // returns (BI $lr), calls (BRSL/BRASL), or channel ops (RDCH/WRCH).
+    // Without these, the data is likely from another big-endian 32-bit ISA
+    // (PPC, SPARC) whose instructions happen to match SPU format patterns.
+    let num_words = data.len() / 4;
+    if num_words > 20 {
+        let mut has_returns = false;
+        let mut has_calls = false;
+        let mut has_channel = false;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let w = u32::from_be_bytes([data[j], data[j+1], data[j+2], data[j+3]]);
+            if is_return(w) { has_returns = true; }
+            if is_branch(w) {
+                let op9 = extract_opcode_9(w);
+                if matches!(op9, 0x066 | 0x062) { has_calls = true; } // BRSL, BRASL
+            }
+            if is_channel_op(w) { has_channel = true; }
+            j += 4;
+        }
+        if !has_returns && !has_calls && !has_channel {
+            total_score = (total_score as f64 * 0.15) as i64;
+        }
     }
 
     // Adjust based on validity ratio

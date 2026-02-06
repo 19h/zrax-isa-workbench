@@ -375,59 +375,176 @@ pub const STRONG_INDICATORS: &[u16] = &[
 /// Analyzes raw bytes for patterns characteristic of m68k.
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
+    let mut branch_count = 0u32;
+
+    // Cross-architecture penalties for LE 16-bit ISAs
+    // m68k is BE; LE data from AVR/Thumb/MSP430 should be penalized
+    {
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw_le = u16::from_le_bytes([data[j], data[j + 1]]);
+            // AVR distinctive patterns
+            if hw_le == 0x9508 { score -= 12; } // AVR RET
+            if hw_le == 0x9518 { score -= 10; } // AVR RETI
+            if hw_le == 0x9588 { score -= 8; }  // AVR SLEEP
+            if hw_le == 0x95A8 { score -= 8; }  // AVR WDR
+            if hw_le == 0x9409 { score -= 6; }  // AVR IJMP
+            if hw_le == 0x9509 { score -= 6; }  // AVR ICALL
+            // Thumb
+            if hw_le == 0x4770 { score -= 10; } // Thumb BX LR
+            if hw_le == 0xBF00 { score -= 6; }  // Thumb NOP
+            if (hw_le & 0xFF00) == 0xB500 { score -= 5; } // Thumb PUSH {.., LR}
+            if (hw_le & 0xFF00) == 0xBD00 { score -= 5; } // Thumb POP {.., PC}
+            // MSP430
+            if hw_le == 0x4130 { score -= 10; } // MSP430 RET
+            if hw_le == 0x4303 { score -= 6; }  // MSP430 NOP
+            j += 2;
+        }
+    }
 
     // m68k is big-endian
     for i in (0..data.len().saturating_sub(1)).step_by(2) {
         let word = u16::from_be_bytes([data[i], data[i + 1]]);
 
+        // Invalid/padding
+        if word == 0x0000 || word == 0xFFFF {
+            score -= 5;
+            continue;
+        }
+
+        // --- Cross-architecture penalties (BE 16-bit) ---
+        // S390x: BR %r14
+        if word == 0x07FE { score -= 12; continue; }
+        // SPARC NOP top halfword
+        if word == 0x0100 { score -= 5; continue; }
+
         // NOP
         if is_nop(word) {
             score += 25;
+            continue;
         }
 
         // RTS (return)
         if is_rts(word) {
             score += 30;
+            ret_count += 1;
+            continue;
         }
 
         // RTE (return from exception)
         if word == patterns::RTE {
             score += 15;
+            ret_count += 1;
+            continue;
         }
 
         // TRAP
         if is_trap(word) {
             score += 15;
+            continue;
         }
 
         // JSR
         if is_jsr(word) {
             score += 10;
+            call_count += 1;
+            continue;
         }
 
         // JMP
         if is_jmp(word) {
             score += 8;
+            branch_count += 1;
+            continue;
         }
 
-        // MOVE.L (most common)
-        if get_opcode_group(word) == opcode_group::MOVE_LONG {
+        // BSR (call)
+        if is_bsr(word) {
+            score += 8;
+            call_count += 1;
+            continue;
+        }
+
+        // Bcc (conditional branches)
+        if is_branch(word) && !is_bra(word) && !is_bsr(word) {
             score += 3;
+            branch_count += 1;
+            continue;
         }
 
-        // MOVEQ
-        if is_moveq(word) {
-            score += 5;
+        // BRA
+        if is_bra(word) {
+            score += 3;
+            branch_count += 1;
+            continue;
         }
 
-        // LEA
-        if is_lea(word) {
-            score += 5;
+        // LINK/UNLK (function prologue/epilogue)
+        if is_link(word) {
+            score += 8;
+            call_count += 1;
+            continue;
+        }
+        if is_unlk(word) {
+            score += 8;
+            ret_count += 1;
+            continue;
         }
 
-        // Invalid
-        if word == 0x0000 || word == 0xFFFF {
-            score -= 5;
+        let group = get_opcode_group(word);
+        let mut matched = true;
+        match group {
+            // MOVE.L (most common)
+            opcode_group::MOVE_LONG => score += 3,
+            // MOVE.W
+            opcode_group::MOVE_WORD => score += 2,
+            // MOVE.B
+            opcode_group::MOVE_BYTE => score += 2,
+            // MOVEQ
+            opcode_group::MOVEQ if is_moveq(word) => score += 5,
+            // LEA
+            opcode_group::MISC if is_lea(word) => score += 5,
+            // MOVEM
+            opcode_group::MISC if is_movem(word) => score += 5,
+            // ADD/ADDX
+            opcode_group::ADD_ADDX => score += 2,
+            // SUB/SUBX
+            opcode_group::SUB_SUBX => score += 2,
+            // CMP/EOR
+            opcode_group::CMP_EOR => score += 2,
+            // AND/MUL
+            opcode_group::AND_MUL_ABCD_EXG => score += 2,
+            // OR/DIV
+            opcode_group::OR_DIV_SBCD => score += 2,
+            // ADDQ/SUBQ
+            opcode_group::ADDQ_SUBQ_SCC_DBCC => score += 2,
+            // Shift/rotate
+            opcode_group::SHIFT_ROTATE => score += 2,
+            // Bit operations/immediate
+            opcode_group::BITOP_MOVEP_IMM => score += 1,
+            // A-line and F-line are reserved/trap
+            opcode_group::RESERVED_A | opcode_group::RESERVED_F => {
+                score -= 3;
+                matched = false;
+            }
+            _ => { matched = false; }
+        }
+
+        if !matched {
+            score -= 1;
+        }
+    }
+
+    // Structural requirement
+    let num_halfwords = data.len() / 2;
+    if num_halfwords > 40 {
+        let distinctive = ret_count + call_count;
+        if distinctive == 0 && branch_count == 0 {
+            score = (score as f64 * 0.10) as i64;
+        } else if distinctive == 0 {
+            score = (score as f64 * 0.25) as i64;
         }
     }
 

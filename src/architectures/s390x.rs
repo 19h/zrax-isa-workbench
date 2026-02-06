@@ -396,6 +396,8 @@ pub const VALID_4B_OPCODES: &[u8] = &[
 /// Analyzes raw bytes for patterns characteristic of s390x.
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
+    let mut valid_count = 0u32;
+    let mut total_count = 0u32;
     let mut i = 0;
 
     while i < data.len() {
@@ -406,52 +408,196 @@ pub fn score(data: &[u8]) -> i64 {
             break;
         }
 
-        // 2-byte instructions
+        total_count += 1;
+
+        // 2-byte instructions (first 2 bits = 00)
         if len == 2 && i + 2 <= data.len() {
             let half = u16::from_be_bytes([data[i], data[i + 1]]);
 
             // NOP (BCR 0,0)
             if half == patterns::NOP_2B {
                 score += 20;
+                valid_count += 1;
+                i += len;
+                continue;
             }
 
             // BR r14 (return)
             if is_return(half) {
                 score += 30;
+                valid_count += 1;
+                i += len;
+                continue;
+            }
+
+            // NOPR R7
+            if half == patterns::NOPR_R7 {
+                score += 15;
+                valid_count += 1;
+                i += len;
+                continue;
             }
 
             // SVC
             if is_svc(half) {
                 score += 15;
+                valid_count += 1;
+                i += len;
+                continue;
             }
 
             // Common RR instructions
             let op = get_opcode_2b(half);
             if VALID_2B_OPCODES.contains(&op) {
-                score += 3;
+                score += 4;
+                valid_count += 1;
             }
         }
 
-        // 4-byte instructions
+        // 4-byte instructions (first 2 bits = 01 or 10)
         if len == 4 && i + 4 <= data.len() {
             let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
 
             // NOP (BC 0,0)
             if word == patterns::NOP_4B {
                 score += 20;
+                valid_count += 1;
+                i += len;
+                continue;
             }
 
             let op = get_opcode_4b(word);
+            if VALID_4B_OPCODES.contains(&op) {
+                // Score based on specificity
+                match op {
+                    o if o == opcode_rx::LA => score += 5,
+                    o if o == opcode_rx::BC => score += 5,
+                    o if o == opcode_rx::ST => score += 5,
+                    o if o == opcode_rx::L => score += 5,
+                    o if o == opcode_rx::BAL || o == opcode_rx::BAS => score += 5,
+                    o if o == opcode_rx::LH || o == opcode_rx::STD || o == opcode_rx::LD => score += 4,
+                    _ => score += 3,
+                }
+                valid_count += 1;
+            } else {
+                // Check 4-byte RI/RS/SI format opcodes (0x80-0xBF range)
+                // These include: STM(0x90), LM(0x98), SLL(0x89), SRL(0x88), SLA(0x8B), etc.
+                // Also: A7xx (RI format: TMHH, TMHL, TMLH, TMLL, BRC, AGHI, etc.)
+                match op {
+                    0x88 | 0x89 | 0x8A | 0x8B => { score += 3; valid_count += 1; } // shifts
+                    0x90 | 0x91 | 0x92 | 0x93 => { score += 4; valid_count += 1; } // STM, TM, MVI, TS
+                    0x94 | 0x95 | 0x96 | 0x97 => { score += 3; valid_count += 1; } // NI, CLI, OI, XI
+                    0x98 | 0x99 | 0x9A | 0x9B => { score += 4; valid_count += 1; } // LM, TRACE, etc
+                    0xA7 => { // RI format - very common in z/Arch
+                        let ri_op = ((word >> 16) & 0x0F) as u8;
+                        match ri_op {
+                            0x04 => { score += 5; valid_count += 1; } // BRC (branch)
+                            0x08 => { score += 5; valid_count += 1; } // LHI (load halfword imm)
+                            0x09 => { score += 5; valid_count += 1; } // LGHI
+                            0x0A => { score += 4; valid_count += 1; } // AGHI (add halfword imm)
+                            0x0B => { score += 4; valid_count += 1; } // MGHI (multiply)
+                            0x0C => { score += 4; valid_count += 1; } // MHI
+                            0x0E => { score += 4; valid_count += 1; } // CHI (compare)
+                            0x0F => { score += 4; valid_count += 1; } // CGHI
+                            _ => { score += 2; valid_count += 1; }
+                        }
+                    }
+                    0xB2 | 0xB3 | 0xB9 => { score += 3; valid_count += 1; } // Extended RRE/RRF
+                    _ => {}
+                }
+            }
+        }
+
+        // 6-byte instructions (first 2 bits = 11)
+        if len == 6 && i + 6 <= data.len() {
+            let op = first;
+            let op2 = data[i + 5]; // Last byte contains extended opcode
+            valid_count += 1;
+
             match op {
-                o if o == opcode_rx::LA => score += 5,
-                o if o == opcode_rx::BC => score += 5,
-                o if o == opcode_rx::ST => score += 5,
-                o if o == opcode_rx::L => score += 5,
-                _ => {}
+                0xC0 => {
+                    // RIL format: LARL, BRCL, LGFI, etc.
+                    let ril_op = ((data[i + 1] >> 4) & 0x0F) as u8;
+                    match ril_op {
+                        0x00 => score += 6, // LARL (very common)
+                        0x04 => score += 5, // BRCL
+                        0x05 => score += 5, // BRASL (call)
+                        0x0E => score += 4, // LLIHF
+                        0x0F => score += 4, // LLILF
+                        _ => score += 3,
+                    }
+                }
+                0xC4 => score += 4, // RIL: LRL, STRL etc.
+                0xC6 => score += 4, // RIL: EXRL, etc.
+                0xE3 => {
+                    // RXY format: LG, STG, LGF, etc. Very common in 64-bit code
+                    match op2 {
+                        0x04 => score += 6, // LG
+                        0x24 => score += 6, // STG
+                        0x14 | 0x16 | 0x17 => score += 5, // LGF, LLGF, LLGT
+                        0x58 | 0x50 => score += 5, // LY, STY
+                        0x71 => score += 5, // LAY
+                        _ => score += 3,
+                    }
+                }
+                0xEB => {
+                    // RSY format: STMG, LMG, SLLG, SRLG etc.
+                    match op2 {
+                        0x04 => score += 6, // LMG (load multiple)
+                        0x24 => score += 6, // STMG (store multiple)
+                        0x0C | 0x0D => score += 4, // SRLG, SLLG
+                        _ => score += 3,
+                    }
+                }
+                0xEC => {
+                    // RIE format: RISBG, CIJ, CGIJ, etc.
+                    match op2 {
+                        0x55 => score += 5, // RISBG (very common bit manipulation)
+                        0x64 | 0x65 | 0x76 | 0x7C | 0x7D => score += 4, // comparisons
+                        _ => score += 3,
+                    }
+                }
+                0xED => score += 3, // RXE: FP operations
+                0xE5 => score += 3, // SSE format
+                _ => { valid_count -= 1; } // Not a recognized 6-byte
             }
         }
 
         i += len;
+    }
+
+    // Validity ratio bonus - but require a reasonable amount of recognized instructions
+    if total_count > 10 {
+        let ratio = valid_count as f64 / total_count as f64;
+        if ratio > 0.7 && valid_count > 15 {
+            score += 15;
+        } else if ratio > 0.5 && valid_count > 10 {
+            score += 8;
+        }
+
+        // Cross-check: real s390x code should have a mix of instruction lengths.
+        // If nearly everything is 2-byte, it's likely not real s390x.
+        // (MSP430 data tends to map to 2-byte RR instructions)
+        // Count 2-byte vs 4/6-byte instructions
+        let mut len2_count = 0u32;
+        let mut j = 0;
+        while j < data.len() {
+            let len_check = length::from_first_byte(data[j]);
+            if len_check == 2 { len2_count += 1; }
+            if j + len_check > data.len() { break; }
+            j += len_check;
+        }
+        let total_instrs = total_count;
+        if total_instrs > 10 {
+            let len2_ratio = len2_count as f64 / total_instrs as f64;
+            // If >80% of instructions are 2-byte, penalize heavily
+            // Real s390x code has a healthy mix of 2/4/6-byte instructions
+            if len2_ratio > 0.8 {
+                score = (score as f64 * 0.3) as i64;
+            } else if len2_ratio > 0.6 {
+                score = (score as f64 * 0.6) as i64;
+            }
+        }
     }
 
     score.max(0)

@@ -381,6 +381,10 @@ pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
     let mut i = 0;
     let mut zero_run: u32 = 0;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
+    let mut branch_count = 0u32;
+    let mut valid_count = 0u32;
 
     // AVR is little-endian, mostly 16-bit instructions (some 32-bit)
     while i + 2 <= data.len() {
@@ -391,10 +395,9 @@ pub fn score(data: &[u8]) -> i64 {
         if is_nop(word) {
             zero_run += 1;
             if zero_run <= 2 {
-                // Only score first couple zeros in a row
                 score += 5;
+                valid_count += 1;
             } else if zero_run > 8 {
-                // Long zero runs are likely padding, penalize slightly
                 score -= 1;
             }
             i += 2;
@@ -403,88 +406,387 @@ pub fn score(data: &[u8]) -> i64 {
             zero_run = 0;
         }
 
+        // Invalid (all Fs)
+        if word == 0xFFFF {
+            score -= 5;
+            i += 2;
+            continue;
+        }
+
+        // --- MSP430 cross-architecture penalties ---
+        // MSP430 uses same 16-bit LE format; penalize distinctive MSP430 patterns
+        if word == 0x4130 { score -= 15; i += 2; continue; } // MSP430 RET
+        if word == 0x4303 { score -= 12; i += 2; continue; } // MSP430 NOP
+        if word == 0x1300 { score -= 12; i += 2; continue; } // MSP430 RETI
+        // MSP430 CALL (0x12xx)
+        if (word & 0xFF80) == 0x1280 { score -= 8; i += 2; continue; }
+        // MSP430 PUSH (0x12xx)
+        if (word & 0xFF80) == 0x1200 && (word & 0xFF80) != 0x1280 {
+            score -= 5; i += 2; continue;
+        }
+
+        // --- Thumb cross-architecture penalties ---
+        // Thumb uses same 16-bit LE format; penalize distinctive Thumb patterns
+        if word == 0x4770 { score -= 12; i += 2; continue; } // Thumb BX LR
+        // CPSID/CPSIE variants (very firmware-specific, unlikely in AVR context)
+        if matches!(word, 0xB672 | 0xB662 | 0xB673 | 0xB663) {
+            score -= 10; i += 2; continue;
+        }
+        // WFI/WFE/SEV
+        if matches!(word, 0xBF30 | 0xBF20 | 0xBF40) {
+            score -= 8; i += 2; continue;
+        }
+        // Thumb PUSH {.., LR} (0xB5xx) - very common function prologue
+        if (word & 0xFF00) == 0xB500 { score -= 10; i += 2; continue; }
+        // Thumb POP {.., PC} (0xBDxx) - very common function epilogue/return
+        if (word & 0xFF00) == 0xBD00 { score -= 10; i += 2; continue; }
+        // Thumb ADD/SUB SP, #imm (0xB0xx) - stack frame adjustment
+        if (word & 0xFF00) == 0xB000 { score -= 6; i += 2; continue; }
+        // Thumb SVC (0xDFxx) - supervisor call
+        if (word & 0xFF00) == 0xDF00 { score -= 8; i += 2; continue; }
+        // Thumb CBZ/CBNZ (0xB1xx, 0xB9xx, 0xB3xx, 0xBBxx)
+        if (word & 0xF500) == 0xB100 { score -= 8; i += 2; continue; }
+
+        // --- Exact match patterns (high confidence) ---
+
         // RET (return from subroutine)
         if is_ret(word) {
             score += 30;
+            ret_count += 1;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // RETI (return from interrupt)
         if is_reti(word) {
             score += 25;
+            ret_count += 1;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // SLEEP
         if word == patterns::SLEEP {
             score += 15;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // BREAK
         if word == patterns::BREAK {
             score += 15;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // CLI (disable interrupts)
         if word == patterns::CLI {
             score += 10;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // SEI (enable interrupts)
         if word == patterns::SEI {
             score += 10;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
-        // RJMP (relative jump)
-        if is_rjmp(word) {
+        // WDR (watchdog reset) - very distinctive
+        if word == patterns::WDR {
+            score += 10;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // ICALL / IJMP - distinctive
+        if word == patterns::ICALL {
+            score += 10;
+            call_count += 1;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+        if word == patterns::IJMP {
             score += 8;
-        }
-
-        // RCALL (relative call)
-        if is_rcall(word) {
-            score += 8;
-        }
-
-        // LDI (load immediate)
-        if is_ldi(word) {
-            score += 5;
+            branch_count += 1;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // PUSH
         if is_push(word) {
             score += 8;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // POP
         if is_pop(word) {
             score += 8;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // RCALL (relative call) - 6.25% of space
+        if is_rcall(word) {
+            score += 5;
+            call_count += 1;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // RJMP (relative jump) - 6.25% of space
+        if is_rjmp(word) {
+            score += 4;
+            branch_count += 1;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // Conditional branches (BRBS/BRBC)
+        if is_conditional_branch(word) {
+            score += 4;
+            branch_count += 1;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // LDI (load immediate) - 6.25% of space
+        if is_ldi(word) {
+            score += 3;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // IN (I/O read)
         if is_in(word) {
-            score += 3;
+            score += 4;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // OUT (I/O write)
         if is_out(word) {
+            score += 4;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // Check if 32-bit instruction (JMP, CALL, LDS, STS)
+        if is_two_word(word) {
+            if is_call_32(word) {
+                score += 8;
+                call_count += 1;
+            } else if is_jmp(word) {
+                score += 6;
+                branch_count += 1;
+            } else {
+                score += 5; // LDS/STS
+            }
+            valid_count += 1;
+            i += 4; // Skip entire 32-bit instruction
+            continue;
+        }
+
+        // CPI (compare immediate) - 6.25% of space
+        if (word & patterns::CPI_MASK) == patterns::CPI_VAL {
             score += 3;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
         // MOV (register copy)
         if is_mov(word) {
-            score += 3;
+            score += 2;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
-        // Check if 32-bit instruction
-        if is_two_word(word) {
-            score += 5;
-            i += 2; // Skip extra word
+        // ALU operations (ADD, SUB, AND, OR, EOR, CP, CPC) - each 1.5% of space
+        if (word & patterns::ADD_MASK) == patterns::ADD_VAL
+            || (word & patterns::SUB_MASK) == patterns::SUB_VAL
+            || (word & patterns::AND_MASK) == patterns::AND_VAL
+            || (word & patterns::OR_MASK) == patterns::OR_VAL
+            || (word & patterns::EOR_MASK) == patterns::EOR_VAL
+            || (word & patterns::CP_MASK) == patterns::CP_VAL
+            || (word & patterns::CPC_MASK) == patterns::CPC_VAL
+        {
+            score += 2;
+            valid_count += 1;
+            i += 2;
+            continue;
         }
 
-        // Invalid (all Fs)
-        if word == 0xFFFF {
-            score -= 5;
-        }
-
+        // Unrecognized - small penalty
+        score -= 1;
         i += 2;
+    }
+
+    // Structural bonus: real code has returns and calls/branches
+    if ret_count > 0 && (call_count > 0 || branch_count > 0) {
+        score += 15;
+    }
+
+    // AVR interrupt vector table detection:
+    // AVR firmwares start with a table of RJMP instructions (reset + interrupt vectors).
+    // Look for 3+ consecutive RJMP at the beginning of the data.
+    if data.len() >= 8 {
+        let mut ivt_rjmp_count = 0u32;
+        let mut j = 0;
+        while j + 1 < data.len().min(128) {
+            let w = u16::from_le_bytes([data[j], data[j + 1]]);
+            if is_rjmp(w) {
+                ivt_rjmp_count += 1;
+            } else {
+                break;
+            }
+            j += 2;
+        }
+        if ivt_rjmp_count >= 3 {
+            // Strong AVR IVT signature: 3+ consecutive RJMP
+            score += (ivt_rjmp_count * 15) as i64;
+        }
+    }
+
+    // AVR function prologue detection:
+    // Common pattern: PUSH rN; PUSH rN+1; ... ; IN r28, 0x3D; IN r29, 0x3E
+    // (save registers then load stack pointer)
+    {
+        let mut j = 0;
+        while j + 5 < data.len() {
+            let w0 = u16::from_le_bytes([data[j], data[j + 1]]);
+            let w1 = u16::from_le_bytes([data[j + 2], data[j + 3]]);
+            let w2 = u16::from_le_bytes([data[j + 4], data[j + 5]]);
+
+            // PUSH followed by PUSH
+            if is_push(w0) && is_push(w1) {
+                score += 10;
+            }
+            // IN r28, 0x3D (SPL) = 0xB7CD followed by IN r29, 0x3E (SPH) = 0xB7DE
+            if w0 == 0xB7CD && w1 == 0xB7DE {
+                score += 25;
+            }
+            // OUT 0x3F, rN (SREG save) with mask: OUT = 0xB800..0xBFFF, A=0x3F
+            // OUT encoding: 1011 1AAd dddd AAAA, A=0x3F → 10111 1 1 ddddd 1111 = Bxxx where A bits = 111111
+            if (w0 & 0xF80F) == 0xB80F && ((w0 >> 4) & 0x01 == 1) && ((w0 >> 9) & 0x03 == 3) {
+                score += 10;
+            }
+            j += 2;
+        }
+    }
+
+    // --- 32-bit BE cross-architecture penalties ---
+    // AVR data is 16-bit LE. When the underlying data is from a 32-bit BE ISA
+    // (SPARC, PPC, MIPS), distinctive patterns show up in 32-bit BE reads.
+    // Check every 4-byte aligned position.
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+
+            // SPARC patterns
+            if be32 == 0x01000000 { score -= 15; } // SPARC NOP
+            if be32 == 0x81C7E008 { score -= 20; } // SPARC RET
+            if be32 == 0x81C3E008 { score -= 20; } // SPARC RETL
+            if be32 == 0x81E80000 { score -= 15; } // SPARC RESTORE
+            if be32 == 0x91D02000 { score -= 12; } // SPARC TA 0
+            // SPARC SAVE %sp, -N, %sp (format 10, op3=0x3C, rs1=14, rd=14, i=1)
+            if (be32 & 0xFFFFE000) == 0x9DE3A000 { score -= 15; }
+
+            // PPC patterns
+            if be32 == 0x4E800020 { score -= 20; } // PPC BLR
+            if be32 == 0x60000000 { score -= 15; } // PPC NOP
+            if be32 == 0x7C0802A6 { score -= 15; } // PPC MFLR r0
+            if be32 == 0x7C0803A6 { score -= 15; } // PPC MTLR r0
+
+            // MIPS patterns (BE)
+            if be32 == 0x03E00008 { score -= 20; } // MIPS JR $ra
+            if be32 == 0x00000000 { score -= 5; }  // MIPS NOP (also zeros)
+
+            // Cell SPU patterns
+            if (be32 & 0xFFE00000) == 0x24000000 { score -= 8; } // SPU STQD
+            if (be32 & 0xFFE00000) == 0x34000000 { score -= 8; } // SPU LQDI
+
+            j += 4;
+        }
+    }
+
+    // --- 32-bit LE cross-architecture penalties ---
+    // Also check for 32-bit LE ISAs (AArch64, RISC-V, x86, LoongArch)
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+
+            // AArch64
+            if le32 == 0xD65F03C0 { score -= 20; } // AArch64 RET
+            if le32 == 0xD503201F { score -= 15; } // AArch64 NOP
+            if (le32 >> 26) == 0x25 { score -= 5; } // AArch64 BL
+
+            // RISC-V
+            if le32 == 0x00008067 { score -= 15; } // RISC-V RET
+            if le32 == 0x00000013 { score -= 10; } // RISC-V NOP
+
+            // Thumb-2 32-bit patterns (hw0 in low 16 bits, hw1 in high 16 bits of LE32)
+            {
+                let hw_low = (le32 & 0xFFFF) as u16;
+                let hw_high = (le32 >> 16) as u16;
+                // Thumb-2 PUSH.W (E92D xxxx)
+                if hw_low == 0xE92D { score -= 10; }
+                // Thumb-2 POP.W (E8BD xxxx)
+                if hw_low == 0xE8BD { score -= 10; }
+                // Thumb-2 BL (F0xx-F7FF Dxxx)
+                if (hw_low & 0xF800) == 0xF000 && (hw_high & 0xD000) == 0xD000 {
+                    score -= 8;
+                }
+            }
+
+            j += 4;
+        }
+    }
+
+    // --- SH (SuperH) cross-architecture penalties ---
+    // SH also uses 16-bit LE instructions
+    {
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+            if hw == 0x000B { score -= 15; } // SH RTS
+            if hw == 0x0009 { score -= 10; } // SH NOP
+            if hw == 0x002B { score -= 12; } // SH RTE
+            j += 2;
+        }
+    }
+
+    // Structural requirement: AVR code of meaningful size should contain
+    // some distinctive patterns. With the cross-architecture penalties above,
+    // the structural check can be light.
+    let num_halfwords = data.len() / 2;
+    if num_halfwords > 32 {
+        if ret_count == 0 && call_count == 0 && branch_count == 0 {
+            // No returns, calls, or branches at all - not code
+            score = (score as f64 * 0.20) as i64;
+        }
     }
 
     score.max(0)

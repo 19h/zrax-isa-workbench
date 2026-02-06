@@ -412,50 +412,183 @@ pub fn is_likely_valid(instr: u16) -> bool {
 /// Analyzes raw bytes for patterns characteristic of SuperH.
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
+    let mut distinctive_count = 0u32;
+    let num_halfwords = data.len() / 2;
 
     // SuperH is 16-bit aligned
     for i in (0..data.len().saturating_sub(1)).step_by(2) {
         let word = u16::from_le_bytes([data[i], data[i + 1]]);
 
-        // NOP
-        if is_nop(word) {
-            score += 25;
-        }
-
-        // RTS (return)
-        if is_rts(word) {
-            score += 30;
-        }
-
-        // TRAPA
-        if is_trapa(word) {
-            score += 15;
-        }
-
-        // BRA
-        if is_bra(word) {
-            score += 8;
-        }
-
-        // BSR
-        if is_bsr(word) {
-            score += 8;
-        }
-
-        // MOV.L @(disp,PC), Rn (common pattern)
-        if get_format(word) == format::FMT_D {
-            score += 5;
-        }
-
-        // MOV Rm, Rn - check for MOV instruction
-        if is_mov(word) && (word & 0xF00F) == 0x6003 {
-            score += 3;
-        }
-
-        // Invalid
+        // Invalid / padding
         if word == 0x0000 || word == 0xFFFF {
             score -= 5;
+            continue;
         }
+
+        // --- Cross-architecture penalties ---
+        // AVR exact patterns (also 16-bit LE)
+        if word == 0x9508 { score -= 15; continue; } // AVR RET
+        if word == 0x9518 { score -= 12; continue; } // AVR RETI
+        if word == 0x9588 { score -= 10; continue; } // AVR SLEEP
+        if word == 0x9598 { score -= 8; continue; }  // AVR BREAK
+        if word == 0x9478 { score -= 8; continue; }  // AVR SEI
+        if word == 0x94F8 { score -= 8; continue; }  // AVR CLI
+        if word == 0x95A8 { score -= 8; continue; }  // AVR WDR
+        if word == 0x9409 { score -= 8; continue; }  // AVR IJMP
+        if word == 0x9509 { score -= 8; continue; }  // AVR ICALL
+        // AVR PUSH (mask 0xFE0F = 0x920F)
+        if (word & 0xFE0F) == 0x920F { score -= 5; continue; }
+        // AVR POP (mask 0xFE0F = 0x900F)
+        if (word & 0xFE0F) == 0x900F { score -= 5; continue; }
+        // Thumb patterns
+        if word == 0x4770 { score -= 15; continue; } // Thumb BX LR
+        if word == 0xBF00 { score -= 10; continue; } // Thumb NOP
+        // Thumb PUSH {reglist, LR}
+        if (word & 0xFF00) == 0xB500 { score -= 8; continue; }
+        // Thumb POP {reglist, PC}
+        if (word & 0xFF00) == 0xBD00 { score -= 8; continue; }
+        // MSP430 patterns
+        if word == 0x4130 { score -= 12; continue; } // MSP430 RET
+        if word == 0x4303 { score -= 10; continue; } // MSP430 NOP
+        if word == 0x1300 { score -= 10; continue; } // MSP430 RETI
+
+        // === High-confidence exact patterns ===
+        // NOP (0x0009) - exact single value
+        if is_nop(word) {
+            score += 25;
+            distinctive_count += 1;
+            continue;
+        }
+
+        // RTS (return) - exact single value
+        if is_rts(word) {
+            score += 30;
+            ret_count += 1;
+            distinctive_count += 1;
+            continue;
+        }
+
+        // RTE (return from exception)
+        if word == patterns::RTE {
+            score += 25;
+            ret_count += 1;
+            distinctive_count += 1;
+            continue;
+        }
+
+        // CLRT, SETT, CLRMAC, DIV0U, SLEEP - exact values
+        if matches!(word, patterns::CLRT | patterns::SETT | patterns::CLRMAC
+            | patterns::DIV0U | patterns::SLEEP) {
+            score += 15;
+            distinctive_count += 1;
+            continue;
+        }
+
+        // TRAPA (0xC3xx) - 256 values out of 65536 = 0.39%
+        if is_trapa(word) {
+            score += 15;
+            distinctive_count += 1;
+            continue;
+        }
+
+        // JSR @Rm (0x4m0B) - 16 values = 0.024%
+        if is_jsr(word) {
+            score += 10;
+            call_count += 1;
+            distinctive_count += 1;
+            continue;
+        }
+
+        // JMP @Rm (0x4m2B) - 16 values = 0.024%
+        if is_jmp(word) {
+            score += 8;
+            distinctive_count += 1;
+            continue;
+        }
+
+        // BSR (0xBxxx) - 6.25% of space → reduced score
+        if is_bsr(word) {
+            score += 3;
+            call_count += 1;
+            continue;
+        }
+
+        // BRA (0xAxxx) - 6.25% of space → reduced score
+        if is_bra(word) {
+            score += 3;
+            continue;
+        }
+
+        // Format 8 conditional branches (BT, BF, BT/S, BF/S) - check specific sub-opcodes
+        if is_conditional_branch(word) {
+            score += 3;
+            continue;
+        }
+
+        // MOV.L @(disp,PC), Rn (0xDxxx) - 6.25% → reduced score
+        if get_format(word) == format::FMT_D {
+            score += 2;
+            continue;
+        }
+
+        // MOV.W @(disp,PC), Rn (0x9xxx) - 6.25%
+        if get_format(word) == format::FMT_9 {
+            score += 2;
+            continue;
+        }
+
+        // MOV Rm, Rn (0x6xx3) - specific sub-encoding
+        if (word & 0xF00F) == 0x6003 {
+            score += 2;
+            continue;
+        }
+
+        // MOV #imm, Rn (0xExxx) - 6.25%
+        if is_mov_imm(word) {
+            score += 1;
+            continue;
+        }
+
+        // ADD #imm, Rn (0x7xxx) - 6.25%
+        if is_add_imm(word) {
+            score += 1;
+            continue;
+        }
+
+        // Format 4 shift/system ops - validate sub-opcode
+        if get_format(word) == format::FMT_4 {
+            let subop = get_subop_ext(word);
+            if matches!(subop,
+                0x00 | 0x01 | 0x04 | 0x05 | 0x08 | 0x09
+                | 0x0B | 0x10 | 0x11 | 0x15 | 0x18 | 0x19
+                | 0x1A | 0x1B | 0x24 | 0x25 | 0x28 | 0x29 | 0x2A | 0x2B) {
+                score += 2;
+            } else {
+                score -= 1;
+            }
+            continue;
+        }
+
+        // Other recognized formats get minimal score
+        let fmt = get_format(word);
+        if matches!(fmt, 0x1 | 0x2 | 0x3 | 0x5 | 0x6) {
+            score += 1;
+        } else if fmt == 0xF {
+            // FPU - only mildly score
+            score += 1;
+        } else if fmt == 0xC {
+            // Format C misc - broad
+            score += 1;
+        } else {
+            score -= 1;
+        }
+    }
+
+    // Structural requirement: real SH code needs returns or calls
+    if num_halfwords > 20 && ret_count == 0 && call_count == 0 && distinctive_count == 0 {
+        score = (score as f64 * 0.15) as i64;
     }
 
     score.max(0)

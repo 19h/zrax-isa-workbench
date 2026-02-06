@@ -297,46 +297,213 @@ pub mod features {
 
 /// Score likelihood of Hexagon code.
 ///
-/// Analyzes raw bytes for patterns characteristic of Hexagon.
+/// Analyzes raw bytes using packet structure validation,
+/// specific instruction patterns, and cross-architecture penalties.
 pub fn score(data: &[u8]) -> i64 {
-    let mut score: i64 = 0;
+    let mut total_score: i64 = 0;
+    let mut packet_count = 0u32;
+    let mut valid_packets = 0u32;
 
-    // Hexagon is little-endian, 4-byte aligned (VLIW packets)
-    for i in (0..data.len().saturating_sub(3)).step_by(4) {
-        let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+    // Hexagon is little-endian, 4-byte aligned (VLIW packets of 1-4 instructions)
+    // Key insight: Every Hexagon instruction has parse bits (15:14) and exactly one
+    // instruction per packet must have parse bits = 11 (end of packet).
+    // This packet structure is the most distinctive Hexagon feature.
 
-        // NOP
-        if is_nop(word) {
-            score += 25;
+    // Pre-scan for Thumb cross-architecture penalties.
+    // Strategy: only apply penalties when high-confidence anchor patterns confirm
+    // this is likely Thumb code. Broad patterns (conditional branches, etc.) cover
+    // too much of the halfword space and destroy legitimate Hexagon scores.
+    let mut thumb_penalty: i64 = 0;
+    {
+        let mut anchor_count = 0u32;
+        let mut anchor_penalty: i64 = 0;
+        let mut broad_penalty: i64 = 0;
+
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+
+            // === High-confidence anchors (very specific to Thumb) ===
+            if hw == 0x4770 { anchor_count += 1; anchor_penalty += 15; }           // BX LR
+            else if hw == 0xBF00 { anchor_count += 1; anchor_penalty += 10; }      // NOP
+            else if matches!(hw, 0xB672 | 0xB662 | 0xB673 | 0xB663) {             // CPSID/CPSIE
+                anchor_count += 1; anchor_penalty += 20;
+            }
+            else if matches!(hw, 0xBF30 | 0xBF20 | 0xBF40) {                      // WFI/WFE/SEV
+                anchor_count += 1; anchor_penalty += 15;
+            }
+            // === Medium-confidence patterns (counted for broad evidence) ===
+            else if (hw & 0xFF00) == 0xB500 { broad_penalty += 10; }              // PUSH {.., LR}
+            else if (hw & 0xFF00) == 0xBD00 { broad_penalty += 10; }              // POP {.., PC}
+            else if (hw & 0xFF00) == 0xB000 { broad_penalty += 5; }               // ADD/SUB SP
+            else if (hw & 0xF000) == 0xD000
+                && (hw & 0x0F00) != 0x0E00 && (hw & 0x0F00) != 0x0F00 {
+                broad_penalty += 3;                                                 // B<cond> (conditional branch)
+            }
+            else if (hw & 0xF800) == 0x4800 { broad_penalty += 3; }               // LDR Rt, [PC, #imm]
+            else if (hw & 0xFF00) == 0xDF00 { broad_penalty += 8; }               // SVC
+            else if (hw & 0xFF00) == 0xBE00 { broad_penalty += 6; }               // BKPT
+            else if (hw & 0xF500) == 0xB100 { broad_penalty += 5; }               // CBZ/CBNZ
+
+            // Thumb-2 32-bit patterns
+            if j + 3 < data.len() {
+                let hw1 = u16::from_le_bytes([data[j + 2], data[j + 3]]);
+                let word32 = ((hw as u32) << 16) | (hw1 as u32);
+                // PUSH.W / POP.W
+                if (word32 & 0xFFFFE000) == 0xE92D0000 || (word32 & 0xFFFFE000) == 0xE8BD0000 {
+                    broad_penalty += 15;
+                }
+                // BL (Thumb-2) - F000 Dxxx or F000 Fxxx
+                else if (hw & 0xF800) == 0xF000 && (hw1 & 0xD000) == 0xD000 {
+                    broad_penalty += 12;
+                }
+            }
+
+            j += 2;
         }
 
-        // End of packet marker
-        if is_end_of_packet(word) {
-            score += 5;
-        }
-
-        // ALU32
-        if is_alu32(word) {
-            score += 2;
-        }
-
-        // XTYPE/Memory
-        if is_xtype(word) {
-            score += 2;
-        }
-
-        // ALU64/M
-        if is_alu64(word) {
-            score += 2;
-        }
-
-        // Invalid
-        if word == 0x00000000 || word == 0xFFFFFFFF {
-            score -= 5;
+        // Apply penalties proportional to Thumb evidence
+        if anchor_count >= 2 {
+            thumb_penalty = anchor_penalty + broad_penalty;
+        } else if anchor_count == 1 {
+            // Even 1 anchor with broad patterns suggests Thumb code
+            thumb_penalty = anchor_penalty + broad_penalty / 2;
         }
     }
 
-    score.max(0)
+    let mut i = 0;
+    while i + 3 < data.len() {
+        // Try to parse a packet starting at this position
+        let mut packet_instrs = 0u32;
+        let mut packet_score: i64 = 0;
+        let mut found_end = false;
+        let mut j = i;
+
+        while j + 3 < data.len() && packet_instrs < 4 {
+            let word = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+
+            // Skip padding
+            if word == 0x00000000 || word == 0xFFFFFFFF {
+                if packet_instrs == 0 {
+                    total_score -= 3;
+                    j += 4;
+                    i = j;
+                    continue;
+                } else {
+                    break; // Invalid mid-packet
+                }
+            }
+
+            packet_instrs += 1;
+
+            // NOP (high confidence)
+            if is_nop(word) {
+                packet_score += 15;
+            }
+            // DEALLOC_RETURN (very distinctive)
+            else if word == patterns::DEALLOC_RETURN {
+                packet_score += 20;
+            }
+            // ALLOCFRAME (function prologue)
+            else if is_allocframe(word) {
+                packet_score += 20;
+            }
+            // Return patterns
+            else if is_return(word) {
+                packet_score += 15;
+            }
+            // Loop setup
+            else if is_loop_setup(word) {
+                packet_score += 10;
+            }
+            else {
+                // Score based on instruction class with sub-encoding validation
+                let iclass = get_iclass(word);
+                let bits_27_24 = ((word >> 24) & 0x0F) as u8;
+
+                match iclass {
+                    // ALU32: validate sub-encoding makes sense
+                    0x0..=0x3 => {
+                        // Predicated ALU32 instructions have bit 27 set
+                        if is_predicated(word) {
+                            packet_score += 3; // Predication is distinctive
+                        } else {
+                            packet_score += 1;
+                        }
+                    }
+                    // XTYPE (load/store/complex ALU)
+                    0x4..=0x7 => {
+                        if is_load(word) || is_store(word) {
+                            packet_score += 2;
+                        } else {
+                            packet_score += 1;
+                        }
+                    }
+                    // ALU64/Multiply
+                    0x8..=0xB => packet_score += 1,
+                    // Extended (constant extender, etc.)
+                    0xC..=0xF => {
+                        // Constant extenders are distinctive
+                        if is_extender(word) {
+                            packet_score += 3;
+                        } else {
+                            packet_score += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Check end-of-packet
+            if is_end_of_packet(word) {
+                found_end = true;
+                j += 4;
+                break;
+            }
+
+            j += 4;
+        }
+
+        if packet_instrs > 0 {
+            packet_count += 1;
+            if found_end {
+                valid_packets += 1;
+                // Bonus for valid packet structure
+                packet_score += 5;
+                // Multi-instruction packets are more distinctive
+                if packet_instrs >= 2 {
+                    packet_score += 3;
+                }
+                if packet_instrs >= 3 {
+                    packet_score += 3;
+                }
+            } else {
+                // No end-of-packet found - penalty
+                packet_score -= 5;
+            }
+            total_score += packet_score;
+        }
+
+        i = j;
+    }
+
+    // Bonus for high ratio of valid packets (strong structural indicator)
+    if packet_count > 5 {
+        let packet_ratio = valid_packets as f64 / packet_count as f64;
+        if packet_ratio > 0.8 {
+            total_score += 20;
+        } else if packet_ratio > 0.5 {
+            total_score += 10;
+        } else if packet_ratio < 0.3 {
+            // Very few valid packets - probably not Hexagon
+            total_score = (total_score as f64 * 0.3) as i64;
+        }
+    }
+
+    // Apply Thumb cross-architecture penalty
+    total_score -= thumb_penalty;
+
+    total_score.max(0)
 }
 
 #[cfg(test)]

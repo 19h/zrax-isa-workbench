@@ -360,35 +360,122 @@ pub fn is_likely_valid(instr: u16) -> bool {
 /// Analyzes raw bytes for patterns characteristic of MSP430.
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
+    let mut valid_count = 0u32;
+    let mut invalid_count = 0u32;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
+    let mut jump_count = 0u32;
 
     // MSP430 is little-endian, 16-bit aligned
-    for i in (0..data.len().saturating_sub(1)).step_by(2) {
+    let num_halfwords = data.len() / 2;
+    for idx in 0..num_halfwords {
+        let i = idx * 2;
         let word = u16::from_le_bytes([data[i], data[i + 1]]);
         let opcode = get_opcode(word);
 
-        // NOP
+        // Invalid/padding
+        if word == 0x0000 || word == 0xFFFF {
+            score -= 3;
+            invalid_count += 1;
+            continue;
+        }
+
+        // --- AVR cross-architecture penalties ---
+        // AVR uses same 16-bit LE format; penalize distinctive AVR patterns
+        if word == 0x9508 { score -= 15; continue; } // AVR RET
+        if word == 0x9518 { score -= 15; continue; } // AVR RETI
+        if word == 0x9588 { score -= 10; continue; } // AVR SLEEP
+        if word == 0x9598 { score -= 8; continue; }  // AVR BREAK
+        if word == 0x9478 { score -= 8; continue; }  // AVR SEI
+        if word == 0x94F8 { score -= 8; continue; }  // AVR CLI
+        if word == 0x9409 { score -= 8; continue; }  // AVR IJMP
+        if word == 0x9509 { score -= 8; continue; }  // AVR ICALL
+        // AVR PUSH (mask 0xFE0F = 0x920F)
+        if (word & 0xFE0F) == 0x920F { score -= 5; continue; }
+        // AVR POP (mask 0xFE0F = 0x900F)
+        if (word & 0xFE0F) == 0x900F { score -= 5; continue; }
+
+        // --- Thumb cross-architecture penalties ---
+        // Thumb uses same 16-bit LE format; penalize distinctive Thumb patterns
+        if word == 0x4770 { score -= 15; continue; } // Thumb BX LR
+        if word == 0xBF00 { score -= 10; continue; } // Thumb NOP
+        if matches!(word, 0xB672 | 0xB662 | 0xB673 | 0xB663) { score -= 15; continue; } // CPSID/CPSIE
+        if matches!(word, 0xBF30 | 0xBF20 | 0xBF40) { score -= 12; continue; } // WFI/WFE/SEV
+        // Thumb PUSH {.., LR} (0xB5xx)
+        if (word & 0xFF00) == 0xB500 { score -= 8; continue; }
+        // Thumb POP {.., PC} (0xBDxx)
+        if (word & 0xFF00) == 0xBD00 { score -= 8; continue; }
+
+        // --- 32-bit LE cross-architecture penalties ---
+        // At even halfword indices, form a 32-bit LE word from two consecutive
+        // halfwords and penalize distinctive Hexagon/AArch64 patterns.
+        if idx % 2 == 0 && idx + 1 < num_halfwords {
+            let next_hw = u16::from_le_bytes([data[i + 2], data[i + 3]]);
+            let word32 = (next_hw as u32) << 16 | (word as u32);
+            // Hexagon DEALLOC_RETURN (0x961EC01E)
+            if word32 == 0x961EC01E { score -= 20; }
+            // Hexagon NOP family (upper 16 bits = 0x7F00)
+            if (word32 & 0xFFFF0000) == 0x7F000000 { score -= 15; }
+            // Hexagon ALLOCFRAME
+            if (word32 & 0xFFFFE000) == 0xA09DC000 { score -= 15; }
+            // AArch64 RET (0xD65F03C0)
+            if word32 == 0xD65F03C0 { score -= 20; }
+            // AArch64 NOP (0xD503201F)
+            if word32 == 0xD503201F { score -= 15; }
+            // AArch64 STP x29,x30,[sp,#-N]! (prologue: 0xA9xx7BFD)
+            if (word32 & 0xFFC0FFFF) == 0xA9007BFD { score -= 15; }
+            // AArch64 LDP x29,x30,[sp],#N (epilogue: 0xA8xx7BFD)
+            if (word32 & 0xFFC0FFFF) == 0xA8407BFD { score -= 15; }
+            // AArch64 BL (bits 31:26 = 100101)
+            if (word32 >> 26) == 0x25 { score -= 8; }
+            // RISC-V NOP (0x00000013)
+            if word32 == 0x00000013 { score -= 10; }
+            // RISC-V RET (0x00008067)
+            if word32 == 0x00008067 { score -= 15; }
+            // x86-64 REX+MOV (0x48 89 xx or 0x48 8B xx)
+            if (word32 & 0xFFFF0000) == 0x89480000 || (word32 & 0xFFFF0000) == 0x8B480000 { score -= 5; }
+        }
+
+        // Exact match patterns (high confidence)
         if is_nop(word) {
-            score += 25;
+            score += 20;
+            valid_count += 1;
+            continue;
         }
-
-        // RET
         if is_ret(word) {
-            score += 30;
-        }
-
-        // RETI
-        if is_reti(word) {
             score += 25;
+            ret_count += 1;
+            valid_count += 1;
+            continue;
+        }
+        if is_reti(word) {
+            score += 20;
+            ret_count += 1;
+            valid_count += 1;
+            continue;
         }
 
-        // Jump instructions
-        if is_jump_format(word) {
-            score += 8;
-        }
-
-        // JMP (unconditional)
+        // Unconditional JMP
         if is_jmp(word) {
-            score += 10;
+            score += 8;
+            jump_count += 1;
+            valid_count += 1;
+            continue;
+        }
+
+        // Conditional jumps
+        if is_jump_format(word) {
+            let cond = get_jump_cond(word);
+            let offset = get_jump_offset(word);
+            // Valid conditional jumps typically have small displacements
+            if offset.unsigned_abs() < 128 {
+                score += 6;
+            } else {
+                score += 3;
+            }
+            jump_count += 1;
+            valid_count += 1;
+            continue;
         }
 
         // Single-operand format
@@ -396,27 +483,74 @@ pub fn score(data: &[u8]) -> i64 {
             let sub_op = get_single_op(word);
             match sub_op {
                 o if o == single_op::PUSH => score += 8,
-                o if o == single_op::CALL => score += 8,
-                o if o == single_op::RETI => score += 5,
-                _ => score += 2,
+                o if o == single_op::CALL => { score += 10; call_count += 1; }
+                o if o == single_op::RETI => { score += 6; ret_count += 1; }
+                o if o == single_op::RRC => score += 4,
+                o if o == single_op::SWPB => score += 4,
+                o if o == single_op::RRA => score += 4,
+                o if o == single_op::SXT => score += 5,
+                _ if sub_op <= 6 => score += 2,
+                _ => { score -= 1; invalid_count += 1; continue; }
             }
+            valid_count += 1;
+            continue;
         }
 
-        // Two-operand format
+        // Two-operand format (covers opcodes 4-F, 75% of halfword space)
+        // Since this matches 75% of random halfwords, we must be very selective
+        // Only give meaningful scores for distinctive MSP430 patterns
         if is_two_op_format(word) {
-            match opcode {
-                o if o == two_op::MOV => score += 5,
-                o if o == two_op::ADD => score += 4,
-                o if o == two_op::SUB => score += 4,
-                o if o == two_op::CMP => score += 4,
-                o if o == two_op::AND => score += 3,
-                _ => score += 2,
+            let src = get_src_reg(word);
+            let dst = get_dst_reg(word);
+            let as_mode = get_as(word);
+
+            // SP operations are highly distinctive MSP430 patterns
+            let sp_involved = dst == reg::SP || src == reg::SP;
+            // CG (R3) with specific As modes generates constants (very MSP430-specific)
+            let cg_const = src == reg::CG && as_mode >= 1;
+            // R2 (SR) with As modes also generates constants
+            let sr_const = src == reg::SR && as_mode >= 2;
+
+            if sp_involved || cg_const || sr_const || dst == reg::PC || dst == reg::SR {
+                // Distinctive MSP430 pattern
+                match opcode {
+                    o if o == two_op::MOV => score += 5,
+                    o if o == two_op::ADD || o == two_op::SUB => score += 5,
+                    o if o == two_op::BIC || o == two_op::BIS => {
+                        if dst == reg::SR { score += 6; } else { score += 3; }
+                    }
+                    _ => score += 3,
+                }
+            } else {
+                // Generic two-operand: minimal score since 75% of halfwords match
+                score += 1;
             }
+            valid_count += 1;
+            continue;
         }
 
-        // Invalid
-        if word == 0x0000 || word == 0xFFFF {
-            score -= 5;
+        // Unrecognized (opcode 0, 2, 3): reserved in MSP430
+        score -= 3;
+        invalid_count += 1;
+    }
+
+    // Structural bonus for MSP430-specific patterns
+    if ret_count > 0 && (call_count > 0 || jump_count > 0) {
+        score += 15;
+    }
+
+    // Structural requirement: MSP430 code of meaningful size must contain
+    // distinctive patterns. The two-operand format covers 75% of halfword space,
+    // meaning random data from ANY LE architecture accumulates positive scores.
+    // Require returns AND at least some control flow evidence.
+    if num_halfwords > 20 {
+        if ret_count == 0 {
+            // No returns at all - very unlikely to be MSP430
+            score = (score as f64 * 0.10) as i64;
+        } else if ret_count == 1 && call_count == 0 && jump_count < 2 {
+            // Single return, no calls, barely any jumps - likely a spurious 0x4130
+            // match from another ISA's instruction encoding
+            score = (score as f64 * 0.30) as i64;
         }
     }
 

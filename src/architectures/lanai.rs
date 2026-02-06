@@ -47,62 +47,65 @@ pub fn score(data: &[u8]) -> i64 {
     }
 
     let mut score: i64 = 0;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
 
     for &word in &words {
+        // --- Cross-architecture penalties (BE ISAs) ---
+        // PPC
+        if word == 0x60000000 { score -= 12; continue; }  // NOP
+        if word == 0x4E800020 { score -= 15; continue; }  // BLR
+        if (word >> 26) == 18 { score -= 5; }             // B/BL
+        // SPARC
+        if word == 0x01000000 { score -= 10; continue; }  // NOP
+        if word == 0x81C7E008 { score -= 15; continue; }  // RET
+        // MIPS BE
+        if word == 0x03E00008 { score -= 12; continue; }  // JR $ra
+        // S390x
+        if (word >> 16) == 0x07FE { score -= 12; continue; }  // BR %r14
+
         if word == LANAI_NOP {
             score += 15;
-        }
-        if word == LANAI_PUSH_FP {
+        } else if word == LANAI_PUSH_FP {
             score += 35;
-        }
-        if word == LANAI_RET_PC {
+            call_count += 1;
+        } else if word == LANAI_RET_PC {
             score += 45;
-        }
-        if word == LANAI_RESTORE_FP {
+            ret_count += 1;
+        } else if word == LANAI_RESTORE_FP {
             score += 25;
-        }
-        if word == LANAI_RETVAL_ZERO {
+        } else if word == LANAI_RETVAL_ZERO {
             score += 8;
-        }
-        if (word & LANAI_ADD_SP_FP_MASK) == LANAI_ADD_SP_FP_PATTERN {
+        } else if (word & LANAI_ADD_SP_FP_MASK) == LANAI_ADD_SP_FP_PATTERN {
             score += 4;
-        }
-        if (word & LANAI_SUB_SP_MASK) == LANAI_SUB_SP_PATTERN {
+        } else if (word & LANAI_SUB_SP_MASK) == LANAI_SUB_SP_PATTERN {
             score += 4;
-        }
-        if (word & LANAI_ADD_FP_SP_MASK) == LANAI_ADD_FP_SP_PATTERN {
+        } else if (word & LANAI_ADD_FP_SP_MASK) == LANAI_ADD_FP_SP_PATTERN {
             score += 4;
-        }
-
-        let top = word & 0xFF00_0000;
-        if matches!(top, 0xE000_0000 | 0xE400_0000 | 0xE600_0000) {
-            score += 6; // bt/bult/beq/bne
-        }
-
-        let top_byte = (word >> 24) as u8;
-        if matches!(top_byte, 0x71 | 0x74 | 0x76 | 0x78 | 0x7A) {
-            score += 4; // sh/sha family
-        }
-
-        if word == LANAI_CALL_ADD_PC {
+        } else if matches!(word & 0xFF00_0000, 0xE000_0000 | 0xE400_0000 | 0xE600_0000) {
+            score += 6;
+        } else if matches!((word >> 24) as u8, 0x71 | 0x74 | 0x76 | 0x78 | 0x7A) {
+            score += 4;
+        } else if word == LANAI_CALL_ADD_PC {
             score += 10;
-        }
-        if word == LANAI_CALL_PUSH_RCA {
+            call_count += 1;
+        } else if word == LANAI_CALL_PUSH_RCA {
             score += 10;
-        }
-
-        if word == 0x0000_0000 || word == 0xFFFF_FFFF {
+        } else if word == 0x0000_0000 || word == 0xFFFF_FFFF {
             score -= 6;
+        } else {
+            score -= 1;  // Unrecognized instruction
         }
     }
 
+    // Multi-instruction patterns
     for i in 0..words.len() {
         if i + 2 < words.len()
             && words[i] == LANAI_PUSH_FP
             && (words[i + 1] & LANAI_ADD_SP_FP_MASK) == LANAI_ADD_SP_FP_PATTERN
             && (words[i + 2] & LANAI_SUB_SP_MASK) == LANAI_SUB_SP_PATTERN
         {
-            score += 40; // common function prologue
+            score += 40;
         }
 
         if i + 2 < words.len()
@@ -110,7 +113,7 @@ pub fn score(data: &[u8]) -> i64 {
             && (words[i + 1] & LANAI_ADD_FP_SP_MASK) == LANAI_ADD_FP_SP_PATTERN
             && words[i + 2] == LANAI_RESTORE_FP
         {
-            score += 35; // common function epilogue
+            score += 35;
         }
 
         if i + 2 < words.len()
@@ -118,7 +121,16 @@ pub fn score(data: &[u8]) -> i64 {
             && words[i + 1] == LANAI_CALL_PUSH_RCA
             && (words[i + 2] & 0xFF00_0000) == 0xE000_0000
         {
-            score += 30; // call stub
+            score += 30;
+        }
+    }
+
+    // Structural requirement
+    let num_words = data.len() / 4;
+    if num_words > 20 {
+        let distinctive = ret_count + call_count;
+        if distinctive == 0 {
+            score = (score as f64 * 0.10) as i64;
         }
     }
 

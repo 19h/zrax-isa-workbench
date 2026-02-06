@@ -766,6 +766,9 @@ pub fn score(data: &[u8]) -> i64 {
     let mut block_depth = 0i32;
     let mut valid_count = 0u32;
     let mut end_count = 0u32;
+    let mut call_count = 0u32;
+    let mut return_count = 0u32;
+    let mut block_count = 0u32;
 
     while i < data.len() {
         let op = data[i];
@@ -780,6 +783,7 @@ pub fn score(data: &[u8]) -> i64 {
         match op {
             opcode::BLOCK | opcode::LOOP | opcode::IF => {
                 block_depth += 1;
+                block_count += 1;
                 total_score += 3;
             }
             opcode::END => {
@@ -812,11 +816,11 @@ pub fn score(data: &[u8]) -> i64 {
 
             // Common: control flow
             opcode::BR | opcode::BR_IF => total_score += 3,
-            opcode::RETURN => total_score += 5,
+            opcode::RETURN => { total_score += 5; return_count += 1; }
 
             // Common: calls
-            opcode::CALL => total_score += 5,
-            opcode::CALL_INDIRECT => total_score += 4,
+            opcode::CALL => { total_score += 5; call_count += 1; }
+            opcode::CALL_INDIRECT => { total_score += 4; call_count += 1; }
 
             // Common: memory access
             opcode::I32_LOAD | opcode::I32_STORE => total_score += 3,
@@ -848,6 +852,16 @@ pub fn score(data: &[u8]) -> i64 {
     // Penalty for unbalanced blocks
     if block_depth != 0 {
         total_score -= block_depth.abs() as i64 * 5;
+    }
+
+    // Structural requirement: WASM code must have calls, returns, or block structure
+    if data.len() > 80 {
+        let distinctive = call_count + return_count;
+        if distinctive == 0 && block_count == 0 {
+            total_score = (total_score as f64 * 0.10) as i64;
+        } else if distinctive == 0 {
+            total_score = (total_score as f64 * 0.25) as i64;
+        }
     }
 
     total_score.max(0)

@@ -651,6 +651,43 @@ pub fn score(data: &[u8]) -> i64 {
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
 
+    let mut return_count = 0u32;
+    let mut invoke_count = 0u32;
+
+    // Cross-architecture penalties for 32-bit LE patterns
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // RISC-V
+            if le32 == 0x00000013 { total_score -= 12; } // RISC-V NOP (addi x0,x0,0)
+            if le32 == 0x00008067 { total_score -= 15; } // RISC-V RET (jalr x0,ra,0)
+            // AArch64
+            if le32 == 0xD65F03C0 { total_score -= 12; } // AArch64 RET
+            if le32 == 0xD503201F { total_score -= 10; } // AArch64 NOP
+            // LoongArch
+            if le32 == 0x4C000020 { total_score -= 10; } // LoongArch JIRL ra (RET)
+            // x86-64: push rbp; mov rbp,rsp (bytes: 55 48 89 E5)
+            if le32 == 0xE5894855 { total_score -= 15; }
+            j += 4;
+        }
+    }
+
+    // Cross-architecture penalties for 16-bit LE patterns
+    {
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+            if hw == 0x4770 { total_score -= 12; } // Thumb BX LR
+            if hw == 0xBF00 { total_score -= 6; }  // Thumb NOP
+            if (hw & 0xFF00) == 0xB500 { total_score -= 5; } // Thumb PUSH {.., LR}
+            if (hw & 0xFF00) == 0xBD00 { total_score -= 5; } // Thumb POP {.., PC}
+            if hw == 0x4130 { total_score -= 10; } // MSP430 RET
+            if hw == 0x9508 { total_score -= 10; } // AVR RET
+            j += 2;
+        }
+    }
+
     // Dalvik bytecode is 2-byte aligned
     while i + 1 < data.len() {
         let op = data[i];
@@ -672,13 +709,13 @@ pub fn score(data: &[u8]) -> i64 {
         // Score common patterns
         match op {
             // Very common: return instructions
-            opcode::RETURN_VOID => total_score += 10,
-            opcode::RETURN | opcode::RETURN_OBJECT => total_score += 8,
+            opcode::RETURN_VOID => { total_score += 10; return_count += 1; }
+            opcode::RETURN | opcode::RETURN_OBJECT => { total_score += 8; return_count += 1; }
 
             // Very common: invoke instructions
-            opcode::INVOKE_VIRTUAL | opcode::INVOKE_DIRECT => total_score += 8,
-            opcode::INVOKE_STATIC => total_score += 7,
-            opcode::INVOKE_INTERFACE | opcode::INVOKE_SUPER => total_score += 6,
+            opcode::INVOKE_VIRTUAL | opcode::INVOKE_DIRECT => { total_score += 8; invoke_count += 1; }
+            opcode::INVOKE_STATIC => { total_score += 7; invoke_count += 1; }
+            opcode::INVOKE_INTERFACE | opcode::INVOKE_SUPER => { total_score += 6; invoke_count += 1; }
 
             // Common: field access
             opcode::IGET..=opcode::IPUT_SHORT => total_score += 5,
@@ -723,6 +760,18 @@ pub fn score(data: &[u8]) -> i64 {
         // Bonus for high validity
         if validity_ratio > 0.85 && valid_count > 10 {
             total_score += 15;
+        }
+    }
+
+    // Structural requirement: Dalvik bytecode always contains return and invoke
+    // instructions. Many Dalvik opcodes are single-byte (0x00-0xE2) which means
+    // random data has high validity ratio. Without distinctive control flow,
+    // the data is not real Dalvik bytecode.
+    if valid_count > 10 {
+        if return_count == 0 && invoke_count == 0 {
+            total_score = (total_score as f64 * 0.15) as i64;
+        } else if return_count == 0 {
+            total_score = (total_score as f64 * 0.40) as i64;
         }
     }
 

@@ -199,16 +199,74 @@ pub fn score(data: &[u8]) -> i64 {
     let mut invalid_count = 0u32;
     let mut zero_run: u32 = 0;
 
+    // Cross-architecture penalties for 32-bit BE patterns
+    // Blackfin is LE; data from BE 32-bit ISAs should be penalized
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // MIPS
+            if be32 == 0x03E00008 { total_score -= 20; } // MIPS JR $ra
+            if be32 == 0x00000000 { total_score -= 3; }   // MIPS NOP (also all-zero)
+            if (be32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; } // MIPS ADDIU $sp
+            if (be32 & 0xFC000000) == 0x0C000000 { total_score -= 5; }  // MIPS JAL
+            // SPARC
+            if be32 == 0x81C7E008 { total_score -= 15; } // SPARC RET
+            if be32 == 0x01000000 { total_score -= 12; } // SPARC NOP
+            // PPC
+            if be32 == 0x4E800020 { total_score -= 15; } // PPC BLR
+            if be32 == 0x60000000 { total_score -= 12; } // PPC NOP
+            j += 4;
+        }
+    }
+
+    // Cross-architecture penalties for 32-bit LE patterns
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // Hexagon duplex patterns
+            if (le32 & 0x0000C000) == 0x0000C000 && (le32 & 0xF0000000) != 0 {
+                // End-of-packet marker + non-zero iclass — common Hexagon
+                // Only penalize if it looks like a valid Hexagon instruction class
+                let iclass = (le32 >> 28) as u8;
+                if iclass <= 0xB { total_score -= 2; }
+            }
+            // LoongArch
+            if le32 == 0x4C000020 { total_score -= 12; } // LoongArch JIRL ra (RET)
+            if le32 == 0x03400000 { total_score -= 10; } // LoongArch NOP
+            // LoongArch BL (top6 = 0x15 = 010101)
+            if (le32 >> 26) == 0x15 { total_score -= 5; }
+            // LoongArch PCADDU12I (top7 = 0x0E)
+            if (le32 >> 25) == 0x0E { total_score -= 3; }
+            // LoongArch B (branch, top6 = 0x14)
+            if (le32 >> 26) == 0x14 { total_score -= 3; }
+            // LoongArch ADDI.D (top10 = 0x00B) - very common in prologues
+            if (le32 >> 22) & 0x3FF == 0x00B { total_score -= 3; }
+            // LoongArch ST.D (top10 = 0x0A7) - store in prologue
+            if (le32 >> 22) & 0x3FF == 0x0A7 { total_score -= 3; }
+            // LoongArch LD.D (top10 = 0x0A3) - load in epilogue
+            if (le32 >> 22) & 0x3FF == 0x0A3 { total_score -= 3; }
+            // RISC-V
+            if le32 == 0x00000013 { total_score -= 10; } // RISC-V NOP
+            if le32 == 0x00008067 { total_score -= 12; } // RISC-V RET
+
+            // AArch64 patterns (LE)
+            if le32 == 0xD65F03C0 { total_score -= 12; } // AArch64 RET
+            if le32 == 0xD503201F { total_score -= 10; } // AArch64 NOP
+
+            j += 4;
+        }
+    }
+
     while i + 1 < data.len() {
         let word = u16::from_le_bytes([data[i], data[i + 1]]);
 
-        // Handle zero words carefully - likely padding, not real NOPs
+        // Handle zero words - NOP/padding, don't reward
         if word == 0x0000 {
             zero_run += 1;
-            if zero_run <= 2 {
-                total_score += 2; // Small bonus for isolated zeros
-            } else if zero_run > 8 {
-                total_score -= 1; // Penalize long zero runs (padding)
+            if zero_run > 4 {
+                total_score -= 2; // Penalize long zero runs (padding)
             }
             i += 2;
             continue;
@@ -242,42 +300,39 @@ pub fn score(data: &[u8]) -> i64 {
             } else if is_nop_or_sync(word) {
                 total_score += 8; // Sync instructions are DSP-specific
             } else if is_branch(word) {
-                total_score += 6;
+                total_score += 2; // Broad: 18.75% of space
             } else if is_load_store_16(word) {
-                total_score += 4;
+                total_score += 1; // Broad: 6.25% of space
             } else if is_alu_16(word) {
-                total_score += 4;
+                total_score += 1; // Broad: 6.25% of space
             } else if is_ptr_arith(word) {
-                total_score += 5;
+                total_score += 2; // Broad: 6.25% of space
             } else {
-                // Check for valid system control range
-                let range = word & opcode::SYSTEM_CONTROL_MASK;
-                if range == opcode::SYSTEM_CONTROL {
-                    total_score += 2;
-                }
+                // Unrecognized 16-bit halfword
+                total_score -= 1;
             }
         } else if instr_len == 4 {
-            // 32-bit instructions
-            if is_mac_instruction(high_byte) {
-                total_score += 12; // MAC ops are very DSP-specific
-            } else if high_byte == opcode::DUAL_MAC {
-                total_score += 15; // Dual MAC is even more specific
+            // 32-bit instructions - only score specific known patterns
+            if high_byte == opcode::DUAL_MAC {
+                total_score += 15; // Dual MAC is very specific
+            } else if is_mac_instruction(high_byte) {
+                total_score += 10; // MAC ops are DSP-specific
             } else if high_byte == opcode::VECTOR_ALU {
-                total_score += 10;
-            } else if is_long_branch(high_byte) {
                 total_score += 8;
-            } else if is_load_store_32(high_byte) {
-                total_score += 6;
-            } else if high_byte == opcode::BIT_MANIP {
-                total_score += 7;
             } else if high_byte == opcode::VIDEO_PIXEL {
                 total_score += 12; // Video ops are specific
             } else if high_byte == opcode::SAA_OPS {
                 total_score += 12; // SAA is specific
+            } else if is_long_branch(high_byte) {
+                total_score += 5;
+            } else if is_load_store_32(high_byte) {
+                total_score += 3;
+            } else if high_byte == opcode::BIT_MANIP {
+                total_score += 5;
             } else if matches!(high_byte, 0xC0..=0xCF) {
-                total_score += 5; // Other DSP ops
+                total_score += 1; // Other DSP ops - minimal score
             } else if matches!(high_byte, 0xE0..=0xE7) {
-                total_score += 4; // Other 32-bit ops
+                total_score += 1; // Other 32-bit ops - minimal score
             }
         } else if instr_len == 8 {
             // 64-bit parallel packet - very strong indicator
@@ -287,13 +342,45 @@ pub fn score(data: &[u8]) -> i64 {
         i += instr_len;
     }
 
+    // Structural requirement: real Blackfin code must have distinctive patterns
+    // Scan for returns, sync instructions, and DSP-specific ops
+    let mut has_returns = false;
+    let mut has_sync = false;
+    let mut has_dsp = false;
+    {
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let w = u16::from_le_bytes([data[j], data[j + 1]]);
+            if is_return(w) { has_returns = true; }
+            if matches!(w, opcode::CSYNC | opcode::SSYNC | opcode::EMUEXCPT) { has_sync = true; }
+            // Check for 32-bit DSP instructions
+            let hb = (w >> 8) as u8;
+            if j + 3 < data.len() && is_32bit_prefix(hb) {
+                if is_mac_instruction(hb) || hb == opcode::DUAL_MAC
+                    || hb == opcode::VIDEO_PIXEL || hb == opcode::SAA_OPS
+                {
+                    has_dsp = true;
+                }
+                j += 4;
+            } else {
+                j += 2;
+            }
+        }
+    }
+
+    let mut structural_penalty = false;
+    if valid_count > 20 && !has_returns && !has_sync && !has_dsp {
+        total_score = (total_score as f64 * 0.15) as i64;
+        structural_penalty = true;
+    }
+
     // Adjust based on validity ratio
     if valid_count + invalid_count > 0 {
         let validity_ratio = valid_count as f64 / (valid_count + invalid_count) as f64;
         total_score = (total_score as f64 * validity_ratio) as i64;
 
-        // Bonus for high validity
-        if validity_ratio > 0.80 && valid_count > 10 {
+        // Bonus for high validity — only when structural requirement passed
+        if !structural_penalty && validity_ratio > 0.80 && valid_count > 10 {
             total_score += 15;
         }
     }

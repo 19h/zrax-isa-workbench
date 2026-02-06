@@ -6,6 +6,8 @@
 
 pub mod scorer;
 
+use std::collections::HashMap;
+
 use crate::error::{ClassifierError, Result};
 use crate::types::{
     ClassificationResult, ClassificationSource, ClassifierOptions, Endianness, FileFormat, Isa,
@@ -211,44 +213,58 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 64,
     });
 
-    // MIPS (both endiannesses, 32-bit and 64-bit)
-    let (mips_be_score, mips_le_score) = scorer::score_mips(scan_data);
-    let (mips_score, mips_endian) = if mips_be_score >= mips_le_score {
-        (mips_be_score, Endianness::Big)
+    // MIPS 32-bit (both endiannesses)
+    let (mips32_be, mips32_le) = scorer::score_mips(scan_data, false);
+    let (mips32_score, mips32_endian) = if mips32_be >= mips32_le {
+        (mips32_be, Endianness::Big)
     } else {
-        (mips_le_score, Endianness::Little)
+        (mips32_le, Endianness::Little)
     };
     scores.push(ArchitectureScore {
         isa: Isa::Mips,
-        raw_score: mips_score,
+        raw_score: mips32_score,
         confidence: 0.0,
-        endianness: mips_endian,
+        endianness: mips32_endian,
         bitwidth: 32,
     });
+
+    // MIPS 64-bit (both endiannesses, separate scoring for 64-bit opcodes)
+    let (mips64_be, mips64_le) = scorer::score_mips(scan_data, true);
+    let (mips64_score, mips64_endian) = if mips64_be >= mips64_le {
+        (mips64_be, Endianness::Big)
+    } else {
+        (mips64_le, Endianness::Little)
+    };
     scores.push(ArchitectureScore {
         isa: Isa::Mips64,
-        raw_score: mips_score, // Same scoring logic for 64-bit
+        raw_score: mips64_score,
         confidence: 0.0,
-        endianness: mips_endian,
+        endianness: mips64_endian,
         bitwidth: 64,
     });
 
-    // PowerPC
-    let ppc_score = scorer::score_ppc(scan_data);
+    // PowerPC (big-endian)
+    let ppc_be_score = scorer::score_ppc(scan_data);
     scores.push(ArchitectureScore {
         isa: Isa::Ppc,
-        raw_score: ppc_score,
+        raw_score: ppc_be_score,
         confidence: 0.0,
         endianness: Endianness::Big,
         bitwidth: 32,
     });
 
-    let ppc64_score = scorer::score_ppc(scan_data);
+    // PowerPC 64-bit: take max of BE and LE scores
+    let ppc64_le_score = scorer::score_ppc_le(scan_data);
+    let (ppc64_score, ppc64_endian) = if ppc_be_score >= ppc64_le_score {
+        (ppc_be_score, Endianness::Big)
+    } else {
+        (ppc64_le_score, Endianness::Little)
+    };
     scores.push(ArchitectureScore {
         isa: Isa::Ppc64,
         raw_score: ppc64_score,
         confidence: 0.0,
-        endianness: Endianness::Big,
+        endianness: ppc64_endian,
         bitwidth: 64,
     });
 
@@ -530,6 +546,169 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
     }
 
     scores
+}
+
+/// Detected ISA from windowed analysis of firmware/multi-ISA binaries.
+#[derive(Debug, Clone)]
+pub struct DetectedIsa {
+    /// The ISA detected
+    pub isa: Isa,
+    /// Number of windows where this ISA was the top scorer
+    pub window_count: usize,
+    /// Total bytes attributed to this ISA
+    pub total_bytes: usize,
+    /// Average raw score across windows
+    pub avg_score: f64,
+    /// Endianness
+    pub endianness: Endianness,
+    /// Bitwidth
+    pub bitwidth: u8,
+}
+
+/// Detect multiple ISAs in a binary using sliding-window analysis.
+///
+/// Divides the data into fixed-size non-overlapping windows, scores each
+/// window against all architectures, and aggregates which ISAs appear as
+/// top scorers. Returns all ISAs that dominate at least `min_windows`
+/// windows with sufficient score.
+///
+/// This is designed for firmware images that contain code sections from
+/// multiple ISA families (e.g., AArch64 + ARM32, or Hexagon + AVR).
+pub fn detect_multi_isa(
+    data: &[u8],
+    options: &ClassifierOptions,
+    window_size: usize,
+) -> Vec<DetectedIsa> {
+    let min_windows: usize = 3;
+    let min_bytes: usize = 2048;
+    // Minimum confidence for the window winner to be counted.
+    // score_all_architectures computes confidence = max(share, margin*0.8).
+    // On noise data, confidence is typically 0.05-0.15 (many ISAs score similarly).
+    // On real code, the correct ISA gets 0.20+ confidence.
+    let min_window_confidence: f64 = 0.14;
+
+    // Per-ISA accumulation: (raw_score, endianness, bitwidth) per window
+    let mut isa_windows: HashMap<Isa, Vec<(i64, Endianness, u8)>> = HashMap::new();
+
+    // Use window-appropriate options: scan entire window, low confidence threshold
+    let window_opts = ClassifierOptions {
+        min_confidence: 0.01,
+        max_scan_bytes: window_size,
+        deep_scan: false,
+        detect_extensions: false,
+        fast_mode: false,
+    };
+
+    let mut offset = 0;
+    while offset + window_size <= data.len() {
+        let window = &data[offset..offset + window_size];
+
+        // Pre-filter: skip obvious non-code windows
+        if is_padding_or_empty(window) || is_string_data(window) || is_high_entropy(window) {
+            offset += window_size;
+            continue;
+        }
+
+        // Score this window against all architectures
+        let scores = score_all_architectures(window, &window_opts);
+
+        // The scores are sorted by raw_score descending with confidence computed.
+        // Only count the winner if its confidence exceeds our threshold.
+        if let Some(best) = scores.first() {
+            if best.raw_score > 0 && best.confidence >= min_window_confidence {
+                isa_windows
+                    .entry(best.isa)
+                    .or_default()
+                    .push((best.raw_score, best.endianness, best.bitwidth));
+            }
+        }
+
+        offset += window_size;
+    }
+
+    // Total classified windows (those that passed confidence filter)
+    let total_classified: usize = isa_windows.values().map(|w| w.len()).sum();
+
+    // Aggregate and filter
+    let mut results: Vec<DetectedIsa> = isa_windows
+        .into_iter()
+        .filter(|(_, windows)| {
+            let count = windows.len();
+            // Absolute minimum: at least 3 windows and 2KB
+            if count < min_windows || count * window_size < min_bytes {
+                return false;
+            }
+            // Relative frequency: must win at least 8% of all classified windows.
+            // This eliminates noise ISAs that win a few windows by chance.
+            if total_classified > 10 {
+                let fraction = count as f64 / total_classified as f64;
+                if fraction < 0.08 {
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|(isa, windows)| {
+            let count = windows.len();
+            let total_bytes = count * window_size;
+            let avg_score = windows.iter().map(|w| w.0 as f64).sum::<f64>() / count as f64;
+            let endianness = windows[0].1;
+            let bitwidth = windows[0].2;
+
+            DetectedIsa {
+                isa,
+                window_count: count,
+                total_bytes,
+                avg_score,
+                endianness,
+                bitwidth,
+            }
+        })
+        .collect();
+
+    // Sort by window count descending (most dominant ISA first)
+    results.sort_by(|a, b| b.window_count.cmp(&a.window_count));
+
+    results
+}
+
+/// Check if a window is padding (all same byte or all zeros/0xFF).
+fn is_padding_or_empty(data: &[u8]) -> bool {
+    if data.is_empty() {
+        return true;
+    }
+    let first = data[0];
+    data.iter().all(|&b| b == first)
+}
+
+/// Check if a window is mostly string/text data (>75% printable ASCII).
+fn is_string_data(data: &[u8]) -> bool {
+    if data.is_empty() {
+        return false;
+    }
+    let printable = data.iter().filter(|&&b| {
+        b == 0 || b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b)
+    }).count();
+    printable * 100 / data.len() > 75
+}
+
+/// Check if data has very high byte diversity (likely compressed/random).
+/// Uses distinct byte count as a fast entropy proxy.
+/// Random/compressed data uses 240-256 distinct byte values per 1KB.
+/// Real machine code typically uses 100-220 distinct values.
+fn is_high_entropy(data: &[u8]) -> bool {
+    if data.len() < 64 {
+        return false;
+    }
+    let mut seen = [false; 256];
+    for &b in data {
+        seen[b as usize] = true;
+    }
+    let distinct = seen.iter().filter(|&&s| s).count();
+    // For 1KB windows: random data → ~250 distinct, code → 100-220
+    // Scale threshold by window size: larger windows naturally see more distinct bytes
+    let threshold = if data.len() >= 512 { 235 } else { 200 };
+    distinct >= threshold
 }
 
 /// Get the top N architecture candidates.

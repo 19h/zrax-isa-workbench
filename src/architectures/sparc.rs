@@ -409,55 +409,308 @@ pub const VALID_MEM_OP3: &[u8] = &[
 ///
 /// Analyzes raw bytes for patterns characteristic of SPARC.
 pub fn score(data: &[u8]) -> i64 {
-    let mut score: i64 = 0;
+    let mut total_score: i64 = 0;
+    let mut valid_count = 0u32;
+    let mut save_count = 0u32;
+    let mut restore_count = 0u32;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
 
     // SPARC is big-endian, 4-byte aligned
-    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+    let num_words = data.len() / 4;
+    for idx in 0..num_words {
+        let i = idx * 4;
         let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         let fmt = get_format(word);
 
-        // NOP
+        // Invalid/padding
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            total_score -= 3;
+            continue;
+        }
+
+        // Cross-architecture penalties for other big-endian 32-bit ISAs
+
+        // PPC patterns (BE)
+        if word == 0x60000000 { total_score -= 15; continue; } // PPC NOP
+        if word == 0x4E800020 { total_score -= 20; continue; } // PPC BLR
+        if word == 0x7C0802A6 { total_score -= 15; continue; } // PPC MFLR r0
+        if word == 0x7C0803A6 { total_score -= 15; continue; } // PPC MTLR r0
+        // PPC primary opcode check
+        {
+            let ppc_op = (word >> 26) & 0x3F;
+            // PPC STWU (0x25) - very common prologue
+            if ppc_op == 0x25 {
+                total_score -= 3;
+            }
+        }
+
+        // Cross-architecture penalties for LE ISAs (data read as BE gives byte-swapped)
+        // Interpret same bytes as LE to detect LE patterns
+        {
+            let le_word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+            // ARM32 NOP
+            if le_word == 0xE1A00000 || le_word == 0xE320F000 { total_score -= 12; continue; }
+            // ARM32 BX LR
+            if le_word == 0xE12FFF1E { total_score -= 15; continue; }
+            // RISC-V NOP
+            if le_word == 0x00000013 { total_score -= 10; continue; }
+            // RISC-V RET
+            if le_word == 0x00008067 { total_score -= 15; continue; }
+            // LoongArch NOP
+            if le_word == 0x03400000 { total_score -= 10; continue; }
+            // LoongArch RET
+            if le_word == 0x4C000020 { total_score -= 15; continue; }
+        }
+
+        // Detect 16-bit LE instruction pairs (Thumb, MSP430, AVR)
+        {
+            let hw0 = u16::from_le_bytes([data[i], data[i + 1]]);
+            let hw1 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
+            // Thumb BX LR
+            if hw0 == 0x4770 || hw1 == 0x4770 { total_score -= 8; continue; }
+            // Thumb NOP
+            if hw0 == 0xBF00 || hw1 == 0xBF00 { total_score -= 5; }
+            // Thumb PUSH/POP
+            if (hw0 & 0xFE00) == 0xB400 || (hw0 & 0xFE00) == 0xBC00
+                || (hw1 & 0xFE00) == 0xB400 || (hw1 & 0xFE00) == 0xBC00 {
+                total_score -= 4;
+            }
+            // MSP430 RET (0x4130)
+            if hw0 == 0x4130 || hw1 == 0x4130 { total_score -= 10; continue; }
+            // MSP430 NOP (0x4303)
+            if hw0 == 0x4303 || hw1 == 0x4303 { total_score -= 8; }
+            // AVR RET (0x9508)
+            if hw0 == 0x9508 || hw1 == 0x9508 { total_score -= 10; continue; }
+            // AVR RETI (0x9518)
+            if hw0 == 0x9518 || hw1 == 0x9518 { total_score -= 8; continue; }
+            // AVR SLEEP
+            if hw0 == 0x9588 || hw1 == 0x9588 { total_score -= 8; }
+            // AVR SEI / CLI
+            if hw0 == 0x9478 || hw1 == 0x9478 { total_score -= 6; }
+            if hw0 == 0x94F8 || hw1 == 0x94F8 { total_score -= 6; }
+            // AVR IJMP / ICALL
+            if hw0 == 0x9409 || hw1 == 0x9409 { total_score -= 6; }
+            if hw0 == 0x9509 || hw1 == 0x9509 { total_score -= 6; }
+            // AVR PUSH (mask 0xFE0F = 0x920F)
+            if (hw0 & 0xFE0F) == 0x920F || (hw1 & 0xFE0F) == 0x920F { total_score -= 4; }
+            // AVR POP (mask 0xFE0F = 0x900F)
+            if (hw0 & 0xFE0F) == 0x900F || (hw1 & 0xFE0F) == 0x900F { total_score -= 4; }
+        }
+
+        // NOP (exact match) - very strong indicator
         if is_nop(word) {
-            score += 25;
+            total_score += 25;
+            valid_count += 1;
+            continue;
         }
 
-        // RETL/RET
+        // RETL/RET (exact match) - very strong indicator
         if is_return(word) {
-            score += 30;
+            total_score += 30;
+            ret_count += 1;
+            valid_count += 1;
+            continue;
         }
 
-        // CALL
-        if is_call(word) {
-            score += 10;
+        // RESTORE %g0, %g0, %g0 (exact match)
+        if word == patterns::RESTORE {
+            total_score += 20;
+            restore_count += 1;
+            valid_count += 1;
+            continue;
         }
 
-        // Arithmetic (format 10)
-        if fmt == format::ARITHMETIC {
-            score += 3;
+        // TA 0 (trap always syscall)
+        if word == patterns::TA_0 {
+            total_score += 15;
+            valid_count += 1;
+            continue;
         }
 
-        // Load/Store (format 11)
-        if fmt == format::LOAD_STORE {
-            score += 3;
+        // CALL (format 01 - covers 25% of space!)
+        // Since 25% of random words match CALL format, score very conservatively
+        if fmt == format::CALL {
+            call_count += 1;
+            valid_count += 1;
+            total_score += 1;
+            continue;
         }
 
         // Branch/SETHI (format 00)
         if fmt == format::BRANCH_SETHI {
             let op2_val = get_op2(word);
-            if op2_val == op2::SETHI {
-                score += 5;
-            } else if op2_val == op2::BICC || op2_val == op2::FBFCC {
-                score += 5;
+            match op2_val {
+                op2::SETHI => {
+                    // SETHI is very common; check rd != 0 for more confidence
+                    let rd = get_rd(word);
+                    if rd != 0 { total_score += 5; } else { total_score += 2; }
+                    valid_count += 1;
+                }
+                op2::BICC => {
+                    let cc = get_cond(word);
+                    // All condition codes are valid
+                    if cc == cond::NEVER { total_score += 2; }
+                    else if cc == cond::ALWAYS { total_score += 5; }
+                    else { total_score += 4; }
+                    valid_count += 1;
+                }
+                op2::BPCC => {
+                    // V9 branch with prediction - strong indicator
+                    total_score += 6;
+                    valid_count += 1;
+                }
+                op2::FBFCC | op2::FBPFCC => {
+                    total_score += 5;
+                    valid_count += 1;
+                }
+                op2::BPR => {
+                    // V9 branch on register
+                    total_score += 6;
+                    valid_count += 1;
+                }
+                op2::CBCCC => {
+                    total_score += 4;
+                    valid_count += 1;
+                }
+                op2::UNIMP => {
+                    // UNIMP/ILLTRAP - can appear as padding
+                    total_score += 1;
+                    valid_count += 1;
+                }
+                _ => {
+                    // Invalid op2
+                    total_score -= 2;
+                }
             }
+            continue;
         }
 
-        // Invalid
-        if word == 0x00000000 || word == 0xFFFFFFFF {
-            score -= 5;
+        // Arithmetic (format 10) - validate op3
+        if fmt == format::ARITHMETIC {
+            let op3 = get_op3(word);
+
+            // SAVE/RESTORE are very distinctive
+            if op3 == op3_arith::SAVE {
+                total_score += 15;
+                save_count += 1;
+                valid_count += 1;
+                continue;
+            }
+            if op3 == op3_arith::RESTORE {
+                total_score += 15;
+                restore_count += 1;
+                valid_count += 1;
+                continue;
+            }
+            // JMPL is strong
+            if op3 == op3_arith::JMPL {
+                total_score += 8;
+                valid_count += 1;
+                continue;
+            }
+            // RETT/RETURN
+            if op3 == op3_arith::RETT {
+                total_score += 10;
+                ret_count += 1;
+                valid_count += 1;
+                continue;
+            }
+            // TICC (trap)
+            if op3 == op3_arith::TICC {
+                total_score += 6;
+                valid_count += 1;
+                continue;
+            }
+            // FP operations - distinctive
+            if op3 == op3_arith::FPOP1 || op3 == op3_arith::FPOP2 {
+                total_score += 5;
+                valid_count += 1;
+                continue;
+            }
+
+            // Common ALU operations
+            if matches!(op3,
+                0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 | // ADD, AND, OR, XOR, SUB, ANDN, ORN, XNOR
+                0x08 | 0x0A | 0x0B | 0x0C | 0x0E | 0x0F |  // ADDX, UMUL, SMUL, SUBX, UDIV, SDIV
+                0x10 | 0x11 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 | 0x17 | // cc variants
+                0x18 | 0x1A | 0x1B | 0x1C | 0x1E | 0x1F |  // cc variants
+                0x25 | 0x26 | 0x27 | // SLL, SRL, SRA
+                0x28 | 0x29 | 0x2A | 0x2B | // RDY, RDPSR, RDWIM, RDTBR
+                0x30 | 0x31 | 0x32 | 0x33 | // WRY, WRPSR, WRWIM, WRTBR
+                0x09 | 0x0D | // MULX, UDIVX (V9)
+                0x2C | 0x2D | 0x2E | 0x2F | // MOVCC, SDIVX, POPC, MOVR (V9)
+                0x20 | 0x21 | 0x22 | 0x23 | 0x24 | // TADDCC, TSUBCC, etc.
+                0x3B // FLUSH
+            ) {
+                total_score += 3;
+                valid_count += 1;
+            } else if op3 == 0x3E || op3 == 0x3F {
+                // DONE/RETRY (V9) - distinctive
+                total_score += 8;
+                valid_count += 1;
+            } else {
+                // Unknown op3 in arithmetic format - mild penalty
+                total_score -= 1;
+            }
+            continue;
+        }
+
+        // Load/Store (format 11) - validate op3
+        if fmt == format::LOAD_STORE {
+            let op3 = get_op3(word);
+            if matches!(op3,
+                0x00 | 0x01 | 0x02 | 0x03 | // LD, LDUB, LDUH, LDD
+                0x04 | 0x05 | 0x06 | 0x07 | // ST, STB, STH, STD
+                0x09 | 0x0A | 0x0B |         // LDSB, LDSH, LDX (V9)
+                0x0D | 0x0E | 0x0F |         // LDSTUB, STX (V9), SWAP
+                0x10 | 0x11 | 0x12 | 0x13 |  // LDA, LDUBA, LDUHA, LDDA
+                0x14 | 0x15 | 0x16 | 0x17 |  // STA, STBA, STHA, STDA
+                0x19 | 0x1A | 0x1B |          // LDSBA, LDSHA, LDXA (V9)
+                0x1D | 0x1E | 0x1F |          // LDSTUBA, STXA (V9), SWAPA
+                0x20 | 0x21 | 0x23 |          // LDF, LDFSR, LDDF
+                0x24 | 0x25 | 0x26 | 0x27 |  // STF, STFSR, STDFQ, STDF
+                0x2D |                         // PREFETCH (V9)
+                0x3C | 0x3E                    // CAS, CASX (V9)
+            ) {
+                total_score += 4;
+                valid_count += 1;
+            } else {
+                // Unknown op3 in load/store format
+                total_score -= 1;
+            }
+            continue;
         }
     }
 
-    score.max(0)
+    // SAVE/RESTORE pairing is a very strong SPARC indicator
+    if save_count > 0 && restore_count > 0 {
+        total_score += (save_count.min(restore_count) * 10) as i64;
+    }
+
+    // Structural bonus: SPARC code with calls + returns is very reliable
+    if ret_count > 0 && call_count > 0 {
+        total_score += 10;
+    }
+
+    // Structural requirement: SPARC format bits cover ALL 4 values (00,01,10,11),
+    // meaning 100% of random words match some format. CALL alone is 25% of space.
+    // SAVE/RESTORE format matches ~1/128 of random words, so a single match is
+    // insufficient evidence. Require multiple distinctive patterns.
+    if num_words > 20 {
+        let distinctive = save_count + restore_count + ret_count;
+        if distinctive == 0 {
+            total_score = (total_score as f64 * 0.10) as i64;
+        } else if distinctive == 1 {
+            // Single SAVE or RESTORE could be a random format match (1/128 per word)
+            total_score = (total_score as f64 * 0.25) as i64;
+        } else if ret_count == 0 && save_count > 0 && restore_count > 0 {
+            // SAVE+RESTORE but no returns - mild penalty
+            total_score = (total_score as f64 * 0.60) as i64;
+        }
+    }
+
+    total_score.max(0)
 }
 
 #[cfg(test)]

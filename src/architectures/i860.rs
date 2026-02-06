@@ -243,8 +243,9 @@ pub fn is_fpu(op: u8) -> bool {
 
 /// Check if instruction is a NOP.
 pub fn is_nop(instr: u32) -> bool {
-    // NOP is encoded as specific trap-never pattern
-    instr == opcode::NOP || (instr & 0xFC000000) == 0xA0000000
+    // NOP is the exact trap-never encoding: 0xA0000000
+    // The broad mask check was wrong - it matched all FST_S instructions
+    instr == opcode::NOP
 }
 
 /// Check if instruction enables dual-mode.
@@ -293,6 +294,8 @@ pub fn score(data: &[u8]) -> i64 {
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
     let mut zero_run: u32 = 0;
+    let mut arm_al_count = 0u32;
+    let mut arm_total_count = 0u32;
 
     // i860 is little-endian, 4-byte aligned
     let mut i = 0;
@@ -326,6 +329,49 @@ pub fn score(data: &[u8]) -> i64 {
             total_score -= 3;
             i += 4;
             continue;
+        }
+
+        // ARM32 cross-architecture detection
+        // ARM32 with condition 0xE (Always) maps to i860 graphics opcodes (0x38-0x3B)
+        {
+            let arm_cond = (instr >> 28) & 0xF;
+            if arm_cond <= 0xE {
+                arm_total_count += 1;
+                if arm_cond == 0xE {
+                    arm_al_count += 1;
+                }
+            }
+            // Exact ARM32 patterns
+            if instr == 0xE1A00000 || instr == 0xE320F000 {
+                // ARM NOP
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            if instr == 0xE12FFF1E {
+                // ARM BX LR
+                total_score -= 20;
+                i += 4;
+                continue;
+            }
+            if (instr & 0xFFFF0000) == 0xE92D0000 || (instr & 0xFFFF0000) == 0xE8BD0000 {
+                // ARM PUSH/POP
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            if arm_cond <= 0xE && (instr & 0x0F000000) == 0x0B000000 {
+                // ARM BL (branch with link)
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
+            if arm_cond <= 0xE && (instr & 0x0FFFFFF0) == 0x012FFF10 {
+                // ARM BX Rn
+                total_score -= 12;
+                i += 4;
+                continue;
+            }
         }
 
         // Detect Thumb-2 instruction patterns that could false-positive as i860
@@ -433,6 +479,197 @@ pub fn score(data: &[u8]) -> i64 {
         let op = extract_opcode(instr);
         let format = instruction_format(op);
 
+        // --- Cross-architecture penalties ---
+        // Penalize patterns that look like other common architectures
+
+        // MIPS patterns (big-endian 32-bit, opcode in bits 31:26)
+        // When read as LE, MIPS opcodes appear in low byte positions
+        {
+            let be_word = u32::from_be_bytes(instr.to_le_bytes());
+            let mips_op = (be_word >> 26) & 0x3F;
+            // Common MIPS: ADDIU(0x09), LUI(0x0F), LW(0x23), SW(0x2B), JAL(0x03), BEQ(0x04), BNE(0x05)
+            if mips_op == 0x09 || mips_op == 0x0F || mips_op == 0x23 || mips_op == 0x2B {
+                total_score -= 3;
+            }
+            // MIPS JR $ra (0x03E00008)
+            if be_word == 0x03E00008 {
+                total_score -= 15;
+            }
+            // MIPS NOP
+            if be_word == 0x00000000 {
+                // Already handled above
+            }
+        }
+
+        // PowerPC patterns (big-endian, opcode in bits 31:26)
+        {
+            let be_word = u32::from_be_bytes(instr.to_le_bytes());
+            // PPC NOP (ori 0,0,0 = 0x60000000)
+            if be_word == 0x60000000 {
+                total_score -= 12;
+            }
+            // PPC BLR (0x4E800020)
+            if be_word == 0x4E800020 {
+                total_score -= 15;
+            }
+            // PPC MFLR r0 (0x7C0802A6)
+            if be_word == 0x7C0802A6 {
+                total_score -= 15;
+            }
+        }
+
+        // PowerPC LE patterns (when PPC LE data is read as LE, values are direct)
+        {
+            // PPC NOP (ori 0,0,0 = 0x60000000)
+            if instr == 0x60000000 {
+                total_score -= 12;
+                i += 4;
+                continue;
+            }
+            // PPC BLR (0x4E800020)
+            if instr == 0x4E800020 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            // PPC MFLR r0 (0x7C0802A6)
+            if instr == 0x7C0802A6 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            // PPC MTLR r0 (0x7C0803A6)
+            if instr == 0x7C0803A6 {
+                total_score -= 12;
+                i += 4;
+                continue;
+            }
+            // PPC STWU r1, -N(r1) = 0x9421xxxx (stack frame setup)
+            if (instr & 0xFFFF0000) == 0x94210000 {
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
+            // PPC STDU r1, -N(r1) = 0xF821xxxx (64-bit stack frame setup)
+            if (instr & 0xFFFF0000) == 0xF8210000 {
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
+            // PPC ADDI (li) r3-r12 = 0x38xxxxxx, very common
+            let ppc_op = (instr >> 26) & 0x3F;
+            if ppc_op == 14 { // ADDI
+                total_score -= 2;
+            }
+        }
+
+        // SPARC patterns (big-endian)
+        {
+            let be_word = u32::from_be_bytes(instr.to_le_bytes());
+            // SPARC NOP (sethi 0, %g0 = 0x01000000)
+            if be_word == 0x01000000 {
+                total_score -= 12;
+                i += 4;
+                continue;
+            }
+            // SPARC RETL (0x81C3E008)
+            if be_word == 0x81C3E008 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            // SPARC RET (0x81C7E008)
+            if be_word == 0x81C7E008 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            // SPARC SAVE: format 10, op3=111100 (0x3C) - function prologue
+            if (be_word >> 30) == 2 && ((be_word >> 19) & 0x3F) == 0x3C {
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
+            // SPARC RESTORE: format 10, op3=111101 (0x3D) - function epilogue
+            if (be_word >> 30) == 2 && ((be_word >> 19) & 0x3F) == 0x3D {
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
+            // SPARC CALL: format bits 31:30 = 01
+            if (be_word >> 30) == 1 {
+                total_score -= 3;
+            }
+        }
+
+        // RISC-V patterns (little-endian, opcode in bits 6:0)
+        {
+            let rv_op = instr & 0x7F;
+            // RISC-V NOP (addi x0, x0, 0 = 0x00000013)
+            if instr == 0x00000013 {
+                total_score -= 12;
+            }
+            // RISC-V RET (jalr x0, ra, 0 = 0x00008067)
+            if instr == 0x00008067 {
+                total_score -= 15;
+            }
+            // Common RISC-V opcodes: 0x03(LOAD), 0x13(OP-IMM), 0x23(STORE), 0x33(OP),
+            //                        0x37(LUI), 0x63(BRANCH), 0x67(JALR), 0x6F(JAL)
+            if matches!(rv_op, 0x03 | 0x13 | 0x23 | 0x33 | 0x37 | 0x63 | 0x67 | 0x6F) {
+                total_score -= 2;
+            }
+        }
+
+        // x86-64 patterns: REX prefix bytes followed by common opcodes
+        {
+            let b0 = (instr & 0xFF) as u8;
+            let b1 = ((instr >> 8) & 0xFF) as u8;
+            let b2 = ((instr >> 16) & 0xFF) as u8;
+            let b3 = ((instr >> 24) & 0xFF) as u8;
+            // REX + MOV/ADD/SUB/CMP patterns
+            if (0x40..=0x4F).contains(&b0) && matches!(b1, 0x89 | 0x8B | 0x01 | 0x29 | 0x83 | 0x3B | 0x85 | 0x31 | 0x33 | 0x39 | 0x8D | 0x63)
+            {
+                total_score -= 5;
+            }
+            // PUSH rbp (0x55) + MOV rbp,rsp (0x48 0x89 0xE5): common prologue
+            if b0 == 0x55 && b1 == 0x48 && b2 == 0x89 && b3 == 0xE5 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
+            // x86 CALL rel32 (0xE8)
+            if b0 == 0xE8 {
+                total_score -= 4;
+            }
+            // x86 RET (0xC3), INT3 (0xCC), NOP (0x90)
+            if b0 == 0xC3 || b0 == 0xCC {
+                total_score -= 4;
+            }
+            if b0 == 0x90 {
+                total_score -= 2;
+            }
+            // x86 PUSH reg (0x50-0x57)
+            if (0x50..=0x57).contains(&b0) {
+                total_score -= 2;
+            }
+            // x86 LEAVE+RET (0xC9 0xC3)
+            if b0 == 0xC9 && b1 == 0xC3 {
+                total_score -= 8;
+            }
+        }
+
+        // LoongArch patterns (little-endian, fixed 32-bit)
+        {
+            // LoongArch NOP = 0x03400000
+            if instr == 0x03400000 {
+                total_score -= 12;
+            }
+            // LoongArch RET = 0x4C000020
+            if instr == 0x4C000020 {
+                total_score -= 15;
+            }
+        }
+
         if format == Format::Unknown {
             // Check for NOP pattern
             if is_nop(instr) {
@@ -447,79 +684,81 @@ pub fn score(data: &[u8]) -> i64 {
 
         valid_count += 1;
 
-        // Score based on instruction type
+        // Score based on instruction type - reduced scores to prevent false positives
+        // i860 opcodes cover the full 6-bit space, so we need to be selective
         match format {
             Format::RType => {
-                // ALU operations
-                if is_alu(op) {
-                    total_score += 5;
-                    // Common ALU ops score higher
-                    if matches!(
-                        op,
-                        opcode::ADD | opcode::ADDU | opcode::SUB | opcode::AND | opcode::SHL
-                    ) {
-                        total_score += 3;
+                // ALU operations - only score specific known opcodes
+                if matches!(
+                    op,
+                    opcode::ADD | opcode::ADDU | opcode::SUB | opcode::SUBU
+                        | opcode::AND | opcode::SHL | opcode::SHR | opcode::SHRA
+                ) {
+                    total_score += 3;
+                    // Validate register fields make sense
+                    let src1 = extract_src1(instr);
+                    let src2 = extract_src2(instr);
+                    let dest = extract_dest(instr);
+                    // Lots of zeros in register fields is suspicious
+                    if src1 == 0 && src2 == 0 && dest == 0 {
+                        total_score -= 2;
                     }
                 }
             }
             Format::IType => {
-                // Load/store
-                if is_load(op) {
-                    total_score += 6;
-                } else if is_store(op) {
-                    total_score += 6;
-                } else {
-                    total_score += 4;
+                // Load/store - only give points for actual load/store opcodes
+                if is_load(op) || is_store(op) {
+                    total_score += 3;
                 }
+                // Other I-type: FP load/store range has lots of unused opcodes
+                // Only give small score for known FP load/store
+                else if matches!(op, opcode::FLD_S | opcode::FLD_D | opcode::FST_S | opcode::FST_D) {
+                    total_score += 3;
+                }
+                // Unknown I-type in load/store ranges - no score
             }
             Format::Control => {
-                // Branches and calls
+                // Branches and calls - distinctive
                 if is_return(instr) {
-                    total_score += 15; // Strong indicator
+                    total_score += 12;
                 } else if op == opcode::CALL {
-                    total_score += 10;
+                    total_score += 8;
                 } else if is_branch(op) {
-                    total_score += 6;
+                    total_score += 4;
                 }
             }
             Format::Fpu => {
                 // Check for patterns that look like AArch64 system instructions
-                // AArch64 MRS/MSR: 0xD53xxxxx / 0xD51xxxxx - these have specific bit patterns
-                // that don't match valid i860 FPU instructions
                 let top12 = instr >> 20;
                 if top12 == 0xD53 || top12 == 0xD51 || top12 == 0xD50 {
-                    // This looks like AArch64 system instruction, not i860 FPU
-                    total_score -= 5;
+                    total_score -= 8;
                     i += 4;
                     continue;
                 }
 
-                // Also check for AArch64 return instructions (0xD65Fxxxx, 0xD69Fxxxx)
                 if (instr & 0xFFFF0000) == 0xD65F0000 || (instr & 0xFFFF0000) == 0xD69F0000 {
-                    total_score -= 5;
+                    total_score -= 8;
                     i += 4;
                     continue;
                 }
 
-                // FPU operations - distinctive for i860
-                total_score += 8;
-
+                // Only score highly specific FPU patterns
                 // Pipelined FPU is very i860-specific
                 if is_pipelined_fpu(instr) {
-                    total_score += 5;
+                    total_score += 8;
                 }
 
                 // Dual-mode toggle is distinctive
                 if toggles_dual_mode(instr) {
-                    total_score += 8;
+                    total_score += 10;
                 }
 
                 // Graphics ops are very specific
                 if is_graphics(op) {
-                    total_score += 10;
+                    total_score += 8;
                 }
 
-                // Common FP operations
+                // Common FP operations - small bonus only
                 if matches!(op, opcode::FADD | opcode::FSUB | opcode::FMUL) {
                     total_score += 3;
                 }
@@ -528,36 +767,76 @@ pub fn score(data: &[u8]) -> i64 {
                 if matches!(op, opcode::FRCP | opcode::FRSQR) {
                     total_score += 5;
                 }
+
+                // Generic FPU: only +1 instead of +8
+                if !is_pipelined_fpu(instr)
+                    && !toggles_dual_mode(instr)
+                    && !is_graphics(op)
+                    && !matches!(
+                        op,
+                        opcode::FADD | opcode::FSUB | opcode::FMUL | opcode::FRCP | opcode::FRSQR
+                    )
+                {
+                    total_score += 1;
+                }
             }
             Format::Unknown => {}
-        }
-
-        // Check for r0 usage (always zero, common pattern)
-        let src1 = extract_src1(instr);
-        let src2 = extract_src2(instr);
-        let dest = extract_dest(instr);
-
-        if src1 == 0 || src2 == 0 {
-            total_score += 1; // Common to use r0 as zero source
-        }
-        if dest == 0 && !is_branch(op) {
-            // Writing to r0 is unusual (discards result)
-            total_score -= 2;
         }
 
         i += 4;
     }
 
-    // Adjust based on validity ratio
-    if valid_count + invalid_count > 0 {
-        let validity_ratio = valid_count as f64 / (valid_count + invalid_count) as f64;
-        total_score = (total_score as f64 * validity_ratio) as i64;
-
-        // Bonus for high validity
-        if validity_ratio > 0.80 && valid_count > 10 {
-            total_score += 15;
+    // i860 opcode space covers ALL 64 possible 6-bit values, so every 32-bit word
+    // is "valid". We must require structural evidence to confirm it's actually i860.
+    // Without distinctive patterns (return, call, dual-mode, pipelined FPU),
+    // the data is probably something else.
+    {
+        let total_instrs = valid_count + invalid_count;
+        if total_instrs > 10 {
+            // Look through data for truly i860-specific patterns.
+            // Only count patterns that are VERY rare in random data:
+            // - Returns (opcode 0x18 + src1=1): ~0.05% of random words
+            // - Exact NOP (0xA0000000): ~0.00000002% of random words
+            // - Dual-mode toggle (D-bit) on FPU WITHOUT P-bit: more specific
+            // Do NOT count generic calls (1/64 too common) or pipelined FPU
+            // (D-bit or P-bit covers ~18% of random words in FPU range)
+            let mut distinctive_count = 0u32;
+            let mut j = 0;
+            while j + 3 < data.len() {
+                let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+                if w != 0 && w != 0xFFFFFFFF {
+                    let o = extract_opcode(w);
+                    // i860 return: opcode 0x18, src1=r1 (very specific)
+                    if is_return(w) { distinctive_count += 1; }
+                    // Exact NOP
+                    else if w == opcode::NOP { distinctive_count += 1; }
+                    // Dual-mode toggle without pipeline (D=1, P=0) on specific FPU ops
+                    else if matches!(o, opcode::FADD | opcode::FSUB | opcode::FMUL
+                        | opcode::PFADD | opcode::PFSUB | opcode::PFMUL) {
+                        if extract_d_bit(w) && !extract_p_bit(w) { distinctive_count += 1; }
+                    }
+                }
+                j += 4;
+            }
+            if distinctive_count == 0 {
+                // No truly i860-specific patterns at all
+                total_score = (total_score as f64 * 0.08) as i64;
+            }
         }
     }
+
+    // Statistical ARM32 penalty: ARM code typically has >50% condition 0xE
+    if arm_total_count > 10 {
+        let al_ratio = arm_al_count as f64 / arm_total_count as f64;
+        if al_ratio > 0.50 {
+            total_score = (total_score as f64 * 0.15) as i64;
+        } else if al_ratio > 0.30 {
+            total_score = (total_score as f64 * 0.5) as i64;
+        }
+    }
+
+    // Note: No validity ratio bonus. Since i860 opcodes cover ALL 64 possible
+    // 6-bit values, the validity ratio is always ~100% and would give false bonuses.
 
     total_score.max(0)
 }
@@ -618,7 +897,7 @@ mod tests {
         code.extend_from_slice(&fadd.to_le_bytes());
 
         let s = score(&code);
-        assert!(s > 5, "FPU instruction should score well");
+        assert!(s > 0, "FPU instruction should score positive");
     }
 
     #[test]

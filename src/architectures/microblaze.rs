@@ -61,49 +61,87 @@ pub const OP_IMM: u32 = 0x2C;
 /// field in bits 26-31.
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
+    let mut branch_count = 0u32;
 
     for i in (0..data.len().saturating_sub(3)).step_by(4) {
         let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         let opcode = (word >> 26) & 0x3F;
 
+        // --- Cross-architecture penalties (BE ISAs) ---
+        // PPC
+        if word == 0x60000000 { score -= 12; continue; }  // NOP
+        if word == 0x4E800020 { score -= 15; continue; }  // BLR
+        if (word >> 26) == 18 { score -= 5; }             // B/BL
+        // SPARC
+        if word == 0x01000000 { score -= 10; continue; }  // NOP
+        if word == 0x81C7E008 { score -= 15; continue; }  // RET
+        // MIPS BE
+        if word == 0x03E00008 { score -= 12; continue; }  // JR $ra
+        // S390x
+        if (word >> 16) == 0x07FE { score -= 12; continue; }  // BR %r14
+
+        if word == 0x0000_0000 || word == 0xFFFF_FFFF {
+            score -= 5;
+            continue;
+        }
+
+        // Exact matches
         if word == MICROBLAZE_NOP {
-            score += 25; // NOP
+            score += 25;
+            continue;
         }
         if word == MICROBLAZE_RTSD_R15_8 {
-            score += 30; // RTSD r15,8
+            score += 30;
+            ret_count += 1;
+            continue;
         }
         if (word & MASK_RTSD) == PATTERN_RTSD {
-            score += 20; // RTSD with other offsets
+            score += 20;
+            ret_count += 1;
+            continue;
         }
         if (word & MASK_RTID) == PATTERN_RTID {
-            score += 15; // RTID
+            score += 15;
+            ret_count += 1;
+            continue;
         }
-        if opcode == OP_BRI || opcode == OP_BRAI {
-            score += 8; // BRI/BRAI
+
+        // Opcode-based scoring
+        let mut matched = true;
+        match opcode {
+            OP_BRI | OP_BRAI => {
+                if opcode == OP_BRI && (word & MASK_BRLID) != 0 {
+                    score += 10;
+                    call_count += 1;
+                } else {
+                    score += 8;
+                    branch_count += 1;
+                }
+            }
+            OP_ADD | OP_RSUB | OP_ADDC => score += 3,
+            OP_ADDI | OP_RSUBI => score += 3,
+            OP_AND | OP_OR | OP_XOR => score += 3,
+            OP_LW | OP_SW => score += 4,
+            OP_LWI | OP_SWI => score += 4,
+            OP_IMM => score += 5,
+            _ => { matched = false; }
         }
-        if opcode == OP_BRI && (word & MASK_BRLID) != 0 {
-            score += 10; // BRLID/BRALD
+
+        if !matched {
+            score -= 1;
         }
-        if opcode == OP_ADD || opcode == OP_RSUB || opcode == OP_ADDC {
-            score += 3; // ADD/RSUB/ADDC
-        }
-        if opcode == OP_ADDI || opcode == OP_RSUBI {
-            score += 3; // ADDI/RSUBI
-        }
-        if opcode == OP_AND || opcode == OP_OR || opcode == OP_XOR {
-            score += 3; // AND/OR/XOR
-        }
-        if opcode == OP_LW || opcode == OP_SW {
-            score += 4; // LW/SW
-        }
-        if opcode == OP_LWI || opcode == OP_SWI {
-            score += 4; // LWI/SWI
-        }
-        if opcode == OP_IMM {
-            score += 5; // IMM
-        }
-        if word == 0xFFFF_FFFF {
-            score -= 5;
+    }
+
+    // Structural requirement
+    let num_words = data.len() / 4;
+    if num_words > 20 {
+        let distinctive = ret_count + call_count;
+        if distinctive == 0 && branch_count == 0 {
+            score = (score as f64 * 0.10) as i64;
+        } else if distinctive == 0 {
+            score = (score as f64 * 0.25) as i64;
         }
     }
 

@@ -272,10 +272,41 @@ pub fn score(data: &[u8]) -> i64 {
     let mut prev_was_zero = false;
     let mut prev_instr: u32 = 0;
     let mut prev_prev_instr: u32 = 0;
+    let mut ret_count = 0u32;
+    let mut mrs_msr_count = 0u32;
+    let mut prologue_count = 0u32;
+    let mut bl_count = 0u32;
+    let mut stp_fp_lr_count = 0u32;
 
     // AArch64 instructions are 4 bytes, aligned
+    let num_words = data.len() / 4;
     for i in (0..data.len().saturating_sub(3)).step_by(4) {
         let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+
+        // --- Cross-architecture penalties for 16-bit LE ISAs ---
+        // Check both halfwords for distinctive 16-bit LE patterns
+        {
+            let hw0 = u16::from_le_bytes([data[i], data[i + 1]]);
+            let hw1 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
+            // MSP430
+            if hw0 == 0x4130 || hw1 == 0x4130 { score -= 15; continue; } // MSP430 RET
+            if hw0 == 0x4303 || hw1 == 0x4303 { score -= 10; }           // MSP430 NOP
+            if hw0 == 0x1300 || hw1 == 0x1300 { score -= 10; continue; } // MSP430 RETI
+            // AVR
+            if hw0 == 0x9508 || hw1 == 0x9508 { score -= 15; continue; } // AVR RET
+            if hw0 == 0x9518 || hw1 == 0x9518 { score -= 12; continue; } // AVR RETI
+            // Thumb
+            if hw0 == 0x4770 || hw1 == 0x4770 { score -= 12; continue; } // Thumb BX LR
+            if hw0 == 0xBF00 || hw1 == 0xBF00 { score -= 8; }            // Thumb NOP
+            // Thumb PUSH {.., LR} / POP {.., PC}
+            if (hw0 & 0xFF00) == 0xB500 || (hw1 & 0xFF00) == 0xB500 { score -= 6; }
+            if (hw0 & 0xFF00) == 0xBD00 || (hw1 & 0xFF00) == 0xBD00 { score -= 6; }
+        }
+
+        // --- Cross-architecture penalties for other 32-bit LE ISAs ---
+        // RISC-V
+        if word == 0x00008067 { score -= 15; continue; } // RISC-V RET
+        if word == 0x00000013 { score -= 10; continue; } // RISC-V NOP
 
         // Multi-instruction pattern detection (very high value - unique to AArch64)
 
@@ -285,6 +316,7 @@ pub fn score(data: &[u8]) -> i64 {
         if (prev_instr & 0xFFC003FF) == 0xA98003FD && word == 0x910003FD {
             // STP x29, x30, [sp, #-N]! followed by MOV x29, sp
             score += 80; // Boosted - very distinctive AArch64 function boundary
+            prologue_count += 1;
         }
 
         // Function epilogue: LDP x29, x30, [sp], #N followed by RET
@@ -341,32 +373,38 @@ pub fn score(data: &[u8]) -> i64 {
         // RET - very distinctive encoding
         if word == ret::RET {
             score += 40; // Boosted - specific encoding
+            ret_count += 1;
         }
 
         // RETAA (PAC return) - extremely distinctive ARMv8.3-A feature
         if word == ret::RETAA {
             score += 40;
+            ret_count += 1;
         }
 
         // RETAB
         if word == ret::RETAB {
             score += 40;
+            ret_count += 1;
         }
 
         // ERET (exception return) - highly distinctive for firmware/kernel
         if is_eret(word) {
             score += 50; // Boosted
+            ret_count += 1;
         }
 
         // MRS (read system register) - VERY distinctive for AArch64
         // Common in kernel/firmware code for accessing system control registers
         if is_mrs(word) {
             score += 50; // Boosted - this is a key AArch64 differentiator
+            mrs_msr_count += 1;
         }
 
         // MSR (write system register) - VERY distinctive for AArch64
         if is_msr(word) {
             score += 50; // Boosted - this is a key AArch64 differentiator
+            mrs_msr_count += 1;
         }
 
         // Memory barriers (DSB, DMB, ISB) - distinctive system instructions
@@ -376,12 +414,13 @@ pub fn score(data: &[u8]) -> i64 {
 
         // BL (branch with link)
         if is_bl(word) {
-            score += 15; // Boosted - very common
+            score += 8;
+            bl_count += 1;
         }
 
         // B (unconditional branch)
         if is_branch(word) && !is_bl(word) {
-            score += 12;
+            score += 5;
         }
 
         // SVC (system call)
@@ -421,12 +460,23 @@ pub fn score(data: &[u8]) -> i64 {
 
         // STP (store pair - common in prologue)
         if is_stp(word) {
-            score += 18; // Boosted - very distinctive AArch64 pattern
+            score += 10;
+            // Track STP involving x29 (FP) and x30 (LR) - very distinctive prologue marker
+            let rt = word & 0x1F;
+            let rt2 = (word >> 10) & 0x1F;
+            if rt == 29 && rt2 == 30 {
+                stp_fp_lr_count += 1;
+            }
         }
 
         // LDP (load pair - common in epilogue)
         if is_ldp(word) {
-            score += 18; // Boosted - very distinctive AArch64 pattern
+            score += 10;
+            let rt = word & 0x1F;
+            let rt2 = (word >> 10) & 0x1F;
+            if rt == 29 && rt2 == 30 {
+                stp_fp_lr_count += 1;
+            }
         }
 
         // MOV (register) via ORR - very common
@@ -434,90 +484,79 @@ pub fn score(data: &[u8]) -> i64 {
             score += 10;
         }
 
-        // ADRP (address of page) - common for PC-relative addressing
-        // This is VERY distinctive for AArch64 (4KB page aligned addresses)
+        // ADRP (address of page) - broad mask, reduce score
         if is_adrp(word) {
-            score += 25; // Boosted - unique to AArch64
+            score += 10;
         }
 
-        // ADR (address) - common for PC-relative addressing
+        // ADR (address) - broad mask
         if is_adr(word) {
-            score += 15;
+            score += 5;
         }
 
-        // Conditional branches (B.cond) - very common in code
+        // Conditional branches (B.cond)
         if is_bcond(word) {
-            score += 15;
+            score += 6;
         }
 
         // CBZ/CBNZ - compare and branch
         if is_cbz_cbnz(word) {
-            score += 10;
+            score += 5;
         }
 
         // TBZ/TBNZ - test and branch
         if is_tbz_tbnz(word) {
-            score += 10;
+            score += 5;
         }
 
         // LDR/STR immediate - common load/store patterns
         if is_ldr_str_imm(word) {
-            score += 8;
+            score += 3;
         }
 
         // CMP/CMN/TST - comparison and test instructions
         if is_compare_test(word) {
-            score += 10;
+            score += 5;
         }
 
-        // MOV wide (MOVZ/MOVK/MOVN) - very common for loading constants
+        // MOV wide (MOVZ/MOVK/MOVN)
         if is_mov_wide(word) {
-            score += 10;
+            score += 5;
         }
 
-        // BR/BLR (indirect branch) - common for function pointers, vtables
+        // BR/BLR (indirect branch) - distinctive
         if is_br_blr(word) {
-            score += 15;
+            score += 12;
         }
 
         // Bitfield operations (UBFM/SBFM/BFM encode LSL, LSR, ASR, etc.)
         if is_bitfield(word) {
-            score += 8;
+            score += 4;
         }
 
         // ADD/SUB register
         if is_add_sub_reg(word) {
-            score += 6;
+            score += 3;
         }
 
         // Logical immediate (AND/ORR/EOR with immediate)
         if is_logical_imm(word) {
-            score += 6;
+            score += 3;
         }
 
         // MADD/MSUB - multiply-add is distinctive
         if is_madd_msub(word) {
-            score += 12;
+            score += 10;
         }
 
         // CSEL/CSINC/CSINV/CSNEG - conditional select is very AArch64-specific
         if is_csel(word) {
-            score += 12;
+            score += 10;
         }
 
-        // ADD/SUB immediate (original detection)
+        // ADD/SUB immediate
         if (word >> 24) & 0x1F == 0x11 {
-            score += 5;
-        }
-
-        // Check encoding groups
-        let group = get_encoding_group(word);
-        match group {
-            EncodingGroup::DataProcessingImmediate => score += 2,
-            EncodingGroup::BranchExceptionSystem => score += 2,
-            EncodingGroup::LoadStore => score += 2,
-            EncodingGroup::DataProcessingRegister => score += 2,
-            _ => {}
+            score += 3;
         }
 
         // Handle zero words more gracefully:
@@ -538,6 +577,22 @@ pub fn score(data: &[u8]) -> i64 {
         // Heavy penalty for all-ones (very unlikely in valid code)
         if word == 0xFFFFFFFF {
             score -= 15;
+        }
+    }
+
+    // Structural requirement: for meaningful-length data, require distinctive patterns
+    // AArch64 has broad pattern matches (~20-25% of random words score), so without
+    // this check, random data from 16-bit ISAs (MSP430, AVR) accumulates high scores
+    if num_words > 20 {
+        let distinctive = ret_count + mrs_msr_count + prologue_count + stp_fp_lr_count;
+        if distinctive == 0 && bl_count == 0 {
+            score = (score as f64 * 0.15) as i64;
+        } else if distinctive == 0 && bl_count >= 3 {
+            // Multiple BL calls suggest real code even without returns/prologues
+            score = (score as f64 * 0.50) as i64;
+        } else if distinctive == 0 {
+            // Has BL calls but no returns/system regs/prologues
+            score = (score as f64 * 0.35) as i64;
         }
     }
 

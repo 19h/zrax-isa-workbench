@@ -158,88 +158,174 @@ pub fn is_nop(instr: u32) -> bool {
     instr == patterns::NOP
 }
 
-/// Score likelihood of PowerPC code.
-///
-/// Analyzes raw bytes for patterns characteristic of PowerPC.
-pub fn score(data: &[u8]) -> i64 {
+/// Score a single PPC instruction word.
+fn score_word(word: u32) -> i64 {
     let mut score: i64 = 0;
+    let op = get_opcode(word);
 
-    // PowerPC is big-endian, 4-byte aligned
+    // NOP (ori 0,0,0)
+    if is_nop(word) {
+        return 25;
+    }
+
+    // BLR (return)
+    if is_blr(word) {
+        return 30;
+    }
+
+    // BCTR
+    if word == patterns::BCTR {
+        return 20;
+    }
+
+    // SC (system call)
+    if word == patterns::SC {
+        return 20;
+    }
+
+    // TRAP
+    if word == patterns::TRAP {
+        return 15;
+    }
+
+    // MFLR r0 (save link register)
+    if word == patterns::MFLR_R0 {
+        return 25;
+    }
+
+    // MTLR r0 (restore link register)
+    if word == patterns::MTLR_R0 {
+        return 20;
+    }
+
+    // Invalid/padding
+    if word == 0x00000000 || word == 0xFFFFFFFF {
+        return -5;
+    }
+
+    // Check common opcodes
+    match op {
+        o if o == opcode::ADDI || o == opcode::ADDIS => score += 5,
+        o if o == opcode::ORI || o == opcode::ORIS => score += 3,
+        o if o == opcode::XORI || o == opcode::XORIS => score += 3,
+        o if o == opcode::ANDI_DOT || o == opcode::ANDIS_DOT => score += 3,
+        o if o == opcode::ADDIC || o == opcode::ADDIC_DOT => score += 3,
+        o if o == opcode::SUBFIC => score += 3,
+        o if o == opcode::MULLI => score += 3,
+        o if o == opcode::CMPI || o == opcode::CMPLI => score += 4,
+        o if o == opcode::BC => score += 5,
+        o if o == opcode::B => score += 5,
+        o if o == opcode::SC => score += 8,
+        o if o == opcode::XL_FORM => score += 3,
+        o if o == opcode::X_FORM => score += 3,
+        o if o == opcode::RLWINM || o == opcode::RLWIMI => score += 4, // rotate/mask - distinctive
+        o if o == opcode::RLWNM => score += 4,
+        o if o == opcode::LWZ => score += 4,
+        o if o == opcode::LWZU => score += 4,
+        o if o == opcode::LBZ => score += 4,
+        o if o == opcode::LBZU => score += 4,
+        o if o == opcode::STW => score += 4,
+        o if o == opcode::STWU => score += 5, // stwu r1,-N(r1) is PPC prologue - very common
+        o if o == opcode::STB => score += 4,
+        o if o == opcode::STBU => score += 4,
+        o if o == opcode::LHZ => score += 4,
+        o if o == opcode::LHZU => score += 4,
+        o if o == opcode::LHA => score += 4,
+        o if o == opcode::LHAU => score += 4,
+        o if o == opcode::STH => score += 4,
+        o if o == opcode::STHU => score += 4,
+        o if o == opcode::LMW => score += 4,
+        o if o == opcode::STMW => score += 4,
+        o if o == opcode::LFS => score += 3,
+        o if o == opcode::LFSU => score += 3,
+        o if o == opcode::LFD => score += 3,
+        o if o == opcode::LFDU => score += 3,
+        o if o == opcode::STFS => score += 3,
+        o if o == opcode::STFSU => score += 3,
+        o if o == opcode::STFD => score += 3,
+        o if o == opcode::STFDU => score += 3,
+        o if o == opcode::LD_STD => score += 5, // 64-bit load/store
+        o if o == opcode::STD => score += 5,     // 64-bit store
+        o if o == opcode::FP_SINGLE => score += 3,
+        o if o == opcode::FP_DOUBLE => score += 3,
+        _ => {}
+    }
+
+    score
+}
+
+/// Internal: Score PPC code from pre-decoded words, applying structural requirements.
+fn score_with_structural(data: &[u8], be: bool) -> i64 {
+    let mut score: i64 = 0;
+    let mut blr_count = 0u32;
+    let mut bl_count = 0u32;
+    let mut mflr_count = 0u32;
+    let mut nop_count = 0u32;
+
+    let num_words = data.len() / 4;
     for i in (0..data.len().saturating_sub(3)).step_by(4) {
-        let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-        let op = get_opcode(word);
+        let word = if be {
+            u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]])
+        } else {
+            u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]])
+        };
 
-        // NOP (ori 0,0,0)
-        if is_nop(word) {
-            score += 25;
+        // Cross-architecture penalties for LE ISAs (when scoring BE PPC)
+        if be {
+            let le_word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+            if le_word == 0xD65F03C0 { score -= 15; continue; } // AArch64 RET
+            if le_word == 0xD503201F { score -= 12; continue; } // AArch64 NOP
+            if le_word == 0xE12FFF1E { score -= 15; continue; } // ARM BX LR
+            if le_word == 0xE1A00000 { score -= 10; continue; } // ARM NOP
+            if le_word == 0x00008067 { score -= 12; continue; } // RISC-V RET
+            if le_word == 0x00000013 { score -= 8; continue; }  // RISC-V NOP
+        }
+        // Cross-architecture penalties for BE ISAs (when scoring LE PPC)
+        if !be {
+            let be_word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+            if be_word == 0x01000000 { score -= 10; continue; } // SPARC NOP
+            if be_word == 0x81C7E008 { score -= 15; continue; } // SPARC RET
+            if be_word == 0x81C3E008 { score -= 15; continue; } // SPARC RETL
         }
 
-        // BLR (return)
-        if is_blr(word) {
-            score += 30;
-        }
+        // Track distinctive patterns
+        if is_nop(word) { nop_count += 1; }
+        if is_blr(word) { blr_count += 1; }
+        if is_bl(word) { bl_count += 1; }
+        if word == patterns::MFLR_R0 || word == patterns::MTLR_R0 { mflr_count += 1; }
 
-        // SC (system call)
-        if word == patterns::SC {
-            score += 20;
-        }
+        score += score_word(word);
+    }
 
-        // TRAP
-        if word == patterns::TRAP {
-            score += 15;
-        }
-
-        // MFLR r0 (save link register)
-        if word == patterns::MFLR_R0 {
-            score += 25;
-        }
-
-        // MTLR r0 (restore link register)
-        if word == patterns::MTLR_R0 {
-            score += 20;
-        }
-
-        // Check common opcodes
-        match op {
-            o if o == opcode::ADDI || o == opcode::ADDIS => score += 5,
-            o if o == opcode::BC => score += 5,
-            o if o == opcode::B => score += 5,
-            o if o == opcode::XL_FORM => score += 3,
-            o if o == opcode::X_FORM => score += 3,
-            o if o == opcode::LWZ => score += 4,
-            o if o == opcode::LWZU => score += 4,
-            o if o == opcode::LBZ => score += 4,
-            o if o == opcode::LBZU => score += 4,
-            o if o == opcode::STW => score += 4,
-            o if o == opcode::STWU => score += 4,
-            o if o == opcode::STB => score += 4,
-            o if o == opcode::STBU => score += 4,
-            o if o == opcode::LHZ => score += 4,
-            o if o == opcode::LHZU => score += 4,
-            o if o == opcode::LHA => score += 4,
-            o if o == opcode::LHAU => score += 4,
-            o if o == opcode::STH => score += 4,
-            o if o == opcode::STHU => score += 4,
-            o if o == opcode::LMW => score += 4,
-            o if o == opcode::STMW => score += 4,
-            o if o == opcode::LFS => score += 3,
-            o if o == opcode::LFSU => score += 3,
-            o if o == opcode::LFD => score += 3,
-            o if o == opcode::LFDU => score += 3,
-            o if o == opcode::STFS => score += 3,
-            o if o == opcode::STFSU => score += 3,
-            o if o == opcode::STFD => score += 3,
-            o if o == opcode::STFDU => score += 3,
-            _ => {}
-        }
-
-        // Invalid
-        if word == 0x00000000 || word == 0xFFFFFFFF {
-            score -= 5;
+    // Structural requirement: PPC opcode space has many valid-looking patterns.
+    // B (opcode 18) alone covers 1/64 of the space (~1.56%), and most opcode
+    // values 0-63 have valid mappings. Require distinctive PPC patterns.
+    if num_words > 20 {
+        let distinctive = blr_count + mflr_count + nop_count;
+        if distinctive == 0 && bl_count == 0 {
+            // No PPC-distinctive patterns at all
+            score = (score as f64 * 0.15) as i64;
+        } else if blr_count == 0 && mflr_count == 0 {
+            // No returns or link register ops - suspicious
+            score = (score as f64 * 0.40) as i64;
         }
     }
 
     score.max(0)
+}
+
+/// Score likelihood of PowerPC code (big-endian).
+///
+/// Analyzes raw bytes for patterns characteristic of PowerPC.
+pub fn score(data: &[u8]) -> i64 {
+    score_with_structural(data, true)
+}
+
+/// Score likelihood of PowerPC code (little-endian).
+///
+/// PPC64 LE (Power8+) uses little-endian instruction encoding.
+pub fn score_le(data: &[u8]) -> i64 {
+    score_with_structural(data, false)
 }
 
 #[cfg(test)]

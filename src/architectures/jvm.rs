@@ -640,6 +640,59 @@ pub fn score(data: &[u8]) -> i64 {
     let mut i = 0;
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
+    let mut return_count = 0u32;
+    let mut invoke_count = 0u32;
+
+    // Cross-architecture penalties
+    // JVM bytecodes cover 78% of byte space, so almost any data looks valid.
+    // Penalize distinctive patterns from ISAs JVM commonly steals from.
+    {
+        // 32-bit BE patterns (MIPS, SPARC, PPC)
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            if be32 == 0x03E00008 { total_score -= 20; } // MIPS JR $ra
+            if (be32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; } // MIPS ADDIU $sp
+            if (be32 & 0xFFFF0000) == 0xAFBF0000 { total_score -= 10; } // MIPS SW $ra
+            if (be32 & 0xFFFF0000) == 0x8FBF0000 { total_score -= 10; } // MIPS LW $ra
+            if be32 == 0x4E800020 { total_score -= 15; } // PPC BLR
+            if be32 == 0x81C7E008 { total_score -= 15; } // SPARC RET
+            j += 4;
+        }
+        // 32-bit LE patterns (MIPS LE, RISC-V, LoongArch, AArch64)
+        j = 0;
+        while j + 3 < data.len() {
+            let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // AArch64
+            if le32 == 0xD65F03C0 { total_score -= 15; } // AArch64 RET
+            if le32 == 0xD503201F { total_score -= 10; } // AArch64 NOP
+            // LoongArch
+            if le32 == 0x4C000020 { total_score -= 12; } // LoongArch JIRL ra (RET)
+            if le32 == 0x03400000 { total_score -= 10; } // LoongArch NOP
+            // MIPS LE
+            if le32 == 0x03E00008 { total_score -= 20; } // MIPS JR $ra
+            if (le32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; } // MIPS ADDIU $sp,$sp,N
+            if (le32 & 0xFFFF0000) == 0xAFBF0000 { total_score -= 10; } // MIPS SW $ra,N($sp)
+            if (le32 & 0xFFFF0000) == 0x8FBF0000 { total_score -= 10; } // MIPS LW $ra,N($sp)
+            // RISC-V
+            if le32 == 0x00000013 { total_score -= 12; } // RISC-V NOP (addi x0,x0,0)
+            if le32 == 0x00008067 { total_score -= 15; } // RISC-V RET (jalr x0,ra,0)
+            j += 4;
+        }
+        // 16-bit LE patterns (Thumb, MSP430)
+        j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+            if hw == 0x4770 { total_score -= 12; } // Thumb BX LR
+            if hw == 0x4130 { total_score -= 12; } // MSP430 RET
+            if hw == 0xBF00 { total_score -= 6; }  // Thumb NOP
+            if hw == 0x4303 { total_score -= 6; }  // MSP430 NOP
+            if hw == 0x1300 { total_score -= 10; } // MSP430 RETI
+            if (hw & 0xFF00) == 0xB500 { total_score -= 5; } // Thumb PUSH {.., LR}
+            if (hw & 0xFF00) == 0xBD00 { total_score -= 5; } // Thumb POP {.., PC}
+            j += 2;
+        }
+    }
 
     while i < data.len() {
         let op = data[i];
@@ -664,17 +717,17 @@ pub fn score(data: &[u8]) -> i64 {
             opcode::ALOAD_0 => total_score += 5,
 
             // Common: other local loads/stores
-            opcode::ILOAD_0..=opcode::ALOAD_3 => total_score += 3,
-            opcode::ISTORE_0..=opcode::ASTORE_3 => total_score += 3,
+            opcode::ILOAD_0..=opcode::ALOAD_3 => total_score += 2,
+            opcode::ISTORE_0..=opcode::ASTORE_3 => total_score += 2,
 
             // Common: returns
-            opcode::RETURN => total_score += 8,
-            opcode::IRETURN..=opcode::ARETURN => total_score += 6,
+            opcode::RETURN => { total_score += 8; return_count += 1; }
+            opcode::IRETURN..=opcode::ARETURN => { total_score += 6; return_count += 1; }
 
             // Common: invocations
-            opcode::INVOKEVIRTUAL | opcode::INVOKESPECIAL => total_score += 7,
-            opcode::INVOKESTATIC => total_score += 6,
-            opcode::INVOKEINTERFACE => total_score += 5,
+            opcode::INVOKEVIRTUAL | opcode::INVOKESPECIAL => { total_score += 7; invoke_count += 1; }
+            opcode::INVOKESTATIC => { total_score += 6; invoke_count += 1; }
+            opcode::INVOKEINTERFACE => { total_score += 5; invoke_count += 1; }
 
             // Common: field access
             opcode::GETFIELD | opcode::PUTFIELD => total_score += 5,
@@ -709,7 +762,8 @@ pub fn score(data: &[u8]) -> i64 {
             // NOP is valid but rare
             0x00 => total_score += 1,
 
-            _ => {}
+            // Penalize unrecognized opcodes more heavily
+            _ => { total_score -= 2; }
         }
 
         i += len;
@@ -720,9 +774,21 @@ pub fn score(data: &[u8]) -> i64 {
         let validity_ratio = valid_count as f64 / (valid_count + invalid_count) as f64;
         total_score = (total_score as f64 * validity_ratio) as i64;
 
-        // Bonus for high validity
-        if validity_ratio > 0.9 && valid_count > 10 {
+        // Bonus for high validity (strict threshold)
+        if validity_ratio > 0.95 && valid_count > 20 {
             total_score += 20;
+        }
+
+        // Structural requirement: real JVM bytecode must have returns and invokes.
+        // Count these during the actual instruction walk (not raw byte scan) to avoid
+        // false positives from other ISA data containing those byte values as operands.
+        if valid_count > 20 {
+            if return_count == 0 && invoke_count == 0 {
+                total_score = (total_score as f64 * 0.15) as i64;
+            } else if return_count == 0 {
+                // Invokes but no returns - suspicious
+                total_score = (total_score as f64 * 0.40) as i64;
+            }
         }
     }
 

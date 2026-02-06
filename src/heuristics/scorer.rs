@@ -55,16 +55,24 @@ pub fn score_riscv(data: &[u8], bits: u8) -> i64 {
 /// Returns (big_endian_score, little_endian_score).
 /// Delegates to `crate::architectures::mips::score()`.
 #[inline]
-pub fn score_mips(data: &[u8]) -> (i64, i64) {
-    mips::score(data)
+pub fn score_mips(data: &[u8], is_64: bool) -> (i64, i64) {
+    mips::score(data, is_64)
 }
 
-/// Score likelihood of PowerPC code.
+/// Score likelihood of PowerPC code (big-endian).
 ///
 /// Delegates to `crate::architectures::ppc::score()`.
 #[inline]
 pub fn score_ppc(data: &[u8]) -> i64 {
     ppc::score(data)
+}
+
+/// Score likelihood of PowerPC code (little-endian).
+///
+/// Delegates to `crate::architectures::ppc::score_le()`.
+#[inline]
+pub fn score_ppc_le(data: &[u8]) -> i64 {
+    ppc::score_le(data)
 }
 
 /// Score likelihood of SPARC code.
@@ -305,7 +313,7 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, // NOP
             0x03, 0xE0, 0x00, 0x08, // JR $ra
         ];
-        let (be_score, _) = score_mips(&code_be);
+        let (be_score, _) = score_mips(&code_be, false);
         assert!(be_score > 0);
     }
 

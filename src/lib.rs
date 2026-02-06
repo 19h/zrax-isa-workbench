@@ -72,6 +72,7 @@ pub use error::{ClassifierError, Result};
 pub use formatter::{
     CandidatesFormatter, HumanFormatter, JsonFormatter, PayloadFormatter, ShortFormatter,
 };
+pub use heuristics::DetectedIsa;
 pub use types::{
     ClassificationMetadata, ClassificationResult, ClassificationSource, ClassifierOptions,
     DetectionPayload, Endianness, Extension, ExtensionCategory, ExtensionDetection,
@@ -695,6 +696,25 @@ pub fn supported_isas() -> Vec<Isa> {
         Isa::Msp430,
         Isa::Bpf,
     ]
+}
+
+/// Detect multiple ISAs in a binary file using windowed analysis.
+///
+/// This is designed for firmware images that contain code from multiple
+/// ISA families. It divides the data into windows, scores each window,
+/// and returns all ISAs that appear as dominant in multiple windows.
+///
+/// # Arguments
+///
+/// * `data` - Raw binary data (firmware image)
+/// * `window_size` - Window size in bytes (recommended: 1024 or 2048)
+///
+/// # Returns
+///
+/// Vector of detected ISAs, sorted by dominance (most windows first).
+pub fn detect_multi_isa(data: &[u8], window_size: usize) -> Vec<DetectedIsa> {
+    let options = ClassifierOptions::new();
+    heuristics::detect_multi_isa(data, &options, window_size)
 }
 
 /// Quick check if a file is likely a specific ISA.

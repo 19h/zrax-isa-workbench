@@ -31,13 +31,28 @@ pub mod opcode {
     pub const LBU: u8 = 0x24;
     pub const LHU: u8 = 0x25;
     pub const LWR: u8 = 0x26;
+    pub const LWU: u8 = 0x27; // MIPS64
     pub const SB: u8 = 0x28;
     pub const SH: u8 = 0x29;
     pub const SWL: u8 = 0x2A;
     pub const SW: u8 = 0x2B;
     pub const SWR: u8 = 0x2E;
     pub const LL: u8 = 0x30;
+    pub const LLD: u8 = 0x34; // MIPS64
+    pub const LD: u8 = 0x37;  // MIPS64
     pub const SC: u8 = 0x38;
+    pub const SCD: u8 = 0x3C; // MIPS64
+    pub const SD: u8 = 0x3F;  // MIPS64
+    pub const DADDI: u8 = 0x18;  // MIPS64
+    pub const DADDIU: u8 = 0x19; // MIPS64
+    pub const LDL: u8 = 0x1A;   // MIPS64
+    pub const LDR: u8 = 0x1B;   // MIPS64
+    pub const SDL: u8 = 0x2C;   // MIPS64
+    pub const SDR: u8 = 0x2D;   // MIPS64
+    pub const LWC1: u8 = 0x31;  // FP load single
+    pub const LDC1: u8 = 0x35;  // FP load double
+    pub const SWC1: u8 = 0x39;  // FP store single
+    pub const SDC1: u8 = 0x3D;  // FP store double
 }
 
 /// MIPS SPECIAL function codes.
@@ -143,63 +158,115 @@ pub fn is_syscall(instr: u32) -> bool {
 /// MIPS has a branch delay slot.
 pub const HAS_DELAY_SLOT: bool = true;
 
-/// Score a single MIPS word.
-fn score_word(word: u32) -> i64 {
+/// Score a single MIPS word, with optional 64-bit mode.
+fn score_word(word: u32, is_64: bool) -> i64 {
     let mut score: i64 = 0;
     let op = get_opcode(word);
 
     // NOP (sll $0, $0, 0)
     if word == patterns::NOP {
-        score += 15;
+        return 15;
     }
 
     // JR $ra (return)
     if is_ret(word) {
-        score += 30;
+        return 30;
     }
 
     // SYSCALL
     if is_syscall(word) {
-        score += 20;
-    }
-
-    // BREAK
-    if op == opcode::SPECIAL && get_funct(word) == funct::BREAK {
-        score += 15;
-    }
-
-    // Check common opcodes
-    match op {
-        o if o == opcode::SPECIAL => score += 3,
-        o if o == opcode::REGIMM => score += 3,
-        o if o == opcode::J => score += 5,
-        o if o == opcode::JAL => score += 5,
-        o if o == opcode::BEQ => score += 4,
-        o if o == opcode::BNE => score += 4,
-        o if o == opcode::BLEZ => score += 3,
-        o if o == opcode::BGTZ => score += 3,
-        o if o == opcode::ADDI => score += 3,
-        o if o == opcode::ADDIU => score += 3,
-        o if o == opcode::SLTI => score += 3,
-        o if o == opcode::SLTIU => score += 3,
-        o if o == opcode::ANDI => score += 3,
-        o if o == opcode::ORI => score += 3,
-        o if o == opcode::XORI => score += 3,
-        o if o == opcode::LUI => score += 5,
-        o if o == opcode::LB => score += 4,
-        o if o == opcode::LH => score += 4,
-        o if o == opcode::LW => score += 5,
-        o if o == opcode::LBU => score += 4,
-        o if o == opcode::LHU => score += 4,
-        o if o == opcode::SB => score += 4,
-        o if o == opcode::SH => score += 4,
-        o if o == opcode::SW => score += 5,
-        _ => {}
+        return 20;
     }
 
     // Invalid
     if word == 0xFFFFFFFF {
-        score -= 10;
+        return -10;
+    }
+
+    // SPECIAL: validate funct code
+    if op == opcode::SPECIAL {
+        let fn_code = get_funct(word);
+        if matches!(fn_code,
+            funct::SLL | funct::SRL | funct::SRA | funct::SLLV | funct::SRLV | funct::SRAV |
+            funct::JR | funct::JALR | funct::SYSCALL | funct::BREAK | funct::SYNC |
+            funct::MFHI | funct::MTHI | funct::MFLO | funct::MTLO |
+            funct::MULT | funct::MULTU | funct::DIV | funct::DIVU |
+            funct::ADD | funct::ADDU | funct::SUB | funct::SUBU |
+            funct::AND | funct::OR | funct::XOR | funct::NOR |
+            funct::SLT | funct::SLTU |
+            0x14 | 0x16 | 0x17 | // DSLLV, DSRLV, DSRAV (MIPS64)
+            0x1C | 0x1D | 0x1E | 0x1F | // DMULT, DMULTU, DDIV, DDIVU (MIPS64)
+            0x2C | 0x2D | 0x2E | 0x2F | // DADD, DADDU, DSUB, DSUBU (MIPS64)
+            0x38 | 0x3A | 0x3B | 0x3C | 0x3E | 0x3F // DSLL, DSRL, DSRA, DSLL32, DSRL32, DSRA32
+        ) {
+            score += 4;
+            // Extra for BREAK
+            if fn_code == funct::BREAK { score += 8; }
+        } else {
+            // Unknown SPECIAL funct
+            score -= 1;
+        }
+        return score;
+    }
+
+    // Check common opcodes
+    match op {
+        o if o == opcode::REGIMM => score += 4,
+        o if o == opcode::J => score += 6,
+        o if o == opcode::JAL => score += 6,
+        o if o == opcode::BEQ => score += 5,
+        o if o == opcode::BNE => score += 5,
+        o if o == opcode::BLEZ => score += 4,
+        o if o == opcode::BGTZ => score += 4,
+        o if o == opcode::ADDI => score += 4,
+        o if o == opcode::ADDIU => score += 4,
+        o if o == opcode::SLTI => score += 4,
+        o if o == opcode::SLTIU => score += 4,
+        o if o == opcode::ANDI => score += 4,
+        o if o == opcode::ORI => score += 4,
+        o if o == opcode::XORI => score += 4,
+        o if o == opcode::LUI => score += 6,
+        o if o == opcode::COP0 => score += 3,
+        o if o == opcode::COP1 => score += 4,
+        o if o == opcode::COP2 => score += 3,
+        o if o == opcode::COP1X => score += 3,
+        o if o == opcode::SPECIAL2 => score += 3,
+        o if o == opcode::SPECIAL3 => score += 3,
+        o if o == opcode::LB => score += 5,
+        o if o == opcode::LH => score += 5,
+        o if o == opcode::LW => score += 5,
+        o if o == opcode::LBU => score += 5,
+        o if o == opcode::LHU => score += 5,
+        o if o == opcode::LWL => score += 4,
+        o if o == opcode::LWR => score += 4,
+        o if o == opcode::SB => score += 5,
+        o if o == opcode::SH => score += 5,
+        o if o == opcode::SW => score += 5,
+        o if o == opcode::SWL => score += 4,
+        o if o == opcode::SWR => score += 4,
+        o if o == opcode::LL => score += 4,
+        o if o == opcode::SC => score += 4,
+        // FP load/store
+        o if o == opcode::LWC1 => score += 4,
+        o if o == opcode::LDC1 => score += 4,
+        o if o == opcode::SWC1 => score += 4,
+        o if o == opcode::SDC1 => score += 4,
+        // MIPS64-specific opcodes
+        o if o == opcode::LWU => { if is_64 { score += 6; } else { score += 2; } }
+        o if o == opcode::LD => { if is_64 { score += 7; } else { score += 1; } }
+        o if o == opcode::SD => { if is_64 { score += 7; } else { score += 1; } }
+        o if o == opcode::LLD => { if is_64 { score += 5; } }
+        o if o == opcode::SCD => { if is_64 { score += 5; } }
+        o if o == opcode::DADDI => { if is_64 { score += 5; } else { score += 1; } }
+        o if o == opcode::DADDIU => { if is_64 { score += 6; } else { score += 1; } }
+        o if o == opcode::LDL => { if is_64 { score += 5; } }
+        o if o == opcode::LDR => { if is_64 { score += 5; } }
+        o if o == opcode::SDL => { if is_64 { score += 4; } }
+        o if o == opcode::SDR => { if is_64 { score += 4; } }
+        _ => {
+            // Unknown primary opcode - penalty
+            score -= 2;
+        }
     }
 
     score
@@ -208,15 +275,39 @@ fn score_word(word: u32) -> i64 {
 /// Score likelihood of MIPS code.
 ///
 /// Returns (big_endian_score, little_endian_score)
-pub fn score(data: &[u8]) -> (i64, i64) {
+pub fn score(data: &[u8], is_64: bool) -> (i64, i64) {
     let mut score_be: i64 = 0;
     let mut score_le: i64 = 0;
     let mut zero_run = 0u32;
     let mut last_word = 0u32;
     let mut repeat_count = 0u32;
+    let mut distinctive_be = 0u32;
+    let mut distinctive_le = 0u32;
+
+    // Cross-architecture penalties for 16-bit LE ISA patterns
+    // MIPS is 32-bit; when reading 16-bit ISA data as 32-bit words, halfword patterns
+    // from MSP430/AVR/Thumb should reduce confidence
+    {
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+            // MSP430 - penalize both BE and LE since the data could be either
+            if hw == 0x4130 { score_be -= 12; score_le -= 12; } // MSP430 RET
+            if hw == 0x4303 { score_be -= 6; score_le -= 6; }   // MSP430 NOP
+            if hw == 0x1300 { score_be -= 8; score_le -= 8; }   // MSP430 RETI
+            // AVR
+            if hw == 0x9508 { score_be -= 10; score_le -= 10; } // AVR RET
+            if hw == 0x9518 { score_be -= 8; score_le -= 8; }   // AVR RETI
+            // Thumb
+            if hw == 0x4770 { score_be -= 10; score_le -= 10; } // Thumb BX LR
+            j += 2;
+        }
+    }
 
     // MIPS instructions are 4 bytes, aligned
-    for i in (0..data.len().saturating_sub(3)).step_by(4) {
+    let num_words = data.len() / 4;
+    for idx in 0..num_words {
+        let i = idx * 4;
         // Big-endian
         let word_be = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         // Little-endian
@@ -226,11 +317,9 @@ pub fn score(data: &[u8]) -> (i64, i64) {
         if word_be == 0x00000000 {
             zero_run += 1;
             if zero_run <= 2 {
-                // First few NOPs are OK
                 score_be += 10;
                 score_le += 10;
             } else if zero_run > 4 {
-                // Long runs are likely padding, penalize
                 score_be -= 3;
                 score_le -= 3;
             }
@@ -243,7 +332,6 @@ pub fn score(data: &[u8]) -> (i64, i64) {
         if word_be == last_word {
             repeat_count += 1;
             if repeat_count > 4 {
-                // Likely padding, not code - skip
                 continue;
             }
         } else {
@@ -251,8 +339,180 @@ pub fn score(data: &[u8]) -> (i64, i64) {
         }
         last_word = word_be;
 
-        score_be += score_word(word_be);
-        score_le += score_word(word_le);
+        // Track distinctive MIPS patterns using compound register checks.
+        // Simple opcode checks (J/JAL/REGIMM) produce false positives from MSP430
+        // data because MSP430 register-direct ops targeting R0-R3 produce bytes
+        // 0x00-0x03 in the low byte. Instead, check for patterns requiring BOTH
+        // specific opcodes AND specific register fields (probability ~1/65536 per
+        // word for random data, vs near-certain for real MIPS code).
+        {
+            // Check for distinctive MIPS patterns in BE direction
+            let upper_be = (word_be >> 16) as u16;
+            if word_be == patterns::JR_RA          // JR $ra (exact match)
+                || word_be == patterns::SYSCALL     // SYSCALL
+                || word_be == patterns::BREAK       // BREAK
+                || upper_be == 0x27BD               // ADDIU $sp, $sp, N (stack frame)
+                || upper_be == 0xAFBF               // SW $ra, N($sp) (save return addr)
+                || upper_be == 0x8FBF               // LW $ra, N($sp) (restore return addr)
+                || upper_be == 0x67BD               // DADDIU $sp, $sp, N (MIPS64)
+                || upper_be == 0xFFBF               // SD $ra, N($sp) (MIPS64)
+                || upper_be == 0xDFBF               // LD $ra, N($sp) (MIPS64)
+            { distinctive_be += 1; }
+
+            // Check for distinctive MIPS patterns in LE direction
+            let upper_le = (word_le >> 16) as u16;
+            if word_le == patterns::JR_RA
+                || word_le == patterns::SYSCALL
+                || word_le == patterns::BREAK
+                || upper_le == 0x27BD
+                || upper_le == 0xAFBF
+                || upper_le == 0x8FBF
+                || upper_le == 0x67BD
+                || upper_le == 0xFFBF
+                || upper_le == 0xDFBF
+            { distinctive_le += 1; }
+        }
+
+        // Cross-architecture penalties
+
+        // ARM32 patterns (LE data) - ARM cond field 0xE in bits 31:28
+        // When read as MIPS LE, ARM condition is in the upper nibble
+        {
+            let arm_le = word_le; // ARM is LE, same as MIPS LE
+            let arm_cond = (arm_le >> 28) & 0xF;
+            if arm_cond == 0xE {
+                // ARM condition "always" - check for common ARM opcodes
+                let arm_type = (arm_le >> 25) & 0x7;
+                match arm_type {
+                    0b000 | 0b001 => score_le -= 4, // Data processing
+                    0b010 | 0b011 => score_le -= 4, // Load/Store
+                    0b100 => score_le -= 5,         // Block transfer (PUSH/POP)
+                    0b101 => score_le -= 5,         // Branch (BL)
+                    _ => score_le -= 2,
+                }
+            }
+            // ARM NOP (0xE1A00000)
+            if arm_le == 0xE1A00000 || arm_le == 0xE320F000 {
+                score_le -= 10;
+            }
+            // ARM BX LR (0xE12FFF1E)
+            if arm_le == 0xE12FFF1E {
+                score_le -= 15;
+            }
+
+            // For BE: ARM data byte-reversed looks like ARM
+            let arm_be = word_be; // When reading ARM (LE) as BE, bytes are swapped
+            // ARM stored LE: [b0, b1, b2, b3], BE reads: b0<<24|b1<<16|b2<<8|b3
+            // So we need to swap to get the ARM word: word_le = word_be.swap_bytes()
+            let arm_from_be = word_be.swap_bytes();
+            let arm_cond_be = (arm_from_be >> 28) & 0xF;
+            if arm_cond_be == 0xE {
+                let arm_type = (arm_from_be >> 25) & 0x7;
+                match arm_type {
+                    0b000 | 0b001 => score_be -= 4,
+                    0b010 | 0b011 => score_be -= 4,
+                    0b100 => score_be -= 5,
+                    0b101 => score_be -= 5,
+                    _ => score_be -= 2,
+                }
+            }
+            if arm_from_be == 0xE1A00000 || arm_from_be == 0xE320F000 {
+                score_be -= 10;
+            }
+            if arm_from_be == 0xE12FFF1E {
+                score_be -= 15;
+            }
+        }
+
+        // SPARC patterns (BE) - penalize BE score
+        if word_be == 0x01000000 { score_be -= 10; } // SPARC NOP
+        else if word_be == 0x81C3E008 { score_be -= 15; } // SPARC RETL
+        else if word_be == 0x81C7E008 { score_be -= 15; } // SPARC RET
+        else {
+            let sparc_fmt = (word_be >> 30) & 0x03;
+            if sparc_fmt == 2 {
+                let op3 = ((word_be >> 19) & 0x3F) as u8;
+                if op3 == 0x3C || op3 == 0x3D { score_be -= 5; } // SPARC SAVE/RESTORE
+            }
+        }
+
+        // PPC patterns (BE) - penalize BE score
+        if word_be == 0x60000000 { score_be -= 10; } // PPC NOP
+        else if word_be == 0x4E800020 { score_be -= 15; } // PPC BLR
+        else if word_be == 0x7C0802A6 { score_be -= 12; } // PPC MFLR
+
+        // RISC-V patterns (LE) - penalize LE score
+        if word_le == 0x00000013 { score_le -= 10; } // RISC-V NOP
+        else if word_le == 0x00008067 { score_le -= 15; } // RISC-V RET
+
+        // s390x patterns (BE) - s390x starts with specific byte patterns
+        {
+            // s390x RR instructions (2-byte, len=00): 0x07FE (BCR 15,rn = return)
+            if (word_be >> 16) == 0x07FE { score_be -= 12; }
+            // s390x BASR (0x0D)
+            let b0 = (word_be >> 24) as u8;
+            if b0 == 0x0D { score_be -= 3; }
+            // s390x BALR (0x05)
+            if b0 == 0x05 { score_be -= 3; }
+            // s390x STM/LM (0x90, 0x98) - very common prologue/epilogue
+            if b0 == 0x90 || b0 == 0x98 { score_be -= 4; }
+            // s390x STMG/LMG (0xEB) - 6-byte instruction, very common in 64-bit
+            if b0 == 0xEB { score_be -= 3; }
+            // s390x LARL (0xC0 0x00) - very common
+            if (word_be >> 16) == 0xC000 { score_be -= 5; }
+        }
+
+        // MSP430 patterns (LE 16-bit) - detect MSP430 halfwords in the data
+        {
+            let hw0 = (word_le & 0xFFFF) as u16;
+            let hw1 = (word_le >> 16) as u16;
+
+            // MSP430 RET (0x4130) - strong indicator
+            if hw0 == 0x4130 || hw1 == 0x4130 { score_le -= 12; }
+            // MSP430 NOP (0x4303)
+            if hw0 == 0x4303 || hw1 == 0x4303 { score_le -= 8; }
+            // MSP430 RETI (0x1300)
+            if hw0 == 0x1300 || hw1 == 0x1300 { score_le -= 8; }
+            // MSP430 jump format: bits 15:13 = 001
+            if (hw0 & 0xE000) == 0x2000 || (hw1 & 0xE000) == 0x2000 {
+                score_le -= 2;
+            }
+            // MSP430 CALL format (0x12xx)
+            if (hw0 & 0xFF80) == 0x1280 || (hw1 & 0xFF80) == 0x1280 {
+                score_le -= 5;
+            }
+            // Also penalize BE for MSP430 patterns (less common but possible)
+            if hw0 == 0x4130 || hw1 == 0x4130 { score_be -= 6; }
+        }
+
+        // LoongArch patterns (LE 32-bit)
+        {
+            // LoongArch NOP = 0x03400000
+            if word_le == 0x03400000 { score_le -= 12; }
+            // LoongArch RET = 0x4C000020
+            if word_le == 0x4C000020 { score_le -= 15; }
+            // LoongArch JIRL base (0x4C000000) - common branch instruction
+            if (word_le & 0xFC000000) == 0x4C000000 { score_le -= 3; }
+            // LoongArch BL (0x54000000)
+            if (word_le & 0xFC000000) == 0x54000000 { score_le -= 3; }
+            // LoongArch B (0x50000000)
+            if (word_le & 0xFC000000) == 0x50000000 { score_le -= 3; }
+        }
+
+        score_be += score_word(word_be, is_64);
+        score_le += score_word(word_le, is_64);
+    }
+
+    // Structural requirement: MIPS code should contain distinctive patterns
+    // like JR $ra, SYSCALL, LUI, or JAL. Without these, the data is likely
+    // from a 16-bit ISA (MSP430, AVR) that happens to map to valid MIPS opcodes.
+    if num_words > 20 {
+        if distinctive_be == 0 {
+            score_be = (score_be as f64 * 0.15) as i64;
+        }
+        if distinctive_le == 0 {
+            score_le = (score_le as f64 * 0.15) as i64;
+        }
     }
 
     (score_be.max(0), score_le.max(0))
@@ -283,7 +543,7 @@ mod tests {
     fn test_score() {
         // MIPS NOP (big-endian)
         let nop = patterns::NOP.to_be_bytes();
-        let (be, _le) = score(&nop);
+        let (be, _le) = score(&nop, false);
         assert!(be > 0);
     }
 }

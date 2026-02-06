@@ -110,97 +110,214 @@ pub fn is_epilogue(data: &[u8]) -> bool {
 pub fn score(data: &[u8], bits: u8) -> i64 {
     let mut score: i64 = 0;
     let is_64 = bits == 64;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
+    let mut prologue_count = 0u32;
 
     let mut i = 0;
     while i < data.len() {
         let b = data[i];
 
-        // Single-byte patterns using architecture constants
-        match b {
-            b if b == opcodes::NOP => score += 5,
-            b if b == opcodes::RET => score += 10,
-            b if b == opcodes::INT3 => score += 8,
-            b if b == opcodes::PUSH_EBP => score += 10,
-            b if b == opcodes::CALL_REL32 => score += 8,
-            b if b == opcodes::JMP_REL32 => score += 5,
-            b if b == opcodes::JMP_REL8 => score += 3,
-            0x8D => score += 3,        // LEA
-            0xB8..=0xBF => score += 2, // MOV immediate
-            0x70..=0x7F => score += 3, // Conditional jumps
-            _ => {}
+        // Check for prologue patterns (high confidence)
+        if i + 3 < data.len() && is_prologue(&data[i..]) {
+            score += 25;
+            prologue_count += 1;
+            i += 3;
+            continue;
         }
 
-        // REX prefix (64-bit indicator)
-        if is_64 && (opcodes::REX_BASE..=opcodes::REX_MAX).contains(&b) {
-            score += 8;
-        }
-
-        // Legacy prefixes (not great for 64-bit code but common)
-        if !is_64 && b == 0x66 {
-            score += 2;
-        }
-
-        // Two-byte patterns
+        // Two-byte patterns (check before single-byte to avoid double-scoring)
         if i + 1 < data.len() {
             let next = data[i + 1];
 
             // SYSCALL (64-bit)
             if [b, next] == opcodes::SYSCALL {
-                if is_64 {
-                    score += 20;
-                } else {
-                    score -= 10;
-                }
+                if is_64 { score += 20; } else { score -= 10; }
+                i += 2;
+                continue;
             }
             // INT 0x80 (32-bit syscall)
-            else if b == opcodes::INT && next == 0x80 {
-                if is_64 {
-                    score -= 10;
-                } else {
-                    score += 20;
-                }
+            if b == opcodes::INT && next == 0x80 {
+                if is_64 { score -= 10; } else { score += 20; }
+                i += 2;
+                continue;
             }
             // UD2 (undefined instruction, often used as trap)
-            else if [b, next] == opcodes::UD2 {
+            if [b, next] == opcodes::UD2 {
                 score += 5;
+                i += 2;
+                continue;
             }
             // Multi-byte NOP (0F 1F)
-            else if b == opcodes::TWO_BYTE && next == 0x1F {
+            if b == opcodes::TWO_BYTE && next == 0x1F {
                 score += 8;
+                i += 2;
+                continue;
             }
-            // MOV r/m, r (common)
-            else if matches!(b, 0x89 | 0x8B) {
-                score += 2;
+
+            // REX prefix: only score when followed by a valid opcode
+            if is_64 && (opcodes::REX_BASE..=opcodes::REX_MAX).contains(&b) {
+                // REX + common opcodes (MOV, ADD, SUB, CMP, LEA, TEST, PUSH, POP, CALL)
+                if matches!(next, 0x89 | 0x8B | 0x01 | 0x03 | 0x29 | 0x2B | 0x39 | 0x3B
+                    | 0x83 | 0x8D | 0x85 | 0x50..=0x5F | 0x63 | 0xFF
+                    | 0x0F | 0x31 | 0x33 | 0x21 | 0x23 | 0xC1 | 0xD3 | 0xF7
+                    | 0xC7 | 0xB8..=0xBF) {
+                    score += 6;
+                    i += 2;
+                    continue;
+                }
+                // REX without valid following opcode - no bonus
+                i += 1;
+                continue;
             }
+
+            // VEX2 prefix - validate structure
+            if b == opcodes::VEX2 && i + 2 < data.len() {
+                let vex_byte = next;
+                // VEX2: bit 7 = inverted R, bits 6:3 = vvvv, bit 2 = L, bits 1:0 = pp
+                let pp = vex_byte & 0x03;
+                if pp <= 2 {
+                    // Valid pp values (0=none, 1=66, 2=F3, but not 3 usually)
+                    score += 10;
+                    i += 3;
+                    continue;
+                }
+            }
+
+            // VEX3 prefix - validate structure
+            if b == opcodes::VEX3 && i + 3 < data.len() {
+                let vex_b1 = next;
+                let mmmmm = vex_b1 & 0x1F;
+                // Valid map select: 1=0F, 2=0F38, 3=0F3A
+                if matches!(mmmmm, 1 | 2 | 3) {
+                    score += 10;
+                    i += 4;
+                    continue;
+                }
+            }
+
+            // EVEX prefix - validate structure
+            if b == opcodes::EVEX && i + 4 < data.len() {
+                let p0 = next;
+                // EVEX P0: bits 1:0 must be 0 (reserved)
+                if (p0 & 0x03) == 0 {
+                    // Check P0 map select (bits 1:0 of mmm field, which is bits 3:1 after shifting)
+                    let mmm = (p0 >> 0) & 0x07; // Actually it's more complex, but basic check
+                    if mmm <= 3 {
+                        score += 15;
+                        i += 5;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Single-byte patterns
+        match b {
+            b if b == opcodes::NOP => score += 5,
+            b if b == opcodes::RET => { score += 10; ret_count += 1; }
+            b if b == opcodes::RET_IMM => {
+                if i + 2 < data.len() {
+                    score += 8;
+                    i += 3; // opcode + 2-byte imm
+                    continue;
+                }
+            }
+            b if b == opcodes::INT3 => score += 8,
+            b if b == opcodes::PUSH_EBP => {
+                // push ebp/rbp - common prologue start
+                score += 5;
+            }
+            b if b == opcodes::POP_EBP => {
+                // pop ebp/rbp - common epilogue
+                score += 3;
+            }
+            b if b == opcodes::CALL_REL32 => {
+                // CALL rel32 - validate we have enough bytes
+                if i + 4 < data.len() {
+                    score += 6;
+                    call_count += 1;
+                    i += 5; // skip opcode + 4-byte offset
+                    continue;
+                }
+            }
+            b if b == opcodes::JMP_REL32 => {
+                if i + 4 < data.len() {
+                    score += 4;
+                    i += 5;
+                    continue;
+                }
+            }
+            b if b == opcodes::JMP_REL8 => score += 2,
+            b if b == opcodes::LEAVE => score += 5,
+            0x8D => score += 3, // LEA
+            0x70..=0x7F => score += 2, // Conditional jumps (Jcc rel8)
+            // MOV r/m, r or MOV r, r/m (very common)
+            0x89 | 0x8B => score += 3,
             // TEST r/m, r
-            else if matches!(b, 0x85 | 0x84) {
-                score += 2;
+            0x85 | 0x84 => score += 3,
+            // CMP r/m, r or imm
+            0x39 | 0x3B | 0x3C | 0x3D => score += 2,
+            // ADD r/m, r or r, r/m
+            0x01 | 0x03 => score += 2,
+            // SUB r/m, r or r, r/m
+            0x29 | 0x2B => score += 2,
+            // XOR r/m, r (common for zeroing registers)
+            0x31 | 0x33 => score += 2,
+            // PUSH/POP registers (50-5F)
+            0x50..=0x57 => score += 3,
+            0x58..=0x5F => score += 3,
+            // MOV immediate to register (B0-BF)
+            0xB0..=0xBF => score += 2,
+            // SUB/ADD r/m, imm8 (83 xx) - very common
+            0x83 if i + 2 < data.len() => {
+                let modrm = data[i + 1];
+                let reg = (modrm >> 3) & 0x07;
+                // ADD=0, SUB=5, CMP=7, AND=4, OR=1, XOR=6 are all common
+                if matches!(reg, 0 | 1 | 4 | 5 | 6 | 7) {
+                    score += 4;
+                    i += 3;
+                    continue;
+                }
             }
-            // CMP r/m, r
-            else if matches!(b, 0x39 | 0x3B) {
-                score += 2;
+            // 0F xx two-byte opcodes (MOVZX, MOVSX, Jcc rel32, etc.)
+            0x0F if i + 1 < data.len() => {
+                let next = data[i + 1];
+                match next {
+                    0xB6 | 0xB7 | 0xBE | 0xBF => { score += 4; i += 2; continue; } // MOVZX/MOVSX
+                    0x80..=0x8F => { score += 4; i += 6; continue; } // Jcc rel32
+                    0xAF => { score += 3; i += 2; continue; } // IMUL r, r/m
+                    0x84 | 0x85 => { score += 3; i += 6; continue; } // JE/JNE rel32
+                    _ => { score += 1; }
+                }
             }
-        }
-
-        // VEX prefix (AVX)
-        if b == opcodes::VEX2 && i + 2 < data.len() {
-            score += 15;
-        }
-        if b == opcodes::VEX3 && i + 3 < data.len() {
-            score += 15;
-        }
-
-        // EVEX prefix (AVX-512)
-        if b == opcodes::EVEX && i + 4 < data.len() {
-            score += 20;
-        }
-
-        // Check for prologue patterns
-        if i + 3 < data.len() && is_prologue(&data[i..]) {
-            score += 25;
+            // Operand size prefix (common in 32-bit code)
+            0x66 if !is_64 => score += 2,
+            // Address size prefix
+            0x67 => score += 1,
+            // LOCK prefix
+            0xF0 => score += 2,
+            // REP/REPNE prefix
+            0xF2 | 0xF3 => score += 2,
+            _ => {}
         }
 
         i += 1;
+    }
+
+    // Structural requirement: x86 is a byte-level ISA where most byte values
+    // match some opcode or prefix. Real x86 code must contain distinctive
+    // structural patterns like RET (0xC3), CALL (0xE8), or function prologues.
+    // Without these, the data is likely from a 16-bit ISA (AVR, MSP430)
+    // whose instruction bytes happen to match x86 patterns.
+    if data.len() > 64 {
+        let distinctive = ret_count + call_count + prologue_count;
+        if distinctive == 0 {
+            score = (score as f64 * 0.15) as i64;
+        } else if ret_count == 0 && prologue_count == 0 {
+            // Calls but no returns or prologues
+            score = (score as f64 * 0.40) as i64;
+        }
     }
 
     score.max(0)

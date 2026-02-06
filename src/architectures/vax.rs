@@ -510,6 +510,56 @@ pub fn score(data: &[u8]) -> i64 {
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
     let mut halt_run: u32 = 0;
+    let mut ret_count = 0u32;
+    let mut branch_count = 0u32;
+    let mut vax_specific_count = 0u32; // truly VAX-unique patterns
+
+    // Cross-architecture penalties for 16-bit LE ISA patterns
+    {
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+            // MSP430
+            if hw == 0x4130 { total_score -= 15; } // MSP430 RET
+            if hw == 0x4303 { total_score -= 8; }  // MSP430 NOP
+            if hw == 0x1300 { total_score -= 10; } // MSP430 RETI
+            // MSP430 MOV instructions (0x4xxx with common src/dst modes)
+            if (hw & 0xF000) == 0x4000 { total_score -= 1; }
+            // AVR
+            if hw == 0x9508 { total_score -= 12; } // AVR RET
+            if hw == 0x9518 { total_score -= 10; } // AVR RETI
+            // Thumb
+            if hw == 0x4770 { total_score -= 10; } // Thumb BX LR
+            j += 2;
+        }
+    }
+
+    // Pre-scan: detect x86 code signatures to avoid false VAX-specific matches.
+    // VAX opcodes 0xF2 (AOBLSS), 0xF4 (SOBGEQ), 0xF5 (SOBGTR), 0xFD (ESCAPE_FD)
+    // are also x86 prefixes/opcodes (REPNE, HLT, CMC, STD).
+    let mut x86_evidence = 0u32;
+    {
+        let mut j = 0;
+        while j < data.len() {
+            let b = data[j];
+            // x86 prologue: PUSH EBP (0x55) + MOV EBP,ESP (0x89 0xE5)
+            if b == 0x55 && j + 2 < data.len() && data[j + 1] == 0x89 && data[j + 2] == 0xE5 {
+                x86_evidence += 3;
+            }
+            // x86-64 REX.W + common opcode
+            if b == 0x48 && j + 1 < data.len() && matches!(data[j + 1], 0x89 | 0x8B | 0x83 | 0x8D | 0x85 | 0xC7) {
+                x86_evidence += 2;
+            }
+            // x86 CALL rel32 (0xE8) followed by 4 bytes
+            if b == 0xE8 && j + 4 < data.len() { x86_evidence += 1; }
+            // x86 RET (0xC3)
+            if b == 0xC3 { x86_evidence += 1; }
+            // x86 NOP (0x90)
+            if b == 0x90 { x86_evidence += 1; }
+            j += 1;
+        }
+    }
+    let likely_x86 = x86_evidence >= 8;
 
     while i < data.len() {
         let op = data[i];
@@ -531,11 +581,9 @@ pub fn score(data: &[u8]) -> i64 {
         if op == opcode::HALT {
             halt_run += 1;
             if halt_run <= 1 {
-                // Single HALT is plausible
-                total_score += 3;
+                total_score += 2;
             } else if halt_run > 4 {
-                // Many HALTs in a row is suspicious - likely padding
-                total_score -= 1;
+                total_score -= 2;
             }
             i += len;
             continue;
@@ -544,60 +592,142 @@ pub fn score(data: &[u8]) -> i64 {
         }
 
         // Score based on instruction type
+        // VAX opcodes cover the entire byte range, so we must be very selective
+        // to avoid false positives. Only truly distinctive patterns get high scores.
         match op {
-            // Very strong indicators
-            opcode::RET | opcode::RSB => total_score += 15,
-            opcode::NOP => total_score += 8,
-            opcode::HALT => unreachable!(), // Handled above
+            // Returns: common byte values (0x04, 0x05) so keep score low
+            // to avoid false positives from arbitrary binary data.
+            // Validate operand specifier follows: RET/RSB have no operands,
+            // so the NEXT byte should also look like a valid opcode.
+            opcode::RET | opcode::RSB => {
+                ret_count += 1;
+                // Only give high score if next byte is also a plausible opcode
+                if i + 1 < data.len() {
+                    let next = data[i + 1];
+                    if next <= 0x1F || matches!(next, 0x04 | 0x05 | 0xD0 | 0xD4 | 0xD5 | 0xDD | 0xC0..=0xC7) {
+                        total_score += 6; // Plausible instruction follows
+                    } else {
+                        total_score += 2;
+                    }
+                } else {
+                    total_score += 2;
+                }
+            }
+            opcode::NOP => total_score += 2,
+            opcode::HALT => unreachable!(),
 
-            // Common branches
-            opcode::BNEQ | opcode::BEQL => total_score += 8,
-            opcode::BGTR | opcode::BLEQ | opcode::BGEQ | opcode::BLSS => total_score += 6,
-            opcode::BRB | opcode::BRW => total_score += 5,
-            opcode::JSB | opcode::BSBB | opcode::BSBW => total_score += 7,
+            // Branches: 0x10-0x1F appear ~6.25% in random data
+            // Validate displacement is small and non-zero (typical for real branches)
+            opcode::BNEQ | opcode::BEQL => {
+                if i + 1 < data.len() {
+                    let disp = data[i + 1] as i8;
+                    if disp != 0 && disp.unsigned_abs() < 64 {
+                        total_score += 3; branch_count += 1;
+                    } else if disp != 0 {
+                        total_score += 1; branch_count += 1;
+                    }
+                }
+            }
+            opcode::BGTR | opcode::BLEQ | opcode::BGEQ | opcode::BLSS |
+            opcode::BGTRU | opcode::BLEQU | opcode::BVC | opcode::BVS |
+            opcode::BCC | opcode::BCS => {
+                if i + 1 < data.len() {
+                    let disp = data[i + 1] as i8;
+                    if disp != 0 && disp.unsigned_abs() < 64 {
+                        total_score += 2; branch_count += 1;
+                    } else if disp != 0 {
+                        total_score += 1; branch_count += 1;
+                    }
+                }
+            }
+            opcode::BRB | opcode::BRW => {
+                total_score += 1; branch_count += 1;
+            }
+            opcode::JSB | opcode::BSBB | opcode::BSBW => {
+                total_score += 2; branch_count += 1;
+            }
 
-            // Common data movement
-            opcode::MOVL => total_score += 8,
-            opcode::MOVB | opcode::MOVW => total_score += 6,
-            opcode::PUSHL => total_score += 7,
+            // Data movement with operand validation
+            opcode::MOVL | opcode::MOVB | opcode::MOVW => {
+                if i + 1 < data.len() {
+                    let spec = data[i + 1];
+                    let mode = spec >> 4;
+                    // Register/register-deferred modes are most common in real code
+                    if matches!(mode, 0x5 | 0x6) {
+                        total_score += 4;
+                    } else {
+                        total_score += 1;
+                    }
+                }
+            }
+            opcode::PUSHL => total_score += 2,
 
-            // Common ALU
-            opcode::ADDL2 | opcode::ADDL3 => total_score += 6,
-            opcode::SUBL2 | opcode::SUBL3 => total_score += 6,
-            opcode::CMPL => total_score += 7,
+            // Longword ALU
+            opcode::ADDL2 | opcode::ADDL3 | opcode::SUBL2 | opcode::SUBL3 |
+            opcode::MULL2 | opcode::MULL3 | opcode::DIVL2 | opcode::DIVL3 => total_score += 1,
+            opcode::CMPL => total_score += 1,
 
-            // Test operations
-            opcode::TSTL | opcode::TSTB | opcode::TSTW => total_score += 5,
+            // Byte/word ALU - minimal scores
+            opcode::ADDB2 | opcode::ADDB3 | opcode::SUBB2 | opcode::SUBB3 |
+            opcode::MULB2 | opcode::MULB3 | opcode::DIVB2 | opcode::DIVB3 |
+            opcode::BISB2 | opcode::BISB3 | opcode::BICB2 | opcode::BICB3 |
+            opcode::XORB2 | opcode::XORB3 | opcode::MNEGB | opcode::CASEB |
+            opcode::MCOMB | opcode::BITB | opcode::CMPB | opcode::CMPW |
+            opcode::TSTL | opcode::TSTB | opcode::TSTW |
+            opcode::CLRL | opcode::CLRB | opcode::CLRW |
+            opcode::INCB | opcode::DECB => total_score += 1,
 
-            // Clear operations
-            opcode::CLRL | opcode::CLRB | opcode::CLRW => total_score += 4,
-
-            // Loop constructs (very VAX-specific)
-            opcode::SOBGEQ | opcode::SOBGTR => total_score += 10,
-            opcode::AOBLSS | opcode::AOBLEQ | opcode::ACBL => total_score += 10,
+            // Loop constructs (truly VAX-specific)
+            // BUT: 0xF2=REPNE, 0xF4=HLT, 0xF5=CMC in x86 — discount if x86 detected
+            opcode::SOBGEQ | opcode::SOBGTR => {
+                if likely_x86 { total_score += 1; } else { total_score += 15; vax_specific_count += 1; }
+            }
+            opcode::AOBLSS | opcode::AOBLEQ | opcode::ACBL => {
+                if likely_x86 { total_score += 1; } else { total_score += 15; vax_specific_count += 1; }
+            }
 
             // Bit field operations (distinctive)
-            opcode::BBS | opcode::BBC => total_score += 8,
-            opcode::EXTV | opcode::EXTZV | opcode::INSV => total_score += 9,
+            opcode::BBS | opcode::BBC => { total_score += 5; vax_specific_count += 1; }
+            opcode::EXTV | opcode::EXTZV | opcode::INSV => { total_score += 6; vax_specific_count += 1; }
+            opcode::FFS | opcode::FFC => total_score += 4,
+            opcode::CMPV | opcode::CMPZV => total_score += 4,
 
             // Extended opcodes
+            // 0xFD = x86 STD instruction — discount if x86 detected
             opcode::ESCAPE_FD => {
-                // G/H floating point - strong indicator
-                total_score += 12;
+                if likely_x86 { total_score += 1; } else { total_score += 15; vax_specific_count += 1; }
             }
 
-            // Byte/word operations (common in real code)
-            op if (0x80..=0x9F).contains(&op) => total_score += 4,
-            op if (0xA0..=0xBF).contains(&op) => total_score += 4,
-            op if (0xC0..=0xDF).contains(&op) => total_score += 5,
+            // System instructions
+            opcode::REI => total_score += 6,
+            opcode::BPT => total_score += 3,
+            opcode::LDPCTX | opcode::SVPCTX => { total_score += 10; vax_specific_count += 1; }
+            opcode::INDEX | opcode::CRC => { total_score += 8; vax_specific_count += 1; }
+            opcode::PROBER | opcode::PROBEW => { total_score += 8; vax_specific_count += 1; }
+            opcode::INSQUE | opcode::REMQUE => { total_score += 6; vax_specific_count += 1; }
 
-            _ => {
-                // Unknown but might be valid
-                total_score += 1;
-            }
+            // Everything else: no score
+            _ => {}
         }
 
         i += len;
+    }
+
+    // Structural validation: VAX covers the entire byte range so random data
+    // always "parses". Bytes 0x04/0x05 (RET/RSB) and 0x10-0x1F (branches)
+    // appear in almost any binary data. Require truly VAX-specific patterns
+    // (SOBGEQ, ESCAPE_FD, bit fields, system ops) for confirmation.
+    if valid_count > 20 && vax_specific_count < 3 {
+        // Too few truly VAX-specific patterns — likely noise from random data
+        // (VAX-specific opcodes cover ~7% of byte space, so random data gets some)
+        if vax_specific_count == 0 {
+            total_score = (total_score as f64 * 0.10) as i64;
+        } else {
+            total_score = (total_score as f64 * 0.20) as i64;
+        }
+    } else if valid_count > 10 && ret_count == 0 && branch_count == 0 {
+        // No returns or branches at all
+        total_score = (total_score as f64 * 0.15) as i64;
     }
 
     // Adjust based on validity ratio
@@ -605,9 +735,9 @@ pub fn score(data: &[u8]) -> i64 {
         let validity_ratio = valid_count as f64 / (valid_count + invalid_count) as f64;
         total_score = (total_score as f64 * validity_ratio) as i64;
 
-        // Bonus for high validity
-        if validity_ratio > 0.80 && valid_count > 10 {
-            total_score += 15;
+        // Bonus only with strong structural evidence
+        if validity_ratio > 0.80 && valid_count > 10 && ret_count > 0 && branch_count > 2 {
+            total_score += 10;
         }
     }
 
@@ -690,6 +820,6 @@ mod tests {
             opcode::RSB,
         ];
         let s = score(&code);
-        assert!(s > 15, "MOVL + RSB should score well");
+        assert!(s > 10, "MOVL + RSB should score well");
     }
 }

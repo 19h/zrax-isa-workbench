@@ -69,61 +69,117 @@ pub const PATTERN_TRAP: u32 = 0x2100_0000;
 /// field in bits 26-31.
 pub fn score(data: &[u8]) -> i64 {
     let mut score: i64 = 0;
+    let mut ret_count = 0u32;
+    let mut call_count = 0u32;
+    let mut branch_count = 0u32;
 
     for i in (0..data.len().saturating_sub(3)).step_by(4) {
         let word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         let opcode = (word >> 26) & 0x3F;
 
-        if (word & MASK_NOP) == PATTERN_NOP {
-            score += 20; // l.nop
-        }
-        if word == OPENRISC_RET {
-            score += 30; // l.jr r9
-        }
-        if (word & MASK_JR) == PATTERN_JR {
-            score += 15; // l.jr
-        }
-        if (word & MASK_JALR) == PATTERN_JALR {
-            score += 12; // l.jalr
-        }
-        if opcode == OP_JAL {
-            score += 10; // l.jal
-        }
-        if opcode == OP_J {
-            score += 8; // l.j
-        }
-        if opcode == OP_BF || opcode == OP_BNF {
-            score += 5; // l.bf/l.bnf
-        }
-        if opcode == OP_ALU {
-            score += 3; // l.add/l.sub/l.and/l.or/l.xor
-        }
-        if opcode == OP_ADDI || opcode == OP_ANDI || opcode == OP_ORI || opcode == OP_XORI {
-            score += 3; // l.addi/l.andi/l.ori/l.xori
-        }
-        if opcode == OP_LWZ
-            || opcode == OP_LWS
-            || opcode == OP_LBZ
-            || opcode == OP_LBS
-            || opcode == OP_LHZ
-            || opcode == OP_LHS
-        {
-            score += 4; // loads
-        }
-        if opcode == OP_SW || opcode == OP_SB || opcode == OP_SH {
-            score += 4; // stores
-        }
-        if opcode == OP_MOVHI {
-            score += 5; // l.movhi
-        }
-        if (word & MASK_SYS) == PATTERN_SYS {
-            score += 15; // l.sys
-        }
-        if (word & MASK_TRAP) == PATTERN_TRAP {
-            score += 10; // l.trap
-        }
+        // Invalid/padding
         if word == 0x0000_0000 || word == 0xFFFF_FFFF {
             score -= 5;
+            continue;
+        }
+
+        // --- Cross-architecture penalties (BE ISAs) ---
+        // PPC
+        if word == 0x60000000 { score -= 12; continue; }  // NOP
+        if word == 0x4E800020 { score -= 15; continue; }  // BLR
+        if (word >> 26) == 18 { score -= 5; }             // B/BL
+        // SPARC
+        if word == 0x01000000 { score -= 10; continue; }  // NOP
+        if word == 0x81C7E008 { score -= 15; continue; }  // RET
+        // MIPS BE
+        if word == 0x03E00008 { score -= 12; continue; }  // JR $ra
+        // S390x
+        if (word >> 16) == 0x07FE { score -= 12; continue; }  // BR %r14
+
+        // Exact matches (high confidence)
+        if (word & MASK_NOP) == PATTERN_NOP {
+            score += 20;
+            continue;
+        }
+        if word == OPENRISC_RET {
+            score += 30;
+            ret_count += 1;
+            continue;
+        }
+        if (word & MASK_SYS) == PATTERN_SYS {
+            score += 15;
+            continue;
+        }
+        if (word & MASK_TRAP) == PATTERN_TRAP {
+            score += 10;
+            continue;
+        }
+
+        // Control flow
+        if (word & MASK_JR) == PATTERN_JR {
+            score += 12;
+            ret_count += 1;
+            continue;
+        }
+        if (word & MASK_JALR) == PATTERN_JALR {
+            score += 10;
+            call_count += 1;
+            continue;
+        }
+        if opcode == OP_JAL {
+            score += 5;
+            call_count += 1;
+            continue;
+        }
+        if opcode == OP_J {
+            score += 4;
+            branch_count += 1;
+            continue;
+        }
+        if opcode == OP_BF || opcode == OP_BNF {
+            score += 3;
+            branch_count += 1;
+            continue;
+        }
+
+        // ALU/immediate
+        if opcode == OP_ALU {
+            score += 2;
+            continue;
+        }
+        if opcode == OP_ADDI || opcode == OP_ANDI || opcode == OP_ORI || opcode == OP_XORI {
+            score += 2;
+            continue;
+        }
+
+        // Load/store
+        if opcode == OP_LWZ || opcode == OP_LWS || opcode == OP_LBZ
+            || opcode == OP_LBS || opcode == OP_LHZ || opcode == OP_LHS
+        {
+            score += 2;
+            continue;
+        }
+        if opcode == OP_SW || opcode == OP_SB || opcode == OP_SH {
+            score += 2;
+            continue;
+        }
+        if opcode == OP_MOVHI {
+            score += 3;
+            continue;
+        }
+
+        // Unrecognized opcode
+        score -= 2;
+    }
+
+    // Structural requirement
+    let num_words = data.len() / 4;
+    if num_words > 20 {
+        let distinctive = ret_count + call_count;
+        if distinctive == 0 && branch_count == 0 {
+            score = (score as f64 * 0.10) as i64;
+        } else if distinctive == 0 {
+            score = (score as f64 * 0.25) as i64;
         }
     }
 
