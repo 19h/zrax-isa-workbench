@@ -277,6 +277,7 @@ pub fn score(data: &[u8]) -> i64 {
     let mut prologue_count = 0u32;
     let mut bl_count = 0u32;
     let mut stp_fp_lr_count = 0u32;
+    let mut extra_distinctive = 0u32; // barriers, system calls, BTI, PAC, CSEL, MADD, etc.
 
     // AArch64 instructions are 4 bytes, aligned
     let num_words = data.len() / 4;
@@ -410,6 +411,7 @@ pub fn score(data: &[u8]) -> i64 {
         // Memory barriers (DSB, DMB, ISB) - distinctive system instructions
         if is_barrier(word) {
             score += 35;
+            extra_distinctive += 1;
         }
 
         // BL (branch with link)
@@ -426,36 +428,43 @@ pub fn score(data: &[u8]) -> i64 {
         // SVC (system call)
         if (word & 0xFFE0001F) == 0xD4000001 {
             score += 20;
+            extra_distinctive += 1;
         }
 
         // HVC (hypervisor call)
         if (word & 0xFFE0001F) == 0xD4000002 {
             score += 25;
+            extra_distinctive += 1;
         }
 
         // SMC (secure monitor call)
         if (word & 0xFFE0001F) == 0xD4000003 {
             score += 25;
+            extra_distinctive += 1;
         }
 
         // BRK (breakpoint)
         if (word & 0xFFE0001F) == 0xD4200000 {
             score += 15;
+            extra_distinctive += 1;
         }
 
         // BTI (branch target identification)
         if is_bti(word) {
             score += 20;
+            extra_distinctive += 1;
         }
 
         // PACIASP (pointer authentication)
         if word == system::PACIASP {
             score += 20;
+            extra_distinctive += 1;
         }
 
         // AUTIASP
         if word == system::AUTIASP {
             score += 20;
+            extra_distinctive += 1;
         }
 
         // STP (store pair - common in prologue)
@@ -547,16 +556,41 @@ pub fn score(data: &[u8]) -> i64 {
         // MADD/MSUB - multiply-add is distinctive
         if is_madd_msub(word) {
             score += 10;
+            extra_distinctive += 1;
         }
 
         // CSEL/CSINC/CSINV/CSNEG - conditional select is very AArch64-specific
         if is_csel(word) {
             score += 10;
+            extra_distinctive += 1;
         }
 
         // ADD/SUB immediate
         if (word >> 24) & 0x1F == 0x11 {
             score += 3;
+        }
+
+        // Floating-point data processing (scalar): 0x1Exxxxxx
+        // Covers FMOV, FADD, FSUB, FMUL, FDIV, FABS, FNEG, FSQRT, FCMP, FCVT, etc.
+        // Very distinctive AArch64 encoding range
+        if (word >> 24) as u8 == 0x1E {
+            score += 6;
+        }
+
+        // FP/SIMD load/store (different from integer LDR/STR encodings)
+        {
+            let top8 = (word >> 24) as u8;
+            if matches!(top8, 0xBD | 0xFD | 0x3D | 0x7D | 0xBC | 0xFC | 0x3C | 0x7C) {
+                score += 4;
+            }
+        }
+
+        // Advanced SIMD data processing: 0x0Exxxxxx, 0x4Exxxxxx, 0x0Fxxxxxx, 0x4Fxxxxxx
+        {
+            let top8 = (word >> 24) as u8;
+            if matches!(top8, 0x0E | 0x4E | 0x0F | 0x4F | 0x2E | 0x6E | 0x2F | 0x6F) {
+                score += 5;
+            }
         }
 
         // Handle zero words more gracefully:
@@ -584,7 +618,7 @@ pub fn score(data: &[u8]) -> i64 {
     // AArch64 has broad pattern matches (~20-25% of random words score), so without
     // this check, random data from 16-bit ISAs (MSP430, AVR) accumulates high scores
     if num_words > 20 {
-        let distinctive = ret_count + mrs_msr_count + prologue_count + stp_fp_lr_count;
+        let distinctive = ret_count + mrs_msr_count + prologue_count + stp_fp_lr_count + extra_distinctive;
         if distinctive == 0 && bl_count == 0 {
             score = (score as f64 * 0.15) as i64;
         } else if distinctive == 0 && bl_count >= 3 {

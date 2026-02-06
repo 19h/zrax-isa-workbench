@@ -280,7 +280,7 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                     continue;
                 }
             }
-            // 0F xx two-byte opcodes (MOVZX, MOVSX, Jcc rel32, etc.)
+            // 0F xx two-byte opcodes (MOVZX, MOVSX, Jcc rel32, SSE, etc.)
             0x0F if i + 1 < data.len() => {
                 let next = data[i + 1];
                 match next {
@@ -288,7 +288,51 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                     0x80..=0x8F => { score += 4; i += 6; continue; } // Jcc rel32
                     0xAF => { score += 3; i += 2; continue; } // IMUL r, r/m
                     0x84 | 0x85 => { score += 3; i += 6; continue; } // JE/JNE rel32
+                    // SSE/SSE2 packed operations (no prefix needed)
+                    0x10 | 0x11 => { score += 5; i += 2; continue; } // MOVUPS/MOVUPD
+                    0x28 | 0x29 => { score += 5; i += 2; continue; } // MOVAPS/MOVAPD
+                    0x2A => { score += 5; i += 2; continue; } // CVTPI2PS
+                    0x58 => { score += 4; i += 2; continue; } // ADDPS/ADDPD
+                    0x59 => { score += 4; i += 2; continue; } // MULPS/MULPD
+                    0x5A | 0x5B => { score += 3; i += 2; continue; } // CVTPS2PD
+                    0x5C => { score += 4; i += 2; continue; } // SUBPS/SUBPD
+                    0x5E => { score += 4; i += 2; continue; } // DIVPS/DIVPD
+                    0x2E | 0x2F => { score += 4; i += 2; continue; } // UCOMISS/COMISS
+                    0x51 => { score += 3; i += 2; continue; } // SQRTPS
+                    0x54 | 0x55 | 0x56 | 0x57 => { score += 3; i += 2; continue; } // ANDPS/ANDNPS/ORPS/XORPS
                     _ => { score += 1; }
+                }
+            }
+            // SSE2 scalar double: F2 0F xx
+            0xF2 if i + 2 < data.len() && data[i + 1] == 0x0F => {
+                let op = data[i + 2];
+                match op {
+                    0x10 | 0x11 => { score += 6; i += 3; continue; } // MOVSD
+                    0x2A => { score += 6; i += 3; continue; } // CVTSI2SD
+                    0x58 => { score += 5; i += 3; continue; } // ADDSD
+                    0x59 => { score += 5; i += 3; continue; } // MULSD
+                    0x5A => { score += 5; i += 3; continue; } // CVTSD2SS
+                    0x5C => { score += 5; i += 3; continue; } // SUBSD
+                    0x5E => { score += 5; i += 3; continue; } // DIVSD
+                    0x2E | 0x2F => { score += 5; i += 3; continue; } // UCOMISD/COMISD
+                    0x51 => { score += 4; i += 3; continue; } // SQRTSD
+                    _ => { score += 2; i += 3; continue; }
+                }
+            }
+            // SSE scalar single: F3 0F xx
+            0xF3 if i + 2 < data.len() && data[i + 1] == 0x0F => {
+                let op = data[i + 2];
+                match op {
+                    0x10 | 0x11 => { score += 6; i += 3; continue; } // MOVSS
+                    0x2A => { score += 6; i += 3; continue; } // CVTSI2SS
+                    0x58 => { score += 5; i += 3; continue; } // ADDSS
+                    0x59 => { score += 5; i += 3; continue; } // MULSS
+                    0x5A => { score += 5; i += 3; continue; } // CVTSS2SD
+                    0x5C => { score += 5; i += 3; continue; } // SUBSS
+                    0x5E => { score += 5; i += 3; continue; } // DIVSS
+                    0x2E | 0x2F => { score += 5; i += 3; continue; } // UCOMISS
+                    0x51 => { score += 4; i += 3; continue; } // SQRTSS
+                    _ => { score += 2; i += 3; continue; }
                 }
             }
             // Operand size prefix (common in 32-bit code)
@@ -297,12 +341,53 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             0x67 => score += 1,
             // LOCK prefix
             0xF0 => score += 2,
-            // REP/REPNE prefix
+            // REP/REPNE prefix (non-SSE uses)
             0xF2 | 0xF3 => score += 2,
             _ => {}
         }
 
         i += 1;
+    }
+
+    // Cross-architecture penalties: detect distinctive patterns from other ISAs
+    // x86 is byte-level and matches most byte values, so we must penalize
+    // data that contains known patterns from 32-bit BE or LE ISAs.
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+
+            // PPC (big-endian)
+            if be32 == 0x4E800020 { score -= 15; } // BLR
+            if be32 == 0x60000000 { score -= 10; } // NOP
+            if be32 == 0x7C0802A6 { score -= 12; } // MFLR r0
+            if be32 == 0x7C0803A6 { score -= 12; } // MTLR r0
+            // PPC STWU r1, -N(r1) = 0x9421xxxx (function prologue)
+            if (be32 & 0xFFFF0000) == 0x94210000 { score -= 10; }
+            // PPC STDU r1, -N(r1) = 0xF821xxxx (64-bit prologue)
+            if (be32 & 0xFFFF0000) == 0xF8210000 { score -= 10; }
+
+            // SPARC (big-endian)
+            if be32 == 0x01000000 { score -= 10; } // NOP
+            if be32 == 0x81C7E008 { score -= 15; } // RET
+            if be32 == 0x81C3E008 { score -= 15; } // RETL
+            // SPARC SAVE %sp, -N, %sp
+            if (be32 & 0xFFFFE000) == 0x9DE3A000 { score -= 12; }
+
+            // MIPS (big-endian)
+            if be32 == 0x03E00008 { score -= 15; } // JR $ra
+
+            // AArch64 (little-endian)
+            if le32 == 0xD65F03C0 { score -= 15; } // RET
+            if le32 == 0xD503201F { score -= 10; } // NOP
+
+            // RISC-V (little-endian)
+            if le32 == 0x00008067 { score -= 12; } // RET
+            if le32 == 0x00000013 { score -= 8; }  // NOP
+
+            j += 4;
+        }
     }
 
     // Structural requirement: x86 is a byte-level ISA where most byte values

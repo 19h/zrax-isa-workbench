@@ -486,20 +486,23 @@ pub fn score(data: &[u8]) -> i64 {
             // SPARC CALL format (bits 31:30 = 01): covers 25% of all values
             // but is very distinctive for SPARC
             if sparc_fmt == 1 {
-                total_score -= 5;
+                total_score -= 6;
             }
 
             // SPARC arithmetic format (bits 31:30 = 10): check for common op3 codes
             if sparc_fmt == 2 {
                 let op3 = ((instr >> 19) & 0x3F) as u8;
                 match op3 {
-                    0x3C => { total_score -= 10; i += 4; continue; } // SAVE
-                    0x3D => { total_score -= 10; i += 4; continue; } // RESTORE
+                    0x3C => { total_score -= 20; i += 4; continue; } // SAVE
+                    0x3D => { total_score -= 20; i += 4; continue; } // RESTORE
                     0x00 | 0x02 | 0x04 | 0x10 | 0x11 | 0x12 | 0x14 => {
-                        total_score -= 3; // ADD, OR, SUB, ADDCC, etc.
+                        total_score -= 6; // ADD, OR, SUB, ADDCC, etc.
                     }
-                    0x25 | 0x26 => { total_score -= 3; } // SLL, SRL
-                    0x38 => { total_score -= 5; } // JMPL
+                    0x25 | 0x26 => { total_score -= 5; } // SLL, SRL
+                    0x38 => { total_score -= 8; } // JMPL
+                    0x01 | 0x05 | 0x03 => { total_score -= 5; } // AND, ANDN, XOR
+                    0x27 => { total_score -= 5; } // SRA
+                    0x0A | 0x1A => { total_score -= 4; } // UMUL, UDIV
                     _ => {}
                 }
             }
@@ -508,8 +511,8 @@ pub fn score(data: &[u8]) -> i64 {
             if sparc_fmt == 0 {
                 let op2 = ((instr >> 22) & 0x07) as u8;
                 match op2 {
-                    2 | 6 => { total_score -= 3; } // Bicc, FBfcc
-                    4 => { total_score -= 2; } // SETHI
+                    2 | 6 => { total_score -= 5; } // Bicc, FBfcc
+                    4 => { total_score -= 3; } // SETHI
                     _ => {}
                 }
             }
@@ -519,7 +522,7 @@ pub fn score(data: &[u8]) -> i64 {
                 let op3 = ((instr >> 19) & 0x3F) as u8;
                 // Common SPARC LD/ST opcodes
                 if matches!(op3, 0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x08 | 0x09 | 0x0A) {
-                    total_score -= 3;
+                    total_score -= 5;
                 }
             }
         }

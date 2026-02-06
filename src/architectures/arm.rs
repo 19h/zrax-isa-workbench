@@ -331,7 +331,7 @@ fn score_thumb(data: &[u8]) -> i64 {
     // Key patterns: NOP (0x7F00xxxx), ALLOCFRAME, DEALLOC_RETURN
     if data.len() >= 8 {
         let mut j = 0;
-        while j + 3 < data.len().min(4096) {
+        while j + 3 < data.len() {
             let word = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // Hexagon NOP
             if (word & 0xFFFF0000) == 0x7F000000 { hexagon_penalty += 25; }
@@ -349,7 +349,7 @@ fn score_thumb(data: &[u8]) -> i64 {
     // AArch64 instructions are 32-bit aligned, look for distinctive patterns
     if data.len() >= 8 {
         let mut j = 0;
-        while j + 3 < data.len().min(4096) {
+        while j + 3 < data.len() {
             let word = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
 
             // AArch64 MRS/MSR system register instructions (0xD5xxxxxx)
@@ -404,9 +404,10 @@ fn score_thumb(data: &[u8]) -> i64 {
         consecutive_zeros = 0;
 
         // Track repeated halfwords (padding detection)
+        // Exempt known valid repeated patterns like Thumb NOP (0xBF00)
         if hw == last_hw {
             repeat_count += 1;
-            if repeat_count > 8 {
+            if repeat_count > 8 && hw != 0xBF00 {
                 // Long runs of identical values are likely padding, not code
                 score -= 2;
                 i += 2;
@@ -591,9 +592,20 @@ fn score_thumb(data: &[u8]) -> i64 {
             else if hw == 0xFFFF {
                 score -= 3;
             }
+            // Moderate-confidence 16-bit patterns
+            // ADD Rd, Rm (high register) - very common in real code, narrow mask
+            else if (hw & 0xFF00) == 0x4400 {
+                score += 3;
+            }
+            // Data processing (AND/EOR/LSL/LSR/ASR/ADC/SBC/NEG/CMP/CMN/ORR/TST/BIC/MVN/MUL)
+            else if (hw & 0xFC00) == 0x4000 {
+                score += 2;
+            }
             // Broad 16-bit patterns: only give minimal points
             // These match large fractions of random data
-            else if (hw & 0xF800) == 0x3000 || (hw & 0xF800) == 0x3800 {
+            else if (hw & 0xF800) == 0x2000 {
+                score += 2; // MOV Rn, #imm8
+            } else if (hw & 0xF800) == 0x3000 || (hw & 0xF800) == 0x3800 {
                 score += 2; // ADD/SUB Rn, #imm8
             } else if (hw & 0xF800) == 0x2800 {
                 score += 2; // CMP Rn, #imm8

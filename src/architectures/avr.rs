@@ -428,6 +428,7 @@ pub fn score(data: &[u8]) -> i64 {
         // --- Thumb cross-architecture penalties ---
         // Thumb uses same 16-bit LE format; penalize distinctive Thumb patterns
         if word == 0x4770 { score -= 12; i += 2; continue; } // Thumb BX LR
+        if word == 0xBF00 { score -= 10; i += 2; continue; } // Thumb NOP
         // CPSID/CPSIE variants (very firmware-specific, unlikely in AVR context)
         if matches!(word, 0xB672 | 0xB662 | 0xB673 | 0xB663) {
             score -= 10; i += 2; continue;
@@ -442,8 +443,8 @@ pub fn score(data: &[u8]) -> i64 {
         if (word & 0xFF00) == 0xBD00 { score -= 10; i += 2; continue; }
         // Thumb ADD/SUB SP, #imm (0xB0xx) - stack frame adjustment
         if (word & 0xFF00) == 0xB000 { score -= 6; i += 2; continue; }
-        // Thumb SVC (0xDFxx) - supervisor call
-        if (word & 0xFF00) == 0xDF00 { score -= 8; i += 2; continue; }
+        // Thumb SVC (0xDFxx) - skip: 0xDxxx are all valid AVR RCALLs
+        // Penalizing this range causes massive false negatives on AVR code
         // Thumb CBZ/CBNZ (0xB1xx, 0xB9xx, 0xB3xx, 0xBBxx)
         if (word & 0xF500) == 0xB100 { score -= 8; i += 2; continue; }
 
@@ -637,6 +638,78 @@ pub fn score(data: &[u8]) -> i64 {
             continue;
         }
 
+        // --- Additional recognized AVR instructions ---
+        // These cover broad parts of the encoding space. Score at 0 (avoid -1 penalty)
+        // to prevent false positives while still helping AVR files by not penalizing
+        // their legitimate instructions.
+
+        // ADC/ROL (0x1Cxx-0x1Fxx), SBC (0x08xx-0x0Bxx), CPSE (0x10xx-0x13xx)
+        if (word & 0xFC00) == 0x1C00
+            || (word & 0xFC00) == 0x0800
+            || (word & 0xFC00) == 0x1000
+        {
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // MOVW (0x01xx) - somewhat distinctive (0.4% of space)
+        if (word & 0xFF00) == 0x0100 {
+            score += 1;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // ADIW (0x96xx) - very distinctive AVR-specific instruction (0.4% of space)
+        if (word & 0xFF00) == 0x9600 {
+            score += 4;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // SBIW (0x97xx) - very distinctive AVR-specific instruction (0.4% of space)
+        if (word & 0xFF00) == 0x9700 {
+            score += 4;
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // Immediate operations: SBCI(0x4), SUBI(0x5), ORI(0x6), ANDI(0x7) - 25% total
+        // Too broad for positive scoring — just avoid the -1 penalty
+        {
+            let high_nib = (word >> 12) & 0xF;
+            if matches!(high_nib, 0x4 | 0x5 | 0x6 | 0x7) {
+                valid_count += 1;
+                i += 2;
+                continue;
+            }
+        }
+
+        // LDD/STD with displacement (0x8xxx, 0xAxxx) - 12.5% total
+        // Too broad for positive scoring — just avoid the -1 penalty
+        if (word & 0xD000) == 0x8000 {
+            valid_count += 1;
+            i += 2;
+            continue;
+        }
+
+        // Single-register ops in 0x94xx/0x95xx range:
+        // COM(0), NEG(1), SWAP(2), INC(3), ASR(5), LSR(6), ROR(7), DEC(A)
+        if (word & 0xFE00) == 0x9400 {
+            let sub_op = word & 0x000F;
+            if matches!(sub_op, 0x0 | 0x1 | 0x2 | 0x3 | 0x5 | 0x6 | 0x7 | 0xA) {
+                score += 1;
+                valid_count += 1;
+                i += 2;
+                continue;
+            }
+        }
+
+        // BLD/BST, SBRC/SBRS (bit manipulation in 0xFxxx range already covered by BRBS/BRBC)
+
         // Unrecognized - small penalty
         score -= 1;
         i += 2;
@@ -718,6 +791,10 @@ pub fn score(data: &[u8]) -> i64 {
             if be32 == 0x60000000 { score -= 15; } // PPC NOP
             if be32 == 0x7C0802A6 { score -= 15; } // PPC MFLR r0
             if be32 == 0x7C0803A6 { score -= 15; } // PPC MTLR r0
+            // PPC STW r1 (stack frame setup): 0x9421xxxx
+            if (be32 & 0xFFFF0000) == 0x94210000 { score -= 10; }
+            // PPC STWU r1 (stack frame with update): common in function prologues
+            if (be32 & 0xFC1F0000) == 0x94010000 { score -= 8; }
 
             // MIPS patterns (BE)
             if be32 == 0x03E00008 { score -= 20; } // MIPS JR $ra
@@ -741,11 +818,34 @@ pub fn score(data: &[u8]) -> i64 {
             // AArch64
             if le32 == 0xD65F03C0 { score -= 20; } // AArch64 RET
             if le32 == 0xD503201F { score -= 15; } // AArch64 NOP
-            if (le32 >> 26) == 0x25 { score -= 5; } // AArch64 BL
+            // AArch64 BL (top6=0x25) - reduced from -5 to -2 because
+            // AVR instructions 0x94xx-0x97xx in the upper halfword trigger this falsely
+            if (le32 >> 26) == 0x25 { score -= 2; }
 
             // RISC-V
             if le32 == 0x00008067 { score -= 15; } // RISC-V RET
             if le32 == 0x00000013 { score -= 10; } // RISC-V NOP
+
+            // PPC (LE mode) - PPC64 LE stores instructions in LE byte order
+            if le32 == 0x4E800020 { score -= 15; } // PPC BLR (return)
+            if le32 == 0x60000000 { score -= 10; } // PPC NOP
+            if le32 == 0x7C0802A6 { score -= 12; } // PPC MFLR r0
+            if le32 == 0x7C0803A6 { score -= 12; } // PPC MTLR r0
+            // PPC64 prologue/epilogue patterns
+            if (le32 & 0xFFFF0000) == 0xF8010000 { score -= 10; } // STD r0,N(r1) - save LR
+            if (le32 & 0xFFFF0000) == 0xE8010000 { score -= 10; } // LD r0,N(r1) - restore LR
+            if (le32 & 0xFFFF0000) == 0xF8210000 { score -= 10; } // STDU r1,-N(r1) - frame setup
+            // PPC ADDI/LI common patterns
+            if (le32 & 0xFC000000) == 0x38000000 { score -= 3; }  // ADDI (very common)
+
+            // LoongArch (LE 32-bit)
+            if le32 == 0x03400000 { score -= 10; } // LoongArch NOP
+            if le32 == 0x4C000020 { score -= 12; } // LoongArch JIRL ra (RET)
+
+            // Hexagon (LE 32-bit)
+            if (le32 & 0xFFFF0000) == 0x7F000000 { score -= 12; } // Hexagon NOP
+            if le32 == 0x961EC01E { score -= 15; }                 // Hexagon DEALLOC_RETURN
+            if (le32 & 0xFFFFE000) == 0xA09DC000 { score -= 12; } // Hexagon ALLOCFRAME
 
             // Thumb-2 32-bit patterns (hw0 in low 16 bits, hw1 in high 16 bits of LE32)
             {

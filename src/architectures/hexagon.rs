@@ -309,11 +309,10 @@ pub fn score(data: &[u8]) -> i64 {
     // instruction per packet must have parse bits = 11 (end of packet).
     // This packet structure is the most distinctive Hexagon feature.
 
-    // Pre-scan for Thumb cross-architecture penalties.
-    // Strategy: only apply penalties when high-confidence anchor patterns confirm
-    // this is likely Thumb code. Broad patterns (conditional branches, etc.) cover
-    // too much of the halfword space and destroy legitimate Hexagon scores.
-    let mut thumb_penalty: i64 = 0;
+    // Pre-scan for cross-architecture penalties.
+    let mut cross_arch_penalty: i64 = 0;
+
+    // Thumb penalty: anchor-gated system — broad patterns only count with anchors.
     {
         let mut anchor_count = 0u32;
         let mut anchor_penalty: i64 = 0;
@@ -332,9 +331,11 @@ pub fn score(data: &[u8]) -> i64 {
             else if matches!(hw, 0xBF30 | 0xBF20 | 0xBF40) {                      // WFI/WFE/SEV
                 anchor_count += 1; anchor_penalty += 15;
             }
+            // PUSH {.., LR} - function prologue, very common in Thumb firmware
+            else if (hw & 0xFF00) == 0xB500 { anchor_count += 1; anchor_penalty += 8; }
+            // POP {.., PC} - function return, very common in Thumb firmware
+            else if (hw & 0xFF00) == 0xBD00 { anchor_count += 1; anchor_penalty += 8; }
             // === Medium-confidence patterns (counted for broad evidence) ===
-            else if (hw & 0xFF00) == 0xB500 { broad_penalty += 10; }              // PUSH {.., LR}
-            else if (hw & 0xFF00) == 0xBD00 { broad_penalty += 10; }              // POP {.., PC}
             else if (hw & 0xFF00) == 0xB000 { broad_penalty += 5; }               // ADD/SUB SP
             else if (hw & 0xF000) == 0xD000
                 && (hw & 0x0F00) != 0x0E00 && (hw & 0x0F00) != 0x0F00 {
@@ -364,12 +365,53 @@ pub fn score(data: &[u8]) -> i64 {
 
         // Apply penalties proportional to Thumb evidence
         if anchor_count >= 2 {
-            thumb_penalty = anchor_penalty + broad_penalty;
+            cross_arch_penalty += anchor_penalty + broad_penalty;
         } else if anchor_count == 1 {
-            // Even 1 anchor with broad patterns suggests Thumb code
-            thumb_penalty = anchor_penalty + broad_penalty / 2;
+            cross_arch_penalty += anchor_penalty + broad_penalty / 2;
         }
     }
+
+    // 32-bit LE cross-architecture penalties (AArch64, RISC-V, PPC LE, x86-64)
+    {
+        let mut vfp_count = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // AArch64
+            if le32 == 0xD65F03C0 { cross_arch_penalty += 20; }  // AArch64 RET
+            if le32 == 0xD503201F { cross_arch_penalty += 15; }  // AArch64 NOP
+            if (le32 >> 26) == 0x25 { cross_arch_penalty += 5; } // AArch64 BL
+            // RISC-V
+            if le32 == 0x00008067 { cross_arch_penalty += 15; }  // RISC-V RET
+            if le32 == 0x00000013 { cross_arch_penalty += 10; }  // RISC-V NOP
+            // PPC (LE mode)
+            if le32 == 0x4E800020 { cross_arch_penalty += 15; }  // PPC BLR
+            if le32 == 0x60000000 { cross_arch_penalty += 10; }  // PPC NOP
+            if le32 == 0x7C0802A6 { cross_arch_penalty += 12; }  // PPC MFLR r0
+            if le32 == 0x7C0803A6 { cross_arch_penalty += 12; }  // PPC MTLR r0
+            // LoongArch
+            if le32 == 0x03400000 { cross_arch_penalty += 10; }  // LoongArch NOP
+            if le32 == 0x4C000020 { cross_arch_penalty += 12; }  // LoongArch JIRL ra
+            // ARM Thumb-2 VFP/NEON patterns: upper byte 0xED, 0xEE, 0xEF
+            // These naturally set parse bits 15:14=11 causing false packet matches
+            {
+                let upper_byte = ((le32 >> 16) & 0xFF) as u8;
+                if matches!(upper_byte, 0xED | 0xEE | 0xEF) {
+                    vfp_count += 1;
+                }
+            }
+            j += 4;
+        }
+        // If significant VFP patterns found, they create false parse-bit matches
+        let num_words = data.len() / 4;
+        if num_words > 10 && vfp_count > num_words as u32 / 10 {
+            // >10% VFP instructions = very likely ARM, not Hexagon
+            cross_arch_penalty += vfp_count as i64 * 3;
+        }
+    }
+
+    // Track distinctive Hexagon patterns for structural requirement
+    let mut distinctive_count = 0u32;
 
     let mut i = 0;
     while i + 3 < data.len() {
@@ -399,20 +441,25 @@ pub fn score(data: &[u8]) -> i64 {
             // NOP (high confidence)
             if is_nop(word) {
                 packet_score += 15;
+                distinctive_count += 1;
             }
             // DEALLOC_RETURN (very distinctive)
             else if word == patterns::DEALLOC_RETURN {
                 packet_score += 20;
+                distinctive_count += 1;
             }
             // ALLOCFRAME (function prologue)
             else if is_allocframe(word) {
                 packet_score += 20;
+                distinctive_count += 1;
             }
             // Return patterns
             else if is_return(word) {
                 packet_score += 15;
+                distinctive_count += 1;
             }
-            // Loop setup
+            // Loop setup (don't count as distinctive — the LOOP0 mask 0xFFE00000
+            // is broad enough to match non-Hexagon data like Thumb-2)
             else if is_loop_setup(word) {
                 packet_score += 10;
             }
@@ -500,8 +547,27 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
-    // Apply Thumb cross-architecture penalty
-    total_score -= thumb_penalty;
+    // Structural requirement: Hexagon code of meaningful size should contain
+    // distinctive patterns (NOP, ALLOCFRAME, DEALLOC_RETURN, JUMPR R31, LOOP0).
+    // Without these, the broad instruction class matching (+1 per valid word)
+    // causes false positives from any 32-bit LE data.
+    // Random data produces ~68% valid packet ratio from coincidental parse bits,
+    // so only bypass if packet ratio is exceptionally strong (>85%).
+    let num_words = data.len() / 4;
+    if num_words > 20 && distinctive_count == 0 {
+        // Require >93% valid packet ratio to bypass structural requirement.
+        // Random/non-Hexagon data (especially ARM Thumb-2) often produces
+        // 85-92% valid packet ratios due to coincidental parse bit matches.
+        // Real Hexagon code has >95% valid packets with proper structure.
+        let very_strong_packets = packet_count > 10
+            && (valid_packets as f64 / packet_count as f64) > 0.93;
+        if !very_strong_packets {
+            total_score = (total_score as f64 * 0.20) as i64;
+        }
+    }
+
+    // Apply cross-architecture penalty
+    total_score -= cross_arch_penalty;
 
     total_score.max(0)
 }

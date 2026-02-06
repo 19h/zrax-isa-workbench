@@ -474,6 +474,23 @@ pub fn score(data: &[u8]) -> i64 {
             {
                 total_score -= 3;
             }
+
+            // --- AVR cross-architecture penalties (16-bit LE) ---
+            if hw0 == 0x9508 || hw1 == 0x9508 { total_score -= 10; } // AVR RET
+            if hw0 == 0x9518 || hw1 == 0x9518 { total_score -= 10; } // AVR RETI
+            if hw0 == 0x9588 || hw1 == 0x9588 { total_score -= 8; }  // AVR SLEEP
+            if hw0 == 0x9598 || hw1 == 0x9598 { total_score -= 8; }  // AVR BREAK
+            if hw0 == 0x9478 || hw1 == 0x9478 { total_score -= 8; }  // AVR SEI
+            if hw0 == 0x94F8 || hw1 == 0x94F8 { total_score -= 8; }  // AVR CLI
+            // AVR PUSH (0x920F mask 0xFE0F)
+            if (hw0 & 0xFE0F) == 0x920F || (hw1 & 0xFE0F) == 0x920F { total_score -= 5; }
+            // AVR POP (0x900F mask 0xFE0F)
+            if (hw0 & 0xFE0F) == 0x900F || (hw1 & 0xFE0F) == 0x900F { total_score -= 5; }
+
+            // --- MSP430 cross-architecture penalties (16-bit LE) ---
+            if hw0 == 0x4130 || hw1 == 0x4130 { total_score -= 10; } // MSP430 RET
+            if hw0 == 0x4303 || hw1 == 0x4303 { total_score -= 8; }  // MSP430 NOP
+            if hw0 == 0x1300 || hw1 == 0x1300 { total_score -= 8; }  // MSP430 RETI
         }
 
         let op = extract_opcode(instr);
@@ -600,6 +617,28 @@ pub fn score(data: &[u8]) -> i64 {
             if (be_word >> 30) == 1 {
                 total_score -= 3;
             }
+            // SPARC Arithmetic: format bits 31:30 = 10, common op3 codes
+            if (be_word >> 30) == 2 {
+                let op3 = ((be_word >> 19) & 0x3F) as u8;
+                if matches!(op3, 0x00 | 0x02 | 0x04 | 0x10 | 0x11 | 0x12 | 0x14 | 0x25 | 0x26) {
+                    total_score -= 3; // ADD, OR, SUB, ADDCC, SLL, SRL
+                }
+            }
+            // SPARC Load/Store: format bits 31:30 = 11, common op3 codes
+            if (be_word >> 30) == 3 {
+                let op3 = ((be_word >> 19) & 0x3F) as u8;
+                if matches!(op3, 0x00..=0x07 | 0x09 | 0x0A | 0x0E | 0x0F |
+                    0x10..=0x17 | 0x20 | 0x21 | 0x23 | 0x24 | 0x25 | 0x27) {
+                    total_score -= 4; // Common SPARC LD/ST
+                }
+            }
+            // SPARC Branch/SETHI: format bits 31:30 = 00
+            if (be_word >> 30) == 0 {
+                let op2 = ((be_word >> 22) & 0x07) as u8;
+                if matches!(op2, 2 | 4 | 6) { // Bicc, SETHI, FBfcc
+                    total_score -= 3;
+                }
+            }
         }
 
         // RISC-V patterns (little-endian, opcode in bits 6:0)
@@ -655,6 +694,24 @@ pub fn score(data: &[u8]) -> i64 {
             // x86 LEAVE+RET (0xC9 0xC3)
             if b0 == 0xC9 && b1 == 0xC3 {
                 total_score -= 8;
+            }
+            // x86 SSE/SSE2 patterns: F2 0F xx or F3 0F xx
+            // These are very distinctive x86 sequences that map to i860 FPU opcodes
+            if b0 == 0xF2 && b1 == 0x0F {
+                total_score -= 6;
+                if matches!(b2, 0x10 | 0x11 | 0x2A | 0x58 | 0x59 | 0x5A | 0x5C | 0x5E) {
+                    total_score -= 6; // Known SSE2 scalar double ops
+                }
+            }
+            if b0 == 0xF3 && b1 == 0x0F {
+                total_score -= 5;
+                if matches!(b2, 0x10 | 0x11 | 0x2A | 0x58 | 0x59 | 0x5A | 0x5C | 0x5E) {
+                    total_score -= 5; // Known SSE scalar single ops
+                }
+            }
+            // x86 0F escape without REX/SSE prefix (packed SSE operations)
+            if b0 == 0x0F && matches!(b1, 0x10 | 0x11 | 0x28 | 0x29 | 0x58 | 0x59 | 0x5A | 0x5C | 0x5E) {
+                total_score -= 4;
             }
         }
 

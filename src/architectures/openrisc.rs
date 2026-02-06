@@ -96,6 +96,27 @@ pub fn score(data: &[u8]) -> i64 {
         // S390x
         if (word >> 16) == 0x07FE { score -= 12; continue; }  // BR %r14
 
+        // --- Cross-architecture penalties (16-bit LE ISAs) ---
+        // OpenRISC is 32-bit BE; when 16-bit LE data (Thumb, AVR, MSP430) is read
+        // as 32-bit BE, distinctive patterns appear in the halfwords.
+        {
+            let hw0 = (word >> 16) as u16;  // first halfword (BE byte order)
+            let hw0_le = hw0.swap_bytes();  // convert to LE interpretation
+            let hw1 = (word & 0xFFFF) as u16;
+            let hw1_le = hw1.swap_bytes();
+            // Thumb
+            if hw0_le == 0x4770 || hw1_le == 0x4770 { score -= 12; } // BX LR
+            if hw0_le == 0xBF00 || hw1_le == 0xBF00 { score -= 8; }  // NOP
+            if (hw0_le & 0xFF00) == 0xB500 || (hw1_le & 0xFF00) == 0xB500 { score -= 6; } // PUSH {..,LR}
+            if (hw0_le & 0xFF00) == 0xBD00 || (hw1_le & 0xFF00) == 0xBD00 { score -= 6; } // POP {..,PC}
+            // AVR
+            if hw0_le == 0x9508 || hw1_le == 0x9508 { score -= 10; } // RET
+            if hw0_le == 0x9518 || hw1_le == 0x9518 { score -= 10; } // RETI
+            // MSP430
+            if hw0_le == 0x4130 || hw1_le == 0x4130 { score -= 10; } // RET
+            if hw0_le == 0x4303 || hw1_le == 0x4303 { score -= 8; }  // NOP
+        }
+
         // Exact matches (high confidence)
         if (word & MASK_NOP) == PATTERN_NOP {
             score += 20;

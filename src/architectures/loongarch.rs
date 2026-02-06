@@ -546,9 +546,10 @@ pub fn score(data: &[u8]) -> i64 {
 
         // Address formation (very distinctive, 7-bit opcode)
         // LU12I.W: 0x14000000, mask 0xFE000000 -> top7 = 0x0A
-        // PCADDU12I: 0x1C000000, mask 0xFE000000 -> top7 = 0x0E
+        // LU32I.D: 0x16000000, mask 0xFE000000 -> top7 = 0x0B
         // PCALAU12I: 0x1A000000, mask 0xFE000000 -> top7 = 0x0D
-        if matches!(top7, 0x0A | 0x0D | 0x0E) {
+        // PCADDU12I: 0x1C000000, mask 0xFE000000 -> top7 = 0x0E
+        if matches!(top7, 0x0A | 0x0B | 0x0D | 0x0E) {
             score += 6;
             valid_count += 1;
             matched = true;
@@ -557,14 +558,18 @@ pub fn score(data: &[u8]) -> i64 {
         // ALU 3-register ops (17-bit opcode)
         if !matched {
             let alu_match = matches!(top17,
-                0x00020 | // ADD.W (0x00100000 >> 15)
+                0x00020 | // ADD.W
                 0x00021 | // ADD.D
                 0x00022 | // SUB.W
                 0x00023 | // SUB.D
+                0x00024 | // SLT
+                0x00025 | // SLTU
                 0x00029 | // AND
                 0x0002A | // OR
                 0x0002B | // XOR
                 0x00028 | // NOR
+                0x0002C | // ORN
+                0x0002D | // ANDN
                 0x0002E | // SLL.W
                 0x0002F | // SRL.W
                 0x00030 | // SRA.W
@@ -583,11 +588,51 @@ pub fn score(data: &[u8]) -> i64 {
             }
         }
 
+        // MASKEQZ/MASKNEZ - highly distinctive to LoongArch
+        if !matched && matches!(top17, 0x00026 | 0x00027) {
+            score += 8;
+            valid_count += 1;
+            matched = true;
+        }
+
+        // FP arithmetic 3R: FADD, FSUB, FMUL, FDIV, FMAX, FMIN, FSCALEB, FCOPYSIGN
+        if !matched && (0x00201..=0x00214).contains(&top17) {
+            score += 5;
+            valid_count += 1;
+            matched = true;
+        }
+
+        // FP move/conversion 2R: FABS, FNEG, FSQRT, FMOV, MOVGR2FR, MOVFR2GR, FCVT, FTINT, FFINT
+        if !matched && (0x00228..=0x0023A).contains(&top17) {
+            score += 5;
+            valid_count += 1;
+            matched = true;
+        }
+
+        // Shift immediates: SLLI, SRLI, SRAI, ROTRI (W and D variants)
+        if !matched && matches!(top17,
+            0x00081 |             // SLLI.W
+            0x00082 | 0x00083 |   // SLLI.D (6-bit imm spans 2 top17 values)
+            0x00089 |             // SRLI.W
+            0x0008A | 0x0008B |   // SRLI.D
+            0x00091 |             // SRAI.W
+            0x00092 | 0x00093 |   // SRAI.D
+            0x00099 |             // ROTRI.W
+            0x0009A | 0x0009B     // ROTRI.D
+        ) {
+            score += 4;
+            valid_count += 1;
+            matched = true;
+        }
+
         // Immediate ALU ops (10-bit opcode)
         if !matched {
             let imm_match = matches!(top10,
-                0x00A | // ADDI.W (0x02800000 >> 22)
+                0x008 | // SLTI
+                0x009 | // SLTUI
+                0x00A | // ADDI.W
                 0x00B | // ADDI.D
+                0x00C | // LU52I.D
                 0x00D | // ANDI
                 0x00E | // ORI
                 0x00F   // XORI
@@ -597,6 +642,27 @@ pub fn score(data: &[u8]) -> i64 {
                 valid_count += 1;
                 matched = true;
             }
+        }
+
+        // BSTRINS.D / BSTRPICK.D (bit-field operations)
+        if !matched && matches!(top10, 0x002 | 0x003) {
+            score += 4;
+            valid_count += 1;
+            matched = true;
+        }
+
+        // FP fused multiply-add 4R: FMADD, FMSUB, FNMADD, FNMSUB
+        if !matched && matches!(top10, 0x020 | 0x021 | 0x022 | 0x023) {
+            score += 5;
+            valid_count += 1;
+            matched = true;
+        }
+
+        // FP comparison: FCMP.cond.S/D
+        if !matched && top10 == 0x030 {
+            score += 5;
+            valid_count += 1;
+            matched = true;
         }
 
         // Load/Store (10-bit opcode)
@@ -624,6 +690,13 @@ pub fn score(data: &[u8]) -> i64 {
         // Vector load/store
         if !matched && (is_lsx(word) || is_lasx(word)) {
             score += 5;
+            valid_count += 1;
+            matched = true;
+        }
+
+        // LSX/LASX vector compute (beyond VLD/VST): top6 = 0x1C-0x1F
+        if !matched && matches!(top6, 0x1C | 0x1D | 0x1E | 0x1F) {
+            score += 4;
             valid_count += 1;
             matched = true;
         }
