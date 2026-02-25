@@ -440,6 +440,7 @@ pub fn score(data: &[u8]) -> i64 {
     let mut total_score: i64 = 0;
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
+    let mut zero_run = 0u32;
 
     // SPU is big-endian, 4-byte aligned
     let mut i = 0;
@@ -554,6 +555,31 @@ pub fn score(data: &[u8]) -> i64 {
             }
         }
 
+        // Cross-architecture penalties: MIPS patterns (big-endian 32-bit)
+        {
+            // MIPS JR $ra (0x03E00008) - function return
+            if instr == 0x03E00008 { total_score -= 15; i += 4; continue; }
+            // MIPS SYSCALL (0x0000000C)
+            if instr == 0x0000000C { total_score -= 10; i += 4; continue; }
+            // MIPS ADDIU $sp,$sp,N (prologue/epilogue)
+            if (instr & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; }
+            // MIPS SW $ra,N($sp) (save return address)
+            if (instr & 0xFFFF0000) == 0xAFBF0000 { total_score -= 10; }
+            // MIPS LW $ra,N($sp) (restore return address)
+            if (instr & 0xFFFF0000) == 0x8FBF0000 { total_score -= 10; }
+            // MIPS LUI (opcode 0x0F = 15, upper 6 bits)
+            if (instr >> 26) == 0x0F { total_score -= 3; }
+        }
+
+        // Cross-architecture penalties: MIPS LE patterns (when LE data read as BE)
+        {
+            let le32 = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+            if le32 == 0x03E00008 { total_score -= 15; } // MIPS JR $ra
+            if (le32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 8; } // MIPS ADDIU $sp
+            if (le32 & 0xFFFF0000) == 0xAFBF0000 { total_score -= 8; } // MIPS SW $ra
+            if (le32 & 0xFFFF0000) == 0x8FBF0000 { total_score -= 8; } // MIPS LW $ra
+        }
+
         // Cross-architecture penalties: 16-bit LE ISAs (AVR, Thumb, MSP430)
         // When 16-bit LE data is read as 32-bit BE, check the constituent halfwords
         {
@@ -567,6 +593,23 @@ pub fn score(data: &[u8]) -> i64 {
             if hw0 == 0x4770 || hw1 == 0x4770 { total_score -= 8; }
             // MSP430 RET
             if hw0 == 0x4130 || hw1 == 0x4130 { total_score -= 8; }
+        }
+
+        // Track runs of zero words (MIPS NOP sleds, padding)
+        // Zero = STOP in CellSPU but long runs indicate padding, not real SPU code
+        if instr == 0x00000000 {
+            zero_run += 1;
+            if zero_run <= 2 {
+                total_score += 1;
+            } else {
+                total_score -= 2; // Penalize long zero runs
+            }
+            valid_count += 1;
+            i += 4;
+            continue;
+        }
+        if zero_run > 0 {
+            zero_run = 0;
         }
 
         let format = determine_format(instr);

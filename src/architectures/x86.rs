@@ -367,6 +367,9 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             if (be32 & 0xFFFF0000) == 0x94210000 { score -= 10; }
             // PPC STDU r1, -N(r1) = 0xF821xxxx (64-bit prologue)
             if (be32 & 0xFFFF0000) == 0xF8210000 { score -= 10; }
+            // PPC64 STD r0,N(r1) / LD r0,N(r1) (save/restore LR)
+            if (be32 & 0xFFFF0000) == 0xF8010000 { score -= 8; }
+            if (be32 & 0xFFFF0000) == 0xE8010000 { score -= 8; }
 
             // SPARC (big-endian)
             if be32 == 0x01000000 { score -= 10; } // NOP
@@ -385,6 +388,17 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             // RISC-V (little-endian)
             if le32 == 0x00008067 { score -= 12; } // RET
             if le32 == 0x00000013 { score -= 8; }  // NOP
+
+            // PPC64-LE (same instruction encodings, LE byte order)
+            if le32 == 0x4E800020 { score -= 15; } // BLR
+            if le32 == 0x7C0802A6 { score -= 12; } // MFLR r0
+            if le32 == 0x7C0803A6 { score -= 12; } // MTLR r0
+            if (le32 & 0xFFFF0000) == 0xF8010000 { score -= 8; } // STD r0,N(r1)
+            if (le32 & 0xFFFF0000) == 0xE8010000 { score -= 8; } // LD r0,N(r1)
+
+            // LoongArch (little-endian)
+            if le32 == 0x4C000020 { score -= 12; } // JIRL ra (RET)
+            if le32 == 0x03400000 { score -= 8; }  // NOP
 
             j += 4;
         }

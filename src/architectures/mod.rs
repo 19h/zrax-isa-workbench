@@ -30,6 +30,7 @@ pub mod riscv;
 pub mod s390x;
 pub mod sparc;
 pub mod superh;
+pub mod tricore;
 pub mod vax;
 pub mod wasm;
 pub mod x86;
@@ -47,6 +48,7 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::Alpha => Endianness::Little,
         Isa::LoongArch32 | Isa::LoongArch64 => Endianness::Little,
         Isa::Hexagon => Endianness::Little,
+        Isa::Tricore => Endianness::Little,
         Isa::Bpf => Endianness::Little,
         Isa::Cuda => Endianness::Little,
         Isa::AmdGpu => Endianness::Little,
@@ -123,6 +125,7 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         // 16-bit aligned
         Isa::Avr => 2,
         Isa::Msp430 => 2,
+        Isa::Tricore => 2, // TriCore has 16/32-bit instructions (16-bit aligned)
 
         _ => 4,
     }

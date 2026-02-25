@@ -34,16 +34,31 @@ pub mod esd_type {
 pub const GOFF_RECORD_SIZE: usize = 80;
 
 /// Detect GOFF format.
+///
+/// Requires at least two 80-byte records starting with the GOFF marker (0x03)
+/// and valid record type nibbles. This prevents false positives from raw code
+/// blobs (e.g. MIPS `jr $ra` = 0x03E00008 or Hexagon packets starting with 0x03).
 pub fn detect(data: &[u8]) -> bool {
-    if data.len() < 3 {
+    // Need at least 2 full records to be confident
+    if data.len() < GOFF_RECORD_SIZE + 3 {
         return false;
     }
 
-    // GOFF records start with 0x03 marker
-    // Byte 0: 0x03 (GOFF marker)
-    // Byte 1: Record type | continuation flags
-    // Byte 2: Version (usually 0x00)
-    data[0] == GOFF_MARKER && data[2] == 0x00
+    // First record: marker + valid record type + version byte 0x00
+    if data[0] != GOFF_MARKER || data[2] != 0x00 {
+        return false;
+    }
+    let rec_type1 = data[1] & 0xF0;
+    if !matches!(rec_type1, 0x00 | 0x10 | 0x20 | 0x30 | 0x40 | 0xF0) {
+        return false;
+    }
+
+    // Second record at offset 80 must also start with GOFF marker + valid type
+    if data[GOFF_RECORD_SIZE] != GOFF_MARKER {
+        return false;
+    }
+    let rec_type2 = data[GOFF_RECORD_SIZE + 1] & 0xF0;
+    matches!(rec_type2, 0x00 | 0x10 | 0x20 | 0x30 | 0x40 | 0xF0)
 }
 
 /// Parse GOFF file.

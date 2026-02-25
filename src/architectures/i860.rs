@@ -230,8 +230,9 @@ pub fn is_return(instr: u32) -> bool {
     // Return is typically "br r1" or similar indirect branch through link register
     if op == opcode::BR {
         let src1 = extract_src1(instr);
-        // r1 is the link register
-        return src1 == 1;
+        let dest = extract_dest(instr);
+        // r1 is the link register. dest should be 0 for a branch.
+        return src1 == 1 && dest == 0;
     }
     false
 }
@@ -396,7 +397,7 @@ pub fn score(data: &[u8]) -> i64 {
                     && ((hw1 & 0xD000) == 0xD000 || (hw1 & 0xD000) == 0x9000)
                 {
                     // Strong Thumb-2 BL pattern
-                    total_score -= 8;
+                    total_score -= 15;
                     i += 4;
                     continue;
                 }
@@ -404,18 +405,18 @@ pub fn score(data: &[u8]) -> i64 {
                 // Thumb-2 LDR.W / STR.W: F8xx xxxx or F85x, F84x patterns
                 if (hw0 & 0xFF00) == 0xF800 || (hw0 & 0xFFF0) == 0xF8D0 || (hw0 & 0xFFF0) == 0xF8C0
                 {
-                    total_score -= 6;
+                    total_score -= 10;
                     i += 4;
                     continue;
                 }
 
                 // Generic 32-bit Thumb-2 - mild penalty
-                total_score -= 3;
+                total_score -= 5;
             }
 
             // Thumb-2 PUSH.W/POP.W: E92Dxxxx / E8BDxxxx
-            if (instr & 0xFFFFE000) == 0xE92D0000 || (instr & 0xFFFFE000) == 0xE8BD0000 {
-                total_score -= 10;
+            if hw0 == 0xE92D || hw0 == 0xE8BD {
+                total_score -= 20;
                 i += 4;
                 continue;
             }
@@ -476,21 +477,43 @@ pub fn score(data: &[u8]) -> i64 {
             }
 
             // --- AVR cross-architecture penalties (16-bit LE) ---
-            if hw0 == 0x9508 || hw1 == 0x9508 { total_score -= 10; } // AVR RET
-            if hw0 == 0x9518 || hw1 == 0x9518 { total_score -= 10; } // AVR RETI
-            if hw0 == 0x9588 || hw1 == 0x9588 { total_score -= 8; }  // AVR SLEEP
-            if hw0 == 0x9598 || hw1 == 0x9598 { total_score -= 8; }  // AVR BREAK
-            if hw0 == 0x9478 || hw1 == 0x9478 { total_score -= 8; }  // AVR SEI
-            if hw0 == 0x94F8 || hw1 == 0x94F8 { total_score -= 8; }  // AVR CLI
-            // AVR PUSH (0x920F mask 0xFE0F)
-            if (hw0 & 0xFE0F) == 0x920F || (hw1 & 0xFE0F) == 0x920F { total_score -= 5; }
+            if hw0 == 0x9508 || hw1 == 0x9508 {
+                total_score -= 10;
+            } // AVR RET
+            if hw0 == 0x9518 || hw1 == 0x9518 {
+                total_score -= 10;
+            } // AVR RETI
+            if hw0 == 0x9588 || hw1 == 0x9588 {
+                total_score -= 8;
+            } // AVR SLEEP
+            if hw0 == 0x9598 || hw1 == 0x9598 {
+                total_score -= 8;
+            } // AVR BREAK
+            if hw0 == 0x9478 || hw1 == 0x9478 {
+                total_score -= 8;
+            } // AVR SEI
+            if hw0 == 0x94F8 || hw1 == 0x94F8 {
+                total_score -= 8;
+            } // AVR CLI
+              // AVR PUSH (0x920F mask 0xFE0F)
+            if (hw0 & 0xFE0F) == 0x920F || (hw1 & 0xFE0F) == 0x920F {
+                total_score -= 5;
+            }
             // AVR POP (0x900F mask 0xFE0F)
-            if (hw0 & 0xFE0F) == 0x900F || (hw1 & 0xFE0F) == 0x900F { total_score -= 5; }
+            if (hw0 & 0xFE0F) == 0x900F || (hw1 & 0xFE0F) == 0x900F {
+                total_score -= 5;
+            }
 
             // --- MSP430 cross-architecture penalties (16-bit LE) ---
-            if hw0 == 0x4130 || hw1 == 0x4130 { total_score -= 10; } // MSP430 RET
-            if hw0 == 0x4303 || hw1 == 0x4303 { total_score -= 8; }  // MSP430 NOP
-            if hw0 == 0x1300 || hw1 == 0x1300 { total_score -= 8; }  // MSP430 RETI
+            if hw0 == 0x4130 || hw1 == 0x4130 {
+                total_score -= 10;
+            } // MSP430 RET
+            if hw0 == 0x4303 || hw1 == 0x4303 {
+                total_score -= 8;
+            } // MSP430 NOP
+            if hw0 == 0x1300 || hw1 == 0x1300 {
+                total_score -= 8;
+            } // MSP430 RETI
         }
 
         let op = extract_opcode(instr);
@@ -575,7 +598,8 @@ pub fn score(data: &[u8]) -> i64 {
             }
             // PPC ADDI (li) r3-r12 = 0x38xxxxxx, very common
             let ppc_op = (instr >> 26) & 0x3F;
-            if ppc_op == 14 { // ADDI
+            if ppc_op == 14 {
+                // ADDI
                 total_score -= 2;
             }
         }
@@ -620,7 +644,10 @@ pub fn score(data: &[u8]) -> i64 {
             // SPARC Arithmetic: format bits 31:30 = 10, common op3 codes
             if (be_word >> 30) == 2 {
                 let op3 = ((be_word >> 19) & 0x3F) as u8;
-                if matches!(op3, 0x00 | 0x02 | 0x04 | 0x10 | 0x11 | 0x12 | 0x14 | 0x25 | 0x26) {
+                if matches!(
+                    op3,
+                    0x00 | 0x02 | 0x04 | 0x10 | 0x11 | 0x12 | 0x14 | 0x25 | 0x26
+                ) {
                     total_score -= 3; // ADD, OR, SUB, ADDCC, SLL, SRL
                 }
             }
@@ -628,14 +655,16 @@ pub fn score(data: &[u8]) -> i64 {
             if (be_word >> 30) == 3 {
                 let op3 = ((be_word >> 19) & 0x3F) as u8;
                 if matches!(op3, 0x00..=0x07 | 0x09 | 0x0A | 0x0E | 0x0F |
-                    0x10..=0x17 | 0x20 | 0x21 | 0x23 | 0x24 | 0x25 | 0x27) {
+                    0x10..=0x17 | 0x20 | 0x21 | 0x23 | 0x24 | 0x25 | 0x27)
+                {
                     total_score -= 4; // Common SPARC LD/ST
                 }
             }
             // SPARC Branch/SETHI: format bits 31:30 = 00
             if (be_word >> 30) == 0 {
                 let op2 = ((be_word >> 22) & 0x07) as u8;
-                if matches!(op2, 2 | 4 | 6) { // Bicc, SETHI, FBfcc
+                if matches!(op2, 2 | 4 | 6) {
+                    // Bicc, SETHI, FBfcc
                     total_score -= 3;
                 }
             }
@@ -666,7 +695,21 @@ pub fn score(data: &[u8]) -> i64 {
             let b2 = ((instr >> 16) & 0xFF) as u8;
             let b3 = ((instr >> 24) & 0xFF) as u8;
             // REX + MOV/ADD/SUB/CMP patterns
-            if (0x40..=0x4F).contains(&b0) && matches!(b1, 0x89 | 0x8B | 0x01 | 0x29 | 0x83 | 0x3B | 0x85 | 0x31 | 0x33 | 0x39 | 0x8D | 0x63)
+            if (0x40..=0x4F).contains(&b0)
+                && matches!(
+                    b1,
+                    0x89 | 0x8B
+                        | 0x01
+                        | 0x29
+                        | 0x83
+                        | 0x3B
+                        | 0x85
+                        | 0x31
+                        | 0x33
+                        | 0x39
+                        | 0x8D
+                        | 0x63
+                )
             {
                 total_score -= 5;
             }
@@ -710,7 +753,12 @@ pub fn score(data: &[u8]) -> i64 {
                 }
             }
             // x86 0F escape without REX/SSE prefix (packed SSE operations)
-            if b0 == 0x0F && matches!(b1, 0x10 | 0x11 | 0x28 | 0x29 | 0x58 | 0x59 | 0x5A | 0x5C | 0x5E) {
+            if b0 == 0x0F
+                && matches!(
+                    b1,
+                    0x10 | 0x11 | 0x28 | 0x29 | 0x58 | 0x59 | 0x5A | 0x5C | 0x5E
+                )
+            {
                 total_score -= 4;
             }
         }
@@ -748,8 +796,14 @@ pub fn score(data: &[u8]) -> i64 {
                 // ALU operations - only score specific known opcodes
                 if matches!(
                     op,
-                    opcode::ADD | opcode::ADDU | opcode::SUB | opcode::SUBU
-                        | opcode::AND | opcode::SHL | opcode::SHR | opcode::SHRA
+                    opcode::ADD
+                        | opcode::ADDU
+                        | opcode::SUB
+                        | opcode::SUBU
+                        | opcode::AND
+                        | opcode::SHL
+                        | opcode::SHR
+                        | opcode::SHRA
                 ) {
                     total_score += 3;
                     // Validate register fields make sense
@@ -769,7 +823,10 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 // Other I-type: FP load/store range has lots of unused opcodes
                 // Only give small score for known FP load/store
-                else if matches!(op, opcode::FLD_S | opcode::FLD_D | opcode::FST_S | opcode::FST_D) {
+                else if matches!(
+                    op,
+                    opcode::FLD_S | opcode::FLD_D | opcode::FST_S | opcode::FST_D
+                ) {
                     total_score += 3;
                 }
                 // Unknown I-type in load/store ranges - no score
@@ -864,13 +921,26 @@ pub fn score(data: &[u8]) -> i64 {
                 if w != 0 && w != 0xFFFFFFFF {
                     let o = extract_opcode(w);
                     // i860 return: opcode 0x18, src1=r1 (very specific)
-                    if is_return(w) { distinctive_count += 1; }
+                    if is_return(w) {
+                        distinctive_count += 1;
+                    }
                     // Exact NOP
-                    else if w == opcode::NOP { distinctive_count += 1; }
+                    else if w == opcode::NOP {
+                        distinctive_count += 1;
+                    }
                     // Dual-mode toggle without pipeline (D=1, P=0) on specific FPU ops
-                    else if matches!(o, opcode::FADD | opcode::FSUB | opcode::FMUL
-                        | opcode::PFADD | opcode::PFSUB | opcode::PFMUL) {
-                        if extract_d_bit(w) && !extract_p_bit(w) { distinctive_count += 1; }
+                    else if matches!(
+                        o,
+                        opcode::FADD
+                            | opcode::FSUB
+                            | opcode::FMUL
+                            | opcode::PFADD
+                            | opcode::PFSUB
+                            | opcode::PFMUL
+                    ) {
+                        if extract_d_bit(w) && !extract_p_bit(w) {
+                            distinctive_count += 1;
+                        }
                     }
                 }
                 j += 4;

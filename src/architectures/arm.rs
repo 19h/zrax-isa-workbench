@@ -91,6 +91,59 @@ fn score_arm32(data: &[u8]) -> i64 {
     let mut bl_count = 0u32;
     let mut ret_seen = false;
 
+    // Pre-scan: Hexagon VLIW packet structure detection
+    // Hexagon uses 32-bit LE instructions with parse bits at 15:14.
+    // Each packet is 1-4 instructions, the last having parse bits = 11.
+    // Random/ARM data has ~68% coverage; real Hexagon code has >90%.
+    let mut hexagon_penalty: i64 = 0;
+    {
+        let mut hex_words_in_valid_pkts = 0u32;
+        let mut hex_total_words = 0u32;
+        let mut pkt_start = 0usize;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let word = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            hex_total_words += 1;
+            let pkt_len = ((j - pkt_start) / 4 + 1) as u32;
+            if (word >> 14) & 0x3 == 3 {
+                if pkt_len <= 4 {
+                    hex_words_in_valid_pkts += pkt_len;
+                }
+                pkt_start = j + 4;
+            } else if pkt_len > 4 {
+                pkt_start = j + 4;
+            }
+            j += 4;
+        }
+        if hex_total_words > 15 {
+            let coverage = hex_words_in_valid_pkts as f64 / hex_total_words as f64;
+            if coverage > 0.85 {
+                hexagon_penalty = (hex_words_in_valid_pkts as i64) * 4;
+            }
+        }
+        // Also check for specific Hexagon patterns
+        j = 0;
+        while j + 3 < data.len() {
+            let word = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            if (word & 0xFFFF0000) == 0x7F000000 {
+                hexagon_penalty += 25;
+            }
+            // NOP
+            else if word == 0x961EC01E {
+                hexagon_penalty += 30;
+            }
+            // DEALLOC_RETURN
+            else if (word & 0xFFFFE000) == 0xA09DC000 {
+                hexagon_penalty += 25;
+            }
+            // ALLOCFRAME
+            else if (word & 0xFFE03FFF) == 0x52800000 {
+                hexagon_penalty += 20;
+            } // JUMPR R31
+            j += 4;
+        }
+    }
+
     // ARM32 instructions are 4 bytes, aligned
     for i in (0..data.len().saturating_sub(3)).step_by(4) {
         let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
@@ -123,12 +176,24 @@ fn score_arm32(data: &[u8]) -> i64 {
         // AArch64 shares 32-bit LE encoding but different instruction formats.
         // Only penalize highly-specific AArch64 patterns to avoid hurting
         // ARM32 firmware scoring (broad masks match too many data words).
-        if word == 0xD503201F { score -= 15; continue; } // AArch64 NOP
-        if word == 0xD65F03C0 { score -= 20; continue; } // AArch64 RET
-        // AArch64 STP x29,x30,[sp,#off] (function prologue)
-        if (word & 0xFFC07FFF) == 0xA9007BFD { score -= 15; continue; }
+        if word == 0xD503201F {
+            score -= 15;
+            continue;
+        } // AArch64 NOP
+        if word == 0xD65F03C0 {
+            score -= 20;
+            continue;
+        } // AArch64 RET
+          // AArch64 STP x29,x30,[sp,#off] (function prologue)
+        if (word & 0xFFC07FFF) == 0xA9007BFD {
+            score -= 15;
+            continue;
+        }
         // AArch64 LDP x29,x30,[sp],#N (function epilogue)
-        if (word & 0xFFC07FFF) == 0xA8407BFD { score -= 15; continue; }
+        if (word & 0xFFC07FFF) == 0xA8407BFD {
+            score -= 15;
+            continue;
+        }
 
         // === Exact match patterns (very high confidence) ===
 
@@ -306,6 +371,9 @@ fn score_arm32(data: &[u8]) -> i64 {
         score += 10;
     }
 
+    // Apply Hexagon cross-architecture penalty
+    score -= hexagon_penalty;
+
     score.max(0)
 }
 
@@ -334,14 +402,52 @@ fn score_thumb(data: &[u8]) -> i64 {
         while j + 3 < data.len() {
             let word = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // Hexagon NOP
-            if (word & 0xFFFF0000) == 0x7F000000 { hexagon_penalty += 25; }
+            if (word & 0xFFFF0000) == 0x7F000000 {
+                hexagon_penalty += 25;
+            }
             // Hexagon DEALLOC_RETURN
-            else if word == 0x961EC01E { hexagon_penalty += 30; }
+            else if word == 0x961EC01E {
+                hexagon_penalty += 30;
+            }
             // Hexagon ALLOCFRAME
-            else if (word & 0xFFFFE000) == 0xA09DC000 { hexagon_penalty += 25; }
+            else if (word & 0xFFFFE000) == 0xA09DC000 {
+                hexagon_penalty += 25;
+            }
             // Hexagon JUMPR R31 (return)
-            else if (word & 0xFFE03FFF) == 0x52800000 { hexagon_penalty += 20; }
+            else if (word & 0xFFE03FFF) == 0x52800000 {
+                hexagon_penalty += 20;
+            }
             j += 4;
+        }
+
+        // Hexagon packet structure detection: count words in valid packets.
+        // Each packet is 1-4 consecutive words where the last has parse bits
+        // (15:14) = 11 and intermediate words have parse bits != 11.
+        // Random data produces ~68% coverage; real Hexagon code has >90%.
+        let mut hex_words_in_valid_pkts = 0u32;
+        let mut hex_total_words = 0u32;
+        let mut pkt_start = 0usize;
+        j = 0;
+        while j + 3 < data.len() {
+            let word = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            hex_total_words += 1;
+            let pkt_len = ((j - pkt_start) / 4 + 1) as u32;
+            if (word >> 14) & 0x3 == 3 {
+                if pkt_len <= 4 {
+                    hex_words_in_valid_pkts += pkt_len;
+                }
+                pkt_start = j + 4;
+            } else if pkt_len > 4 {
+                pkt_start = j + 4;
+            }
+            j += 4;
+        }
+        if hex_total_words > 15 {
+            let coverage = hex_words_in_valid_pkts as f64 / hex_total_words as f64;
+            if coverage > 0.85 {
+                // Strong Hexagon VLIW packet structure detected
+                hexagon_penalty += (hex_words_in_valid_pkts as i64) * 4;
+            }
         }
     }
 
@@ -383,6 +489,50 @@ fn score_thumb(data: &[u8]) -> i64 {
             // AArch64 B (unconditional branch - 000101xx pattern)
             else if (word >> 26) == 0x05 {
                 aarch64_penalty += 15;
+            }
+            j += 4;
+        }
+    }
+
+    // Pre-scan for MIPS32 BE patterns to apply penalty
+    // MIPS BE instructions read as LE halfwords produce Thumb-like patterns
+    // (e.g. SW ra → 0xBFAF matches IT block, ADDIU sp → 0xBD27 matches POP)
+    let mut mips_be_penalty: i64 = 0;
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // MIPS JR $ra (return)
+            if be32 == 0x03E00008 {
+                mips_be_penalty += 25;
+            }
+            // MIPS ADDIU $sp, $sp, xxx (stack frame setup)
+            else if (be32 & 0xFFFF0000) == 0x27BD0000 {
+                mips_be_penalty += 15;
+            }
+            // MIPS SW $ra, xxx($sp) (save return address)
+            else if (be32 & 0xFFFF0000) == 0xAFBF0000 {
+                mips_be_penalty += 15;
+            }
+            // MIPS LW $ra, xxx($sp) (restore return address)
+            else if (be32 & 0xFFFF0000) == 0x8FBF0000 {
+                mips_be_penalty += 15;
+            }
+            // MIPS NOP (after branch delay slot)
+            else if be32 == 0x00000000 && j >= 4 {
+                let prev_be32 =
+                    u32::from_be_bytes([data[j - 4], data[j - 3], data[j - 2], data[j - 1]]);
+                if prev_be32 == 0x03E00008 {
+                    mips_be_penalty += 10;
+                } // NOP after JR ra
+            }
+            // MIPS JAL (function call)
+            else if (be32 >> 26) == 0x03 {
+                mips_be_penalty += 8;
+            }
+            // MIPS LUI (load upper immediate) — very common
+            else if (be32 >> 26) == 0x0F {
+                mips_be_penalty += 5;
             }
             j += 4;
         }
@@ -448,11 +598,19 @@ fn score_thumb(data: &[u8]) -> i64 {
                 score += 40;
             }
             // PUSH.W / POP.W (multiple registers) - function boundaries
-            else if (word & 0xFFFFE000) == 0xE92D0000 {
+            else if hw == 0xE92D {
                 score += 55;
-            } else if (word & 0xFFFFE000) == 0xE8BD0000 {
+            } else if hw == 0xE8BD {
                 score += 55;
                 ret_count += 1;
+            }
+            // LDRD / STRD (dual load/store)
+            else if (hw & 0xFE5F) == 0xE840
+                || (hw & 0xFE5F) == 0xE850
+                || (hw & 0xFE5F) == 0xE940
+                || (hw & 0xFE5F) == 0xE950
+            {
+                score += 20;
             }
             // MRS/MSR (system register) - firmware specific
             else if (hw & 0xFFF0) == 0xF3E0 && (hw2 & 0xF000) == 0x8000 {
@@ -476,10 +634,12 @@ fn score_thumb(data: &[u8]) -> i64 {
                 score += 15;
             }
             // LDR.W / STR.W (32-bit load/store)
-            else if (hw & 0xFFF0) == 0xF8D0 || (hw & 0xFFF0) == 0xF8C0
-                || (hw & 0xFFF0) == 0xF850 || (hw & 0xFFF0) == 0xF840
+            else if (hw & 0xFFF0) == 0xF8D0
+                || (hw & 0xFFF0) == 0xF8C0
+                || (hw & 0xFFF0) == 0xF850
+                || (hw & 0xFFF0) == 0xF840
             {
-                score += 12;
+                score += 25;
             }
             // SDIV / UDIV (division - distinctive)
             else if (hw & 0xFFF0) == 0xFB90 || (hw & 0xFFF0) == 0xFBB0 {
@@ -491,10 +651,6 @@ fn score_thumb(data: &[u8]) -> i64 {
             {
                 score += 30;
             }
-            // IT block (If-Then) - Thumb-2 exclusive
-            else if (hw & 0xFF00) == 0xBF00 && (hw & 0x00FF) != 0x00 {
-                score += 20;
-            }
             // MOV.W Rd, #imm
             else if (hw & 0xFBEF) == 0xF04F {
                 score += 10;
@@ -502,6 +658,18 @@ fn score_thumb(data: &[u8]) -> i64 {
             // ADD.W/SUB.W with immediate
             else if (hw & 0xFBE0) == 0xF100 || (hw & 0xFBE0) == 0xF1A0 {
                 score += 8;
+            }
+            // MUL.W / MLA / MLS
+            else if (hw & 0xFFF0) == 0xFB00 || (hw & 0xFFF0) == 0xFB10 {
+                score += 10;
+            }
+            // SMULL / UMULL / SMLAL / UMLAL (64-bit multiply)
+            else if (hw & 0xFFF0) == 0xFB80
+                || (hw & 0xFFF0) == 0xFBA0
+                || (hw & 0xFFF0) == 0xFBC0
+                || (hw & 0xFFF0) == 0xFBE0
+            {
+                score += 15;
             }
             // Unrecognized 32-bit Thumb-2 - no points
 
@@ -511,14 +679,42 @@ fn score_thumb(data: &[u8]) -> i64 {
             let mut matched = true;
 
             // --- MSP430 cross-architecture penalties ---
-            if hw == 0x4130 { score -= 15; i += 2; continue; } // MSP430 RET
-            if hw == 0x4303 { score -= 10; i += 2; continue; } // MSP430 NOP
-            if hw == 0x1300 { score -= 10; i += 2; continue; } // MSP430 RETI
-            if (hw & 0xFF80) == 0x1280 { score -= 8; i += 2; continue; } // MSP430 CALL
-            // --- AVR cross-architecture penalties ---
-            if hw == 0x9508 { score -= 12; i += 2; continue; } // AVR RET
-            if hw == 0x9518 { score -= 10; i += 2; continue; } // AVR RETI
-            if hw == 0x9588 { score -= 8; i += 2; continue; }  // AVR SLEEP
+            if hw == 0x4130 {
+                score -= 15;
+                i += 2;
+                continue;
+            } // MSP430 RET
+            if hw == 0x4303 {
+                score -= 10;
+                i += 2;
+                continue;
+            } // MSP430 NOP
+            if hw == 0x1300 {
+                score -= 10;
+                i += 2;
+                continue;
+            } // MSP430 RETI
+            if (hw & 0xFF80) == 0x1280 {
+                score -= 8;
+                i += 2;
+                continue;
+            } // MSP430 CALL
+              // --- AVR cross-architecture penalties ---
+            if hw == 0x9508 {
+                score -= 12;
+                i += 2;
+                continue;
+            } // AVR RET
+            if hw == 0x9518 {
+                score -= 10;
+                i += 2;
+                continue;
+            } // AVR RETI
+            if hw == 0x9588 {
+                score -= 8;
+                i += 2;
+                continue;
+            } // AVR SLEEP
 
             // === High-confidence exact patterns ===
             if hw == 0x4770 {
@@ -542,13 +738,17 @@ fn score_thumb(data: &[u8]) -> i64 {
             else if (hw & 0xFE00) == 0xB400 {
                 let has_lr = (hw & 0x0100) != 0;
                 score += if has_lr { 30 } else { 10 };
-                if has_lr { push_lr_count += 1; }
+                if has_lr {
+                    push_lr_count += 1;
+                }
             }
             // POP {reglist} with PC
             else if (hw & 0xFE00) == 0xBC00 {
                 let has_pc = (hw & 0x0100) != 0;
                 score += if has_pc { 30 } else { 10 };
-                if has_pc { ret_count += 1; }
+                if has_pc {
+                    ret_count += 1;
+                }
             }
             // CBZ / CBNZ (Thumb-2 exclusive)
             else if (hw & 0xF500) == 0xB100 || (hw & 0xF500) == 0xB900 {
@@ -578,6 +778,11 @@ fn score_thumb(data: &[u8]) -> i64 {
             else if (hw & 0xF000) == 0xD000 && (hw & 0x0F00) != 0x0E00 && (hw & 0x0F00) != 0x0F00
             {
                 score += 5;
+            }
+            // IT block (If-Then) - Thumb-2 exclusive, very distinctive
+            // IT{x{y{z}}} <cond>: 0xBFxx where low byte != 0
+            else if (hw & 0xFF00) == 0xBF00 && (hw & 0x00FF) != 0x00 {
+                score += 20;
             }
             // SXTH, SXTB, UXTH, UXTB - sign/zero extend
             else if (hw & 0xFF00) == 0xB200 {
@@ -638,6 +843,9 @@ fn score_thumb(data: &[u8]) -> i64 {
 
     // Apply Hexagon penalty
     score -= hexagon_penalty;
+
+    // Apply MIPS BE penalty
+    score -= mips_be_penalty;
 
     score.max(0)
 }

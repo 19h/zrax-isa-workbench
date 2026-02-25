@@ -124,7 +124,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x2B => (Isa::Sparc64, 64),
 
         // Siemens TriCore
-        0x2C => (Isa::Unknown(0x2C), 32),
+        0x2C => (Isa::Tricore, 32), // EM_TRICORE
 
         // ARC (ARCv1)
         0x2D => (Isa::Arc, 32),

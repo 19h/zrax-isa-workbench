@@ -247,6 +247,20 @@ pub fn score(data: &[u8]) -> i64 {
             if (le32 >> 22) & 0x3FF == 0x0A7 { total_score -= 3; }
             // LoongArch LD.D (top10 = 0x0A3) - load in epilogue
             if (le32 >> 22) & 0x3FF == 0x0A3 { total_score -= 3; }
+            // LoongArch conditional branches (common in branch-heavy code)
+            // BEQZ=0x10, BNEZ=0x11, JIRL=0x13, BEQ=0x16, BNE=0x17
+            // BLT=0x18, BGE=0x19, BLTU=0x1A, BGEU=0x1B
+            {
+                let la_top6 = le32 >> 26;
+                if matches!(la_top6, 0x10 | 0x11 | 0x16 | 0x17 | 0x18 | 0x19 | 0x1A | 0x1B) {
+                    total_score -= 4;
+                }
+                if la_top6 == 0x13 { total_score -= 5; } // JIRL
+            }
+            // LoongArch address formation: LU12I.W(0x0A), LU32I.D(0x0B), PCALAU12I(0x0D)
+            if matches!((le32 >> 25) & 0x7F, 0x0A | 0x0B | 0x0D) { total_score -= 3; }
+            // LoongArch ALU immediate: ORI(0x00E), XORI(0x00F), ANDI(0x00D), SLTI(0x008)
+            if matches!((le32 >> 22) & 0x3FF, 0x00D | 0x00E | 0x00F | 0x008 | 0x009) { total_score -= 3; }
             // RISC-V
             if le32 == 0x00000013 { total_score -= 10; } // RISC-V NOP
             if le32 == 0x00008067 { total_score -= 12; } // RISC-V RET

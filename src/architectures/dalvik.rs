@@ -647,6 +647,7 @@ pub fn score(data: &[u8]) -> i64 {
     }
 
     let mut total_score: i64 = 0;
+    let mut nop_run = 0u32;
     let mut i = 0;
     let mut valid_count = 0u32;
     let mut invalid_count = 0u32;
@@ -662,13 +663,39 @@ pub fn score(data: &[u8]) -> i64 {
             // RISC-V
             if le32 == 0x00000013 { total_score -= 12; } // RISC-V NOP (addi x0,x0,0)
             if le32 == 0x00008067 { total_score -= 15; } // RISC-V RET (jalr x0,ra,0)
+            // RISC-V common instruction formats (low 7 bits = opcode)
+            {
+                let rv_op = le32 & 0x7F;
+                // RISC-V AUIPC (0x17) and LUI (0x37) are highly distinctive
+                if rv_op == 0x17 { total_score -= 5; } // AUIPC
+                if rv_op == 0x37 { total_score -= 5; } // LUI
+                // RISC-V JAL (0x6F) with rd=ra(1): distinctive call pattern
+                if rv_op == 0x6F && ((le32 >> 7) & 0x1F) == 1 { total_score -= 8; }
+                // RISC-V floating-point opcodes (distinctive for FP-heavy code)
+                if rv_op == 0x53 { total_score -= 4; } // OP-FP (fadd, fsub, fmul, etc.)
+                if rv_op == 0x07 { total_score -= 3; } // LOAD-FP (flw, fld)
+                if rv_op == 0x27 { total_score -= 3; } // STORE-FP (fsw, fsd)
+                // RISC-V BRANCH (0x63) with common funct3 patterns
+                if rv_op == 0x63 { total_score -= 3; }
+            }
             // AArch64
             if le32 == 0xD65F03C0 { total_score -= 12; } // AArch64 RET
             if le32 == 0xD503201F { total_score -= 10; } // AArch64 NOP
             // LoongArch
             if le32 == 0x4C000020 { total_score -= 10; } // LoongArch JIRL ra (RET)
+            if le32 == 0x03400000 { total_score -= 8; }  // LoongArch NOP
             // x86-64: push rbp; mov rbp,rsp (bytes: 55 48 89 E5)
             if le32 == 0xE5894855 { total_score -= 15; }
+            // x86-64: ENDBR64 (F3 0F 1E FA)
+            if le32 == 0xFA1E0FF3 { total_score -= 12; }
+            // x86-64: REX.W + MOV (48 89/8B)
+            if (le32 & 0xFFFF) == 0x8948 || (le32 & 0xFFFF) == 0x8B48 { total_score -= 6; }
+            // x86-64: REX.W + SUB/ADD (48 83/81)
+            if (le32 & 0xFFFF) == 0x8348 || (le32 & 0xFFFF) == 0x8148 { total_score -= 5; }
+            // x86-64: REX.W + LEA (48 8D)
+            if (le32 & 0xFFFF) == 0x8D48 { total_score -= 5; }
+            // x86-64: REX.W + TEST (48 85)
+            if (le32 & 0xFFFF) == 0x8548 { total_score -= 4; }
             j += 4;
         }
     }
@@ -684,6 +711,24 @@ pub fn score(data: &[u8]) -> i64 {
             if (hw & 0xFF00) == 0xBD00 { total_score -= 5; } // Thumb POP {.., PC}
             if hw == 0x4130 { total_score -= 10; } // MSP430 RET
             if hw == 0x9508 { total_score -= 10; } // AVR RET
+            // x86 SSE prefixes: F2 0F (REPNE+escape) and F3 0F (REP+escape)
+            if hw == 0x0FF2 || hw == 0x0FF3 { total_score -= 8; }
+            // x86 SSE: 0F 28/29 (MOVAPS), 0F 10/11 (MOVUPS)
+            if hw == 0x280F || hw == 0x290F || hw == 0x100F || hw == 0x110F { total_score -= 6; }
+            // x86 SSE2 packed prefix: 66 0F
+            if hw == 0x0F66 { total_score -= 6; }
+            // x86 RET (C3) followed by common padding/alignment (CC=INT3, 90=NOP)
+            if (hw & 0xFF) == 0xC3 && matches!(hw >> 8, 0xCC | 0x90 | 0xC3 | 0x55) { total_score -= 8; }
+            // x86 VEX 2-byte prefix (C5 xx): AVX instructions
+            if (hw & 0xFF) == 0xC5 { total_score -= 8; }
+            // x86 EVEX prefix (62 P0 P1): AVX-512, check P0 bits[3:2]==0, P1 bit[2]==1
+            if (hw & 0xFF) == 0x62 && j + 2 < data.len() {
+                let p0 = data[j + 1];
+                let p1 = data[j + 2];
+                if (p0 & 0x0C) == 0 && (p1 & 0x04) != 0 {
+                    total_score -= 10;
+                }
+            }
             j += 2;
         }
     }
@@ -743,10 +788,21 @@ pub fn score(data: &[u8]) -> i64 {
             opcode::ADD_INT_2ADDR..=opcode::REM_DOUBLE_2ADDR => total_score += 3,
             opcode::ADD_INT..=opcode::REM_DOUBLE => total_score += 2,
 
-            // NOP is valid but should be rare
-            opcode::NOP => total_score += 1,
+            // NOP is valid but rare — penalize long runs (NOP sleds/padding)
+            opcode::NOP => {
+                nop_run += 1;
+                if nop_run <= 2 {
+                    total_score += 1;
+                } else {
+                    total_score -= 2;
+                }
+            }
 
             _ => {}
+        }
+
+        if op != opcode::NOP {
+            nop_run = 0;
         }
 
         i += byte_size;
@@ -767,11 +823,11 @@ pub fn score(data: &[u8]) -> i64 {
     // instructions. Many Dalvik opcodes are single-byte (0x00-0xE2) which means
     // random data has high validity ratio. Without distinctive control flow,
     // the data is not real Dalvik bytecode.
-    if valid_count > 10 {
+    if valid_count > 5 {
         if return_count == 0 && invoke_count == 0 {
-            total_score = (total_score as f64 * 0.15) as i64;
+            total_score = (total_score as f64 * 0.10) as i64;
         } else if return_count == 0 {
-            total_score = (total_score as f64 * 0.40) as i64;
+            total_score = (total_score as f64 * 0.30) as i64;
         }
     }
 

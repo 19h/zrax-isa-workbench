@@ -400,6 +400,67 @@ pub fn score(data: &[u8]) -> i64 {
     let mut total_count = 0u32;
     let mut i = 0;
 
+    // Cross-architecture penalties for LE 32-bit ISAs
+    // s390x is big-endian; LE data read as BE creates false matches
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // AArch64
+            if le32 == 0xD65F03C0 { score -= 15; } // RET
+            if le32 == 0xD503201F { score -= 10; } // NOP
+            // RISC-V
+            if le32 == 0x00008067 { score -= 12; } // RET
+            if le32 == 0x00000013 { score -= 8; }  // NOP
+            // PPC64-LE
+            if le32 == 0x4E800020 { score -= 15; } // BLR
+            if le32 == 0x7C0802A6 { score -= 12; } // MFLR r0
+            // LoongArch
+            if le32 == 0x4C000020 { score -= 12; } // RET
+            if le32 == 0x03400000 { score -= 8; }  // NOP
+            // Hexagon: packet end markers (parse bits = 11 in bits 15:14)
+            // When read as LE, valid Hexagon has bits 15:14 = 00/01/10/11
+            // Hexagon NOP
+            if (le32 & 0xFFFF0000) == 0x7F000000 { score -= 10; }
+            // Hexagon DEALLOC_RETURN
+            if le32 == 0x961EC01E { score -= 15; }
+            j += 4;
+        }
+    }
+
+    // Cross-architecture penalties for BE 32-bit ISAs
+    {
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // SPARC
+            if be32 == 0x01000000 { score -= 10; } // NOP
+            if be32 == 0x81C7E008 { score -= 15; } // RET
+            if be32 == 0x81C3E008 { score -= 15; } // RETL
+            // PPC BE
+            if be32 == 0x4E800020 { score -= 15; } // BLR
+            if be32 == 0x60000000 { score -= 10; } // NOP
+            // MIPS BE
+            if be32 == 0x03E00008 { score -= 12; } // JR $ra
+            j += 4;
+        }
+    }
+
+    // Cross-architecture penalties for 16-bit LE ISAs
+    {
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+            // Thumb BX LR
+            if hw == 0x4770 { score -= 10; }
+            // MSP430 RET
+            if hw == 0x4130 { score -= 10; }
+            // AVR RET
+            if hw == 0x9508 { score -= 8; }
+            j += 2;
+        }
+    }
+
     while i < data.len() {
         let first = data[i];
         let len = length::from_first_byte(first);

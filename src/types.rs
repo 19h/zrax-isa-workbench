@@ -107,6 +107,9 @@ pub enum Isa {
     Blackfin,
     Sharc,
 
+    // Infineon TriCore
+    Tricore,
+
     // Embedded/Microcontrollers
     Avr,
     Avr32,
@@ -217,6 +220,7 @@ impl Isa {
             Isa::TiPru => "TI PRU",
             Isa::Blackfin => "Analog Devices Blackfin",
             Isa::Sharc => "Analog Devices SHARC",
+            Isa::Tricore => "Infineon TriCore",
             Isa::Avr => "Atmel AVR",
             Isa::Avr32 => "Atmel AVR32",
             Isa::Msp430 => "TI MSP430",
@@ -285,6 +289,7 @@ impl Isa {
             | Isa::Blackfin
             | Isa::Sharc
             | Isa::Hexagon
+            | Isa::Tricore
             | Isa::Tile64
             | Isa::TilePro
             | Isa::TileGx => 32,
@@ -350,6 +355,7 @@ impl Isa {
                 | Isa::RiscV32
                 | Isa::RiscV64
                 | Isa::RiscV128
+                | Isa::Tricore
                 | Isa::Xtensa
         )
     }

@@ -52,6 +52,7 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::Vax, "DEC VAX"),
     (Isa::I860, "Intel i860"),
     (Isa::CellSpu, "Cell SPU"),
+    (Isa::Tricore, "Infineon TriCore"),
 ];
 
 /// Result of heuristic scoring for a single architecture.
@@ -515,6 +516,16 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 32,
     });
 
+    // TriCore
+    let tricore_score = scorer::score_tricore(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Tricore,
+        raw_score: tricore_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
     // Calculate confidence using margin-based approach
     // Sort by score to find winner and runner-up
     scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
@@ -616,10 +627,11 @@ pub fn detect_multi_isa(
         // Only count the winner if its confidence exceeds our threshold.
         if let Some(best) = scores.first() {
             if best.raw_score > 0 && best.confidence >= min_window_confidence {
-                isa_windows
-                    .entry(best.isa)
-                    .or_default()
-                    .push((best.raw_score, best.endianness, best.bitwidth));
+                isa_windows.entry(best.isa).or_default().push((
+                    best.raw_score,
+                    best.endianness,
+                    best.bitwidth,
+                ));
             }
         }
 
@@ -686,9 +698,12 @@ fn is_string_data(data: &[u8]) -> bool {
     if data.is_empty() {
         return false;
     }
-    let printable = data.iter().filter(|&&b| {
-        b == 0 || b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b)
-    }).count();
+    let printable = data
+        .iter()
+        .filter(|&&b| {
+            b == 0 || b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b)
+        })
+        .count();
     printable * 100 / data.len() > 75
 }
 

@@ -213,6 +213,24 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             if le32 == 0x2000804E { score -= 15; } // PPC BLR as LE
             // PPC NOP (BE 0x60000000 → LE 0x00000060)
             if le32 == 0x00000060 { score -= 10; } // PPC NOP as LE
+            // PPC MFLR r0 (BE 0x7C0802A6 → LE 0xA602087C)
+            if le32 == 0xA602087C { score -= 10; }
+            // SPARC exact patterns (BE values swapped to LE for comparison)
+            {
+                let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+                // SPARC NOP (0x01000000)
+                if be32 == 0x01000000 { score -= 10; }
+                // SPARC RESTORE %g0,%g0,%g0 (0x81E80000)
+                if be32 == 0x81E80000 { score -= 12; }
+                // SPARC SAVE with %sp as source (common: save %sp, -N, %sp)
+                // Format: 10 rd 111100 rs1 1 imm13 — rs1=%sp(14)=%o6
+                if (be32 >> 30) == 2 {
+                    let op3 = ((be32 >> 19) & 0x3F) as u8;
+                    let rs1 = ((be32 >> 14) & 0x1F) as u8;
+                    if op3 == 0x3C && rs1 == 14 { score -= 12; } // SAVE %sp,...
+                    if op3 == 0x3D { score -= 8; } // any RESTORE
+                }
+            }
             j += 4;
         }
     }
@@ -334,10 +352,18 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                 }
                 // Common MIPS LE opcodes that overlap with valid RISC-V
                 let mips_op = (word >> 26) & 0x3F;
-                if matches!(mips_op, 0x09 | 0x0F) {
+                if mips_op == 0x09 { // ADDIU
                     let mips_rs = (word >> 21) & 0x1F;
-                    if matches!(mips_rs as u8, 28 | 29 | 30 | 31) && mips_op == 0x09 {
+                    if matches!(mips_rs as u8, 28 | 29 | 30 | 31) {
                         score -= 3; // ADDIU with $sp/$gp/$ra
+                    }
+                }
+                // MIPS R-type ADDU with common register combos
+                if mips_op == 0 {
+                    let funct = (word & 0x3F) as u8;
+                    if funct == 0x21 { // ADDU
+                        let rd = ((word >> 11) & 0x1F) as u8;
+                        if matches!(rd, 2 | 4 | 5 | 6 | 7) { score -= 3; } // result in $v0/$a0-$a3
                     }
                 }
             }

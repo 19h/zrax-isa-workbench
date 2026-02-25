@@ -715,6 +715,31 @@ pub fn score(data: &[u8]) -> i64 {
         i += 2;
     }
 
+    // Count truly distinctive AVR opcodes (separate from broad instruction format matches).
+    // PPC64-LE FP code produces many 0xCxxx/0xDxxx halfwords that match AVR RJMP/RCALL,
+    // but will lack these narrow, AVR-specific patterns.
+    let distinctive_avr = {
+        let mut count = 0u32;
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let w = u16::from_le_bytes([data[j], data[j + 1]]);
+            match w {
+                0x9508 | 0x9518 => count += 1, // RET, RETI
+                0x9588 | 0x9598 | 0x95A8 => count += 1, // SLEEP, BREAK, WDR
+                0x9478 | 0x94F8 => count += 1, // SEI, CLI
+                0x9509 | 0x9409 => count += 1, // ICALL, IJMP
+                _ => {
+                    if (w & 0xFE0F) == 0x920F { count += 1; } // PUSH
+                    else if (w & 0xFE0F) == 0x900F { count += 1; } // POP
+                    else if (w & 0xFF00) == 0x9600 { count += 1; } // ADIW
+                    else if (w & 0xFF00) == 0x9700 { count += 1; } // SBIW
+                }
+            }
+            j += 2;
+        }
+        count
+    };
+
     // Structural bonus: real code has returns and calls/branches
     if ret_count > 0 && (call_count > 0 || branch_count > 0) {
         score += 15;
@@ -886,6 +911,10 @@ pub fn score(data: &[u8]) -> i64 {
         if ret_count == 0 && call_count == 0 && branch_count == 0 {
             // No returns, calls, or branches at all - not code
             score = (score as f64 * 0.20) as i64;
+        } else if num_halfwords > 100 && distinctive_avr == 0 {
+            // Has broad-format matches (RJMP/RCALL ranges) but no truly
+            // distinctive AVR opcodes — likely non-AVR data (e.g. PPC64-LE FP code)
+            score = (score as f64 * 0.15) as i64;
         }
     }
 

@@ -95,6 +95,27 @@ pub fn score(data: &[u8]) -> i64 {
                 continue;
             }
         }
+        // MIPS LE patterns
+        if word == 0x03E00008 { score -= 15; continue; }  // JR $ra
+        if (word & 0xFFFF0000) == 0x27BD0000 { score -= 10; }  // ADDIU $sp
+        if (word & 0xFFFF0000) == 0xAFBF0000 { score -= 10; }  // SW $ra
+        if (word & 0xFFFF0000) == 0x8FBF0000 { score -= 10; }  // LW $ra
+        // MIPS BE patterns (read as LE)
+        {
+            let be32 = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+            if be32 == 0x03E00008 { score -= 15; }  // JR $ra
+            if (be32 & 0xFFFF0000) == 0x27BD0000 { score -= 10; }  // ADDIU $sp
+            if (be32 & 0xFFFF0000) == 0xAFBF0000 { score -= 10; }  // SW $ra
+        }
+        // PPC BLR (BE 0x4E800020)
+        {
+            let be32 = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+            if be32 == 0x4E800020 { score -= 12; }
+            if be32 == 0x60000000 { score -= 8; }  // PPC NOP
+        }
+        // LoongArch
+        if word == 0x4C000020 { score -= 10; }  // RET
+        if word == 0x03400000 { score -= 8; }   // NOP
 
         // --- Nios II instruction scoring ---
         let opcode = word & 0x3F;
@@ -143,7 +164,14 @@ pub fn score(data: &[u8]) -> i64 {
             OP_BR => { score += 4; branch_count += 1; }
             OP_BEQ => { score += 4; branch_count += 1; }
             OP_BNE => { score += 4; branch_count += 1; }
-            OP_CALL => { score += 5; call_count += 1; }
+            OP_CALL => {
+                // CALL target is bits 31:6 — require non-zero target
+                // (word 0x00000000 is not a real CALL)
+                if (word >> 6) != 0 {
+                    score += 5;
+                    call_count += 1;
+                }
+            }
             _ => { matched = false; }
         }
 

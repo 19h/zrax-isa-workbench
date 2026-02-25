@@ -770,6 +770,49 @@ pub fn score(data: &[u8]) -> i64 {
     let mut return_count = 0u32;
     let mut block_count = 0u32;
 
+    // Cross-architecture penalties: x86/x86-64 byte patterns
+    {
+        let mut j = 0;
+        while j < data.len() {
+            let b = data[j];
+            // x86 prologue: PUSH EBP (0x55) + MOV EBP,ESP (0x89 0xE5)
+            if b == 0x55 && j + 2 < data.len() && data[j + 1] == 0x89 && data[j + 2] == 0xE5 {
+                total_score -= 12;
+                j += 3;
+                continue;
+            }
+            // x86-64 REX.W (0x48) + common opcodes
+            if b == 0x48 && j + 1 < data.len() {
+                match data[j + 1] {
+                    0x89 | 0x8B => total_score -= 6,  // MOV r64
+                    0x83 | 0x8D => total_score -= 5,  // arith imm8, LEA
+                    0x85 | 0xC7 => total_score -= 4,  // TEST, MOV imm
+                    _ => {}
+                }
+            }
+            // ENDBR64 (F3 0F 1E FA)
+            if b == 0xF3 && j + 3 < data.len() && data[j + 1] == 0x0F && data[j + 2] == 0x1E && data[j + 3] == 0xFA {
+                total_score -= 12;
+                j += 4;
+                continue;
+            }
+            // Multi-byte NOP (0F 1F)
+            if b == 0x0F && j + 1 < data.len() && data[j + 1] == 0x1F {
+                total_score -= 6;
+            }
+            // x86 MOVSD/MOVSS (F2/F3 0F 10/11/58/59/5C/5E)
+            if (b == 0xF2 || b == 0xF3) && j + 2 < data.len() && data[j + 1] == 0x0F {
+                let op2 = data[j + 2];
+                if matches!(op2, 0x10 | 0x11 | 0x58 | 0x59 | 0x5C | 0x5E) {
+                    total_score -= 5;
+                }
+            }
+            // x86 RET (0xC3)
+            if b == 0xC3 { total_score -= 3; }
+            j += 1;
+        }
+    }
+
     while i < data.len() {
         let op = data[i];
         let len = estimate_instruction_length(data, i);
@@ -852,6 +895,17 @@ pub fn score(data: &[u8]) -> i64 {
     // Penalty for unbalanced blocks
     if block_depth != 0 {
         total_score -= block_depth.abs() as i64 * 5;
+    }
+
+    // Penalty for zero-byte dominated data (NOP sleds, padding).
+    // Real WASM code sections never have long runs of zero bytes.
+    // WASM opcode 0x00 (UNREACHABLE) is extremely rare in practice.
+    if data.len() > 32 {
+        let zero_count = data.iter().filter(|&&b| b == 0).count();
+        if zero_count * 4 > data.len() * 3 {
+            // >75% zero bytes — almost certainly not WASM
+            total_score = (total_score as f64 * 0.05) as i64;
+        }
     }
 
     // Structural requirement: WASM code must have calls, returns, or block structure

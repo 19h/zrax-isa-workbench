@@ -11,7 +11,7 @@
 use crate::architectures::{
     aarch64, alpha, arc, arm, avr, blackfin, cellspu, dalvik, hexagon, i860, ia64, jvm, lanai,
     loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv, s390x, sparc,
-    superh, vax, wasm, x86, xtensa,
+    superh, tricore, vax, wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -145,6 +145,14 @@ pub fn score_lanai(data: &[u8]) -> i64 {
 #[inline]
 pub fn score_hexagon(data: &[u8]) -> i64 {
     hexagon::score(data)
+}
+
+/// Score likelihood of TriCore code.
+///
+/// Delegates to `crate::architectures::tricore::score()`.
+#[inline]
+pub fn score_tricore(data: &[u8]) -> i64 {
+    tricore::score(data)
 }
 
 // =============================================================================

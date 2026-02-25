@@ -446,7 +446,7 @@ pub fn score(data: &[u8]) -> i64 {
             if hw0 == 0x9508 || hw1 == 0x9508 { score -= 8; }
             if hw0 == 0x9518 || hw1 == 0x9518 { score -= 6; }
             // MSP430 RET
-            if hw0 == 0x4130 || hw1 == 0x4130 { score -= 8; }
+            if hw0 == 0x4130 || hw1 == 0x4130 { score -= 10; }
             // MSP430 NOP
             if hw0 == 0x4303 || hw1 == 0x4303 { score -= 6; }
             // SH RTS / NOP

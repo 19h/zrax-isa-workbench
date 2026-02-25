@@ -236,18 +236,18 @@ fn score_word(word: u32) -> i64 {
         o if o == opcode::STHU => score += 4,
         o if o == opcode::LMW => score += 4,
         o if o == opcode::STMW => score += 4,
-        o if o == opcode::LFS => score += 3,
-        o if o == opcode::LFSU => score += 3,
-        o if o == opcode::LFD => score += 3,
-        o if o == opcode::LFDU => score += 3,
-        o if o == opcode::STFS => score += 3,
-        o if o == opcode::STFSU => score += 3,
-        o if o == opcode::STFD => score += 3,
-        o if o == opcode::STFDU => score += 3,
+        o if o == opcode::LFS => score += 5,
+        o if o == opcode::LFSU => score += 6,
+        o if o == opcode::LFD => score += 5,
+        o if o == opcode::LFDU => score += 6,
+        o if o == opcode::STFS => score += 5,
+        o if o == opcode::STFSU => score += 6,
+        o if o == opcode::STFD => score += 5,
+        o if o == opcode::STFDU => score += 6,
         o if o == opcode::LD_STD => score += 5, // 64-bit load/store
         o if o == opcode::STD => score += 5,     // 64-bit store
-        o if o == opcode::FP_SINGLE => score += 3,
-        o if o == opcode::FP_DOUBLE => score += 3,
+        o if o == opcode::FP_SINGLE => score += 5,
+        o if o == opcode::FP_DOUBLE => score += 5,
         _ => {}
     }
 
@@ -293,6 +293,14 @@ fn score_with_structural(data: &[u8], be: bool) -> i64 {
         if is_blr(word) { blr_count += 1; }
         if is_bl(word) { bl_count += 1; }
         if word == patterns::MFLR_R0 || word == patterns::MTLR_R0 { mflr_count += 1; }
+
+        // PPC64 prologue/epilogue bonus: STD r0,N(r1) / STDU r1,-N(r1)
+        // These are very distinctive function setup patterns.
+        if (word & 0xFFFF0003) == 0xF8010000 { score += 8; } // STD r0,N(r1) - save LR
+        if (word & 0xFFFF0003) == 0xF8210001 { score += 10; } // STDU r1,-N(r1) - frame setup
+        if (word & 0xFFFF0003) == 0xE8010000 { score += 8; } // LD r0,N(r1) - restore LR
+        // PPC32 prologue: STWU r1,-N(r1) = 0x9421xxxx
+        if (word & 0xFFFF0000) == 0x94210000 { score += 8; }
 
         score += score_word(word);
     }

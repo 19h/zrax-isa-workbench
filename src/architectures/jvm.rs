@@ -657,6 +657,18 @@ pub fn score(data: &[u8]) -> i64 {
             if (be32 & 0xFFFF0000) == 0x8FBF0000 { total_score -= 10; } // MIPS LW $ra
             if be32 == 0x4E800020 { total_score -= 15; } // PPC BLR
             if be32 == 0x81C7E008 { total_score -= 15; } // SPARC RET
+            // MIPS BE generic opcodes (bits 31:26)
+            {
+                let mips_op = (be32 >> 26) & 0x3F;
+                match mips_op {
+                    0x23 => total_score -= 4, // LW
+                    0x2B => total_score -= 4, // SW
+                    0x09 => total_score -= 3, // ADDIU
+                    0x0F => total_score -= 4, // LUI
+                    0x03 => total_score -= 5, // JAL
+                    _ => {}
+                }
+            }
             j += 4;
         }
         // 32-bit LE patterns (MIPS LE, RISC-V, LoongArch, AArch64)
@@ -674,6 +686,18 @@ pub fn score(data: &[u8]) -> i64 {
             if (le32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; } // MIPS ADDIU $sp,$sp,N
             if (le32 & 0xFFFF0000) == 0xAFBF0000 { total_score -= 10; } // MIPS SW $ra,N($sp)
             if (le32 & 0xFFFF0000) == 0x8FBF0000 { total_score -= 10; } // MIPS LW $ra,N($sp)
+            // MIPS generic opcodes (bits 31:26) - common instructions
+            {
+                let mips_op = (le32 >> 26) & 0x3F;
+                match mips_op {
+                    0x23 => total_score -= 4, // LW (any register)
+                    0x2B => total_score -= 4, // SW (any register)
+                    0x09 => total_score -= 3, // ADDIU (any register)
+                    0x0F => total_score -= 4, // LUI
+                    0x03 => total_score -= 5, // JAL
+                    _ => {}
+                }
+            }
             // RISC-V
             if le32 == 0x00000013 { total_score -= 12; } // RISC-V NOP (addi x0,x0,0)
             if le32 == 0x00008067 { total_score -= 15; } // RISC-V RET (jalr x0,ra,0)
@@ -693,6 +717,8 @@ pub fn score(data: &[u8]) -> i64 {
             j += 2;
         }
     }
+
+    let mut zero_run = 0u32;
 
     while i < data.len() {
         let op = data[i];
@@ -759,11 +785,22 @@ pub fn score(data: &[u8]) -> i64 {
             opcode::ATHROW => total_score += 4,
             opcode::MONITORENTER | opcode::MONITOREXIT => total_score += 3,
 
-            // NOP is valid but rare
-            0x00 => total_score += 1,
+            // NOP is valid but rare — penalize long runs (MIPS NOP sleds are all zeros)
+            0x00 => {
+                zero_run += 1;
+                if zero_run <= 4 {
+                    total_score += 1;
+                } else {
+                    total_score -= 1;
+                }
+            }
 
             // Penalize unrecognized opcodes more heavily
             _ => { total_score -= 2; }
+        }
+
+        if op != 0x00 {
+            zero_run = 0;
         }
 
         i += len;

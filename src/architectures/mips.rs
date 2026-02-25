@@ -227,9 +227,9 @@ fn score_word(word: u32, is_64: bool) -> i64 {
         o if o == opcode::XORI => score += 4,
         o if o == opcode::LUI => score += 6,
         o if o == opcode::COP0 => score += 3,
-        o if o == opcode::COP1 => score += 4,
+        o if o == opcode::COP1 => score += 5,
         o if o == opcode::COP2 => score += 3,
-        o if o == opcode::COP1X => score += 3,
+        o if o == opcode::COP1X => score += 4,
         o if o == opcode::SPECIAL2 => score += 3,
         o if o == opcode::SPECIAL3 => score += 3,
         o if o == opcode::LB => score += 5,
@@ -247,10 +247,10 @@ fn score_word(word: u32, is_64: bool) -> i64 {
         o if o == opcode::LL => score += 4,
         o if o == opcode::SC => score += 4,
         // FP load/store
-        o if o == opcode::LWC1 => score += 4,
-        o if o == opcode::LDC1 => score += 4,
-        o if o == opcode::SWC1 => score += 4,
-        o if o == opcode::SDC1 => score += 4,
+        o if o == opcode::LWC1 => score += 6,
+        o if o == opcode::LDC1 => score += 6,
+        o if o == opcode::SWC1 => score += 6,
+        o if o == opcode::SDC1 => score += 6,
         // MIPS64-specific opcodes
         o if o == opcode::LWU => { if is_64 { score += 6; } else { score += 2; } }
         o if o == opcode::LD => { if is_64 { score += 7; } else { score += 1; } }
@@ -267,6 +267,19 @@ fn score_word(word: u32, is_64: bool) -> i64 {
             // Unknown primary opcode - penalty
             score -= 2;
         }
+    }
+
+    // Prologue/epilogue pattern bonuses (on top of generic opcode scores).
+    // These require specific register fields, making them very distinctive.
+    let rs = get_rs(word);
+    let rt = get_rt(word);
+    if op == opcode::ADDIU && rs == 29 && rt == 29 { score += 6; }  // ADDIU $sp,$sp,N
+    if op == opcode::SW && rt == 31 && rs == 29 { score += 6; }     // SW $ra,N($sp)
+    if op == opcode::LW && rt == 31 && rs == 29 { score += 6; }     // LW $ra,N($sp)
+    if is_64 {
+        if op == opcode::DADDIU && rs == 29 && rt == 29 { score += 6; }
+        if op == opcode::SD && rt == 31 && rs == 29 { score += 6; }
+        if op == opcode::LD && rt == 31 && rs == 29 { score += 6; }
     }
 
     score
@@ -497,6 +510,32 @@ pub fn score(data: &[u8], is_64: bool) -> (i64, i64) {
             if (word_le & 0xFC000000) == 0x54000000 { score_le -= 3; }
             // LoongArch B (0x50000000)
             if (word_le & 0xFC000000) == 0x50000000 { score_le -= 3; }
+        }
+
+        // x86/x86_64 patterns (LE byte-oriented) - penalize LE score
+        {
+            let b0 = (word_le & 0xFF) as u8;
+            let b1 = ((word_le >> 8) & 0xFF) as u8;
+            let b01 = (word_le & 0xFFFF) as u16;
+            // REX.W (0x48) + common x86-64 opcode = very distinctive
+            if b0 == 0x48 {
+                match b1 {
+                    0x89 | 0x8B => score_le -= 8,  // MOV r64
+                    0x83 | 0x8D => score_le -= 6,  // arith imm8, LEA
+                    0x01 | 0x03 | 0x29 | 0x2B => score_le -= 6, // ADD/SUB
+                    0x31 | 0x33 | 0x39 | 0x3B => score_le -= 6, // XOR/CMP
+                    0x85 | 0xC7 | 0xFF | 0x63 => score_le -= 5, // TEST/MOV/CALL/MOVSXD
+                    _ => {}
+                }
+            }
+            // x86-64 prologue: PUSH RBP; MOV RBP,RSP (55 48 89 E5)
+            if word_le == 0xE5894855 { score_le -= 15; }
+            // ENDBR64 (F3 0F 1E FA)
+            if word_le == 0xFA1E0FF3 { score_le -= 12; }
+            // Multi-byte NOP (0F 1F xx xx)
+            if b01 == 0x1F0F { score_le -= 8; }
+            // SYSCALL (0F 05)
+            if b01 == 0x050F { score_le -= 10; }
         }
 
         score_be += score_word(word_be, is_64);
