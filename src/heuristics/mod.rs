@@ -53,6 +53,7 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::I860, "Intel i860"),
     (Isa::CellSpu, "Cell SPU"),
     (Isa::Tricore, "Infineon TriCore"),
+    (Isa::C16x, "Infineon/Siemens C16x"),
 ];
 
 /// Result of heuristic scoring for a single architecture.
@@ -524,6 +525,16 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         confidence: 0.0,
         endianness: Endianness::Little,
         bitwidth: 32,
+    });
+
+    // C16x (Infineon/Siemens C161-C167)
+    let c16x_score = scorer::score_c16x(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::C16x,
+        raw_score: c16x_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 16,
     });
 
     // Calculate confidence using margin-based approach

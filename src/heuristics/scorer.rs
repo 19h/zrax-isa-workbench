@@ -9,9 +9,9 @@
 //! The actual scoring logic is implemented in `crate::architectures::*::score()`.
 
 use crate::architectures::{
-    aarch64, alpha, arc, arm, avr, blackfin, cellspu, dalvik, hexagon, i860, ia64, jvm, lanai,
-    loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv, s390x, sparc,
-    superh, tricore, vax, wasm, x86, xtensa,
+    aarch64, alpha, arc, arm, avr, blackfin, c16x, cellspu, dalvik, hexagon, i860, ia64, jvm,
+    lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv, s390x,
+    sparc, superh, tricore, vax, wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -285,6 +285,14 @@ pub fn score_i860(data: &[u8]) -> i64 {
 #[inline]
 pub fn score_cellspu(data: &[u8]) -> i64 {
     cellspu::score(data)
+}
+
+/// Score likelihood of Infineon/Siemens C16x code.
+///
+/// Delegates to `crate::architectures::c16x::score()`.
+#[inline]
+pub fn score_c16x(data: &[u8]) -> i64 {
+    c16x::score(data)
 }
 
 #[cfg(test)]

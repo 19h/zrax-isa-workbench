@@ -10,6 +10,7 @@ pub mod arc;
 pub mod arm;
 pub mod avr;
 pub mod blackfin;
+pub mod c16x;
 pub mod cellspu;
 pub mod dalvik;
 pub mod hexagon;
@@ -49,6 +50,7 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::LoongArch32 | Isa::LoongArch64 => Endianness::Little,
         Isa::Hexagon => Endianness::Little,
         Isa::Tricore => Endianness::Little,
+        Isa::C16x => Endianness::Little,
         Isa::Bpf => Endianness::Little,
         Isa::Cuda => Endianness::Little,
         Isa::AmdGpu => Endianness::Little,
@@ -126,6 +128,7 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Avr => 2,
         Isa::Msp430 => 2,
         Isa::Tricore => 2, // TriCore has 16/32-bit instructions (16-bit aligned)
+        Isa::C16x => 2,   // C16x has 2-byte and 4-byte instructions (16-bit aligned)
 
         _ => 4,
     }
@@ -154,6 +157,7 @@ pub fn supports_compressed(isa: Isa) -> bool {
             | Isa::Dalvik  // DEX has variable-length bytecode
             | Isa::Vax     // VAX has variable-length CISC (1-37 bytes)
             | Isa::Blackfin // Blackfin has variable-length (16/32/64-bit)
+            | Isa::C16x    // C16x has 2-byte and 4-byte instructions
     )
 }
 
