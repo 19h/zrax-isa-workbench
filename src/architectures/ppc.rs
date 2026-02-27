@@ -198,11 +198,6 @@ fn score_word(word: u32) -> i64 {
         return 20;
     }
 
-    // Invalid/padding
-    if word == 0x00000000 || word == 0xFFFFFFFF {
-        return -5;
-    }
-
     // Check common opcodes
     match op {
         o if o == opcode::ADDI || o == opcode::ADDIS => score += 5,
@@ -245,7 +240,7 @@ fn score_word(word: u32) -> i64 {
         o if o == opcode::STFD => score += 5,
         o if o == opcode::STFDU => score += 6,
         o if o == opcode::LD_STD => score += 5, // 64-bit load/store
-        o if o == opcode::STD => score += 5,     // 64-bit store
+        o if o == opcode::STD => score += 5,    // 64-bit store
         o if o == opcode::FP_SINGLE => score += 5,
         o if o == opcode::FP_DOUBLE => score += 5,
         _ => {}
@@ -261,6 +256,7 @@ fn score_with_structural(data: &[u8], be: bool) -> i64 {
     let mut bl_count = 0u32;
     let mut mflr_count = 0u32;
     let mut nop_count = 0u32;
+    let mut zero_run = 0u32;
 
     let num_words = data.len() / 4;
     for i in (0..data.len().saturating_sub(3)).step_by(4) {
@@ -270,37 +266,92 @@ fn score_with_structural(data: &[u8], be: bool) -> i64 {
             u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]])
         };
 
+        // Track zero padding (firmware often has long runs of 0x00000000 or 0xFFFFFFFF)
+        if word == 0x00000000 || word == 0xFFFFFFFF {
+            zero_run += 1;
+            if zero_run <= 3 {
+                score -= 1; // Minor penalty for occasional zeroes
+            }
+            continue;
+        }
+        if zero_run > 0 {
+            zero_run = 0;
+        }
+
         // Cross-architecture penalties for LE ISAs (when scoring BE PPC)
         if be {
             let le_word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-            if le_word == 0xD65F03C0 { score -= 15; continue; } // AArch64 RET
-            if le_word == 0xD503201F { score -= 12; continue; } // AArch64 NOP
-            if le_word == 0xE12FFF1E { score -= 15; continue; } // ARM BX LR
-            if le_word == 0xE1A00000 { score -= 10; continue; } // ARM NOP
-            if le_word == 0x00008067 { score -= 12; continue; } // RISC-V RET
-            if le_word == 0x00000013 { score -= 8; continue; }  // RISC-V NOP
+            if le_word == 0xD65F03C0 {
+                score -= 15;
+                continue;
+            } // AArch64 RET
+            if le_word == 0xD503201F {
+                score -= 12;
+                continue;
+            } // AArch64 NOP
+            if le_word == 0xE12FFF1E {
+                score -= 15;
+                continue;
+            } // ARM BX LR
+            if le_word == 0xE1A00000 {
+                score -= 10;
+                continue;
+            } // ARM NOP
+            if le_word == 0x00008067 {
+                score -= 12;
+                continue;
+            } // RISC-V RET
+            if le_word == 0x00000013 {
+                score -= 8;
+                continue;
+            } // RISC-V NOP
         }
         // Cross-architecture penalties for BE ISAs (when scoring LE PPC)
         if !be {
             let be_word = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-            if be_word == 0x01000000 { score -= 10; continue; } // SPARC NOP
-            if be_word == 0x81C7E008 { score -= 15; continue; } // SPARC RET
-            if be_word == 0x81C3E008 { score -= 15; continue; } // SPARC RETL
+            if be_word == 0x01000000 {
+                score -= 10;
+                continue;
+            } // SPARC NOP
+            if be_word == 0x81C7E008 {
+                score -= 15;
+                continue;
+            } // SPARC RET
+            if be_word == 0x81C3E008 {
+                score -= 15;
+                continue;
+            } // SPARC RETL
         }
 
         // Track distinctive patterns
-        if is_nop(word) { nop_count += 1; }
-        if is_blr(word) { blr_count += 1; }
-        if is_bl(word) { bl_count += 1; }
-        if word == patterns::MFLR_R0 || word == patterns::MTLR_R0 { mflr_count += 1; }
+        if is_nop(word) {
+            nop_count += 1;
+        }
+        if is_blr(word) {
+            blr_count += 1;
+        }
+        if is_bl(word) {
+            bl_count += 1;
+        }
+        if word == patterns::MFLR_R0 || word == patterns::MTLR_R0 {
+            mflr_count += 1;
+        }
 
         // PPC64 prologue/epilogue bonus: STD r0,N(r1) / STDU r1,-N(r1)
         // These are very distinctive function setup patterns.
-        if (word & 0xFFFF0003) == 0xF8010000 { score += 8; } // STD r0,N(r1) - save LR
-        if (word & 0xFFFF0003) == 0xF8210001 { score += 10; } // STDU r1,-N(r1) - frame setup
-        if (word & 0xFFFF0003) == 0xE8010000 { score += 8; } // LD r0,N(r1) - restore LR
-        // PPC32 prologue: STWU r1,-N(r1) = 0x9421xxxx
-        if (word & 0xFFFF0000) == 0x94210000 { score += 8; }
+        if (word & 0xFFFF0003) == 0xF8010000 {
+            score += 8;
+        } // STD r0,N(r1) - save LR
+        if (word & 0xFFFF0003) == 0xF8210001 {
+            score += 10;
+        } // STDU r1,-N(r1) - frame setup
+        if (word & 0xFFFF0003) == 0xE8010000 {
+            score += 8;
+        } // LD r0,N(r1) - restore LR
+          // PPC32 prologue: STWU r1,-N(r1) = 0x9421xxxx
+        if (word & 0xFFFF0000) == 0x94210000 {
+            score += 8;
+        }
 
         score += score_word(word);
     }

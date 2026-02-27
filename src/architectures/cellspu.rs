@@ -494,16 +494,34 @@ pub fn score(data: &[u8]) -> i64 {
             if sparc_fmt == 2 {
                 let op3 = ((instr >> 19) & 0x3F) as u8;
                 match op3 {
-                    0x3C => { total_score -= 20; i += 4; continue; } // SAVE
-                    0x3D => { total_score -= 20; i += 4; continue; } // RESTORE
+                    0x3C => {
+                        total_score -= 20;
+                        i += 4;
+                        continue;
+                    } // SAVE
+                    0x3D => {
+                        total_score -= 20;
+                        i += 4;
+                        continue;
+                    } // RESTORE
                     0x00 | 0x02 | 0x04 | 0x10 | 0x11 | 0x12 | 0x14 => {
                         total_score -= 6; // ADD, OR, SUB, ADDCC, etc.
                     }
-                    0x25 | 0x26 => { total_score -= 5; } // SLL, SRL
-                    0x38 => { total_score -= 8; } // JMPL
-                    0x01 | 0x05 | 0x03 => { total_score -= 5; } // AND, ANDN, XOR
-                    0x27 => { total_score -= 5; } // SRA
-                    0x0A | 0x1A => { total_score -= 4; } // UMUL, UDIV
+                    0x25 | 0x26 => {
+                        total_score -= 5;
+                    } // SLL, SRL
+                    0x38 => {
+                        total_score -= 8;
+                    } // JMPL
+                    0x01 | 0x05 | 0x03 => {
+                        total_score -= 5;
+                    } // AND, ANDN, XOR
+                    0x27 => {
+                        total_score -= 5;
+                    } // SRA
+                    0x0A | 0x1A => {
+                        total_score -= 4;
+                    } // UMUL, UDIV
                     _ => {}
                 }
             }
@@ -512,8 +530,12 @@ pub fn score(data: &[u8]) -> i64 {
             if sparc_fmt == 0 {
                 let op2 = ((instr >> 22) & 0x07) as u8;
                 match op2 {
-                    2 | 6 => { total_score -= 5; } // Bicc, FBfcc
-                    4 => { total_score -= 3; } // SETHI
+                    2 | 6 => {
+                        total_score -= 5;
+                    } // Bicc, FBfcc
+                    4 => {
+                        total_score -= 3;
+                    } // SETHI
                     _ => {}
                 }
             }
@@ -553,31 +575,80 @@ pub fn score(data: &[u8]) -> i64 {
                 i += 4;
                 continue;
             }
+            // PPC STWU r1, -N(r1) (0x9421xxxx)
+            if (instr & 0xFFFF0000) == 0x94210000 {
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
+            // PPC B / BL (0x48000000 - 0x4BFFFFFF)
+            if (instr >> 26) == 18 {
+                let op11 = extract_opcode_11(instr);
+                // Allow XOR (0x241) and CGT (0x240) which fall in this range
+                if op11 != 0x241 && op11 != 0x240 {
+                    total_score -= 6;
+                    i += 4;
+                    continue;
+                }
+            }
+            // PPC Load/Store commonly overlaps with Cell RRR (e.g. lwz = 0x80xxxxxx)
+            // lwz = 32 (0x80), stw = 36 (0x90), lhz = 40 (0xA0), sth = 44 (0xB0)
+            if matches!(
+                instr >> 26,
+                32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47
+            ) {
+                // Penalize common PPC memory ops that mimic Cell SPU SIMD/FPU formats
+                total_score -= 2;
+            }
         }
 
         // Cross-architecture penalties: MIPS patterns (big-endian 32-bit)
         {
             // MIPS JR $ra (0x03E00008) - function return
-            if instr == 0x03E00008 { total_score -= 15; i += 4; continue; }
+            if instr == 0x03E00008 {
+                total_score -= 15;
+                i += 4;
+                continue;
+            }
             // MIPS SYSCALL (0x0000000C)
-            if instr == 0x0000000C { total_score -= 10; i += 4; continue; }
+            if instr == 0x0000000C {
+                total_score -= 10;
+                i += 4;
+                continue;
+            }
             // MIPS ADDIU $sp,$sp,N (prologue/epilogue)
-            if (instr & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; }
+            if (instr & 0xFFFF0000) == 0x27BD0000 {
+                total_score -= 10;
+            }
             // MIPS SW $ra,N($sp) (save return address)
-            if (instr & 0xFFFF0000) == 0xAFBF0000 { total_score -= 10; }
+            if (instr & 0xFFFF0000) == 0xAFBF0000 {
+                total_score -= 10;
+            }
             // MIPS LW $ra,N($sp) (restore return address)
-            if (instr & 0xFFFF0000) == 0x8FBF0000 { total_score -= 10; }
+            if (instr & 0xFFFF0000) == 0x8FBF0000 {
+                total_score -= 10;
+            }
             // MIPS LUI (opcode 0x0F = 15, upper 6 bits)
-            if (instr >> 26) == 0x0F { total_score -= 3; }
+            if (instr >> 26) == 0x0F {
+                total_score -= 3;
+            }
         }
 
         // Cross-architecture penalties: MIPS LE patterns (when LE data read as BE)
         {
             let le32 = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-            if le32 == 0x03E00008 { total_score -= 15; } // MIPS JR $ra
-            if (le32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 8; } // MIPS ADDIU $sp
-            if (le32 & 0xFFFF0000) == 0xAFBF0000 { total_score -= 8; } // MIPS SW $ra
-            if (le32 & 0xFFFF0000) == 0x8FBF0000 { total_score -= 8; } // MIPS LW $ra
+            if le32 == 0x03E00008 {
+                total_score -= 15;
+            } // MIPS JR $ra
+            if (le32 & 0xFFFF0000) == 0x27BD0000 {
+                total_score -= 8;
+            } // MIPS ADDIU $sp
+            if (le32 & 0xFFFF0000) == 0xAFBF0000 {
+                total_score -= 8;
+            } // MIPS SW $ra
+            if (le32 & 0xFFFF0000) == 0x8FBF0000 {
+                total_score -= 8;
+            } // MIPS LW $ra
         }
 
         // Cross-architecture penalties: 16-bit LE ISAs (AVR, Thumb, MSP430)
@@ -586,13 +657,23 @@ pub fn score(data: &[u8]) -> i64 {
             let hw0 = u16::from_le_bytes([data[i], data[i + 1]]);
             let hw1 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             // AVR distinctive patterns
-            if hw0 == 0x9508 || hw1 == 0x9508 { total_score -= 10; } // AVR RET
-            if hw0 == 0x9518 || hw1 == 0x9518 { total_score -= 8; }  // AVR RETI
-            if hw0 == 0x9588 || hw1 == 0x9588 { total_score -= 8; }  // AVR SLEEP
-            // Thumb BX LR
-            if hw0 == 0x4770 || hw1 == 0x4770 { total_score -= 8; }
+            if hw0 == 0x9508 || hw1 == 0x9508 {
+                total_score -= 10;
+            } // AVR RET
+            if hw0 == 0x9518 || hw1 == 0x9518 {
+                total_score -= 8;
+            } // AVR RETI
+            if hw0 == 0x9588 || hw1 == 0x9588 {
+                total_score -= 8;
+            } // AVR SLEEP
+              // Thumb BX LR
+            if hw0 == 0x4770 || hw1 == 0x4770 {
+                total_score -= 8;
+            }
             // MSP430 RET
-            if hw0 == 0x4130 || hw1 == 0x4130 { total_score -= 8; }
+            if hw0 == 0x4130 || hw1 == 0x4130 {
+                total_score -= 8;
+            }
         }
 
         // Track runs of zero words (MIPS NOP sleds, padding)
@@ -645,16 +726,18 @@ pub fn score(data: &[u8]) -> i64 {
         } else if is_store(instr) {
             total_score += 5;
         } else if is_fpu(instr) {
-            total_score += 8;
-            // FMA/FMS are very common and distinctive
             let op4 = extract_opcode_4(instr);
-            if matches!(op4, opcode::FMA | opcode::FMS) {
-                total_score += 4;
+            if matches!(op4, opcode::FMA | opcode::FMS | opcode::FNMS) {
+                // RRR formats (FMA, FMS, FNMS) only check 4 bits, overlapping with many other ISAs
+                total_score += 2;
+            } else {
+                total_score += 8;
             }
         } else if is_channel_op(instr) {
             total_score += 12; // Channel ops are very SPU-specific
         } else if is_simd_shuffle(instr) {
-            total_score += 10; // SIMD shuffles are distinctive
+            // RRR formats (SELB, SHUFB) only check 4 bits
+            total_score += 2;
         } else {
             // General valid instruction - keep scores low to avoid false positives
             match format {
@@ -689,13 +772,19 @@ pub fn score(data: &[u8]) -> i64 {
         let mut has_channel = false;
         let mut j = 0;
         while j + 3 < data.len() {
-            let w = u32::from_be_bytes([data[j], data[j+1], data[j+2], data[j+3]]);
-            if is_return(w) { has_returns = true; }
+            let w = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            if is_return(w) {
+                has_returns = true;
+            }
             if is_branch(w) {
                 let op9 = extract_opcode_9(w);
-                if matches!(op9, 0x066 | 0x062) { has_calls = true; } // BRSL, BRASL
+                if matches!(op9, 0x066 | 0x062) {
+                    has_calls = true;
+                } // BRSL, BRASL
             }
-            if is_channel_op(w) { has_channel = true; }
+            if is_channel_op(w) {
+                has_channel = true;
+            }
             j += 4;
         }
         if !has_returns && !has_calls && !has_channel {
