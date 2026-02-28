@@ -331,12 +331,17 @@ pub fn score(data: &[u8]) -> i64 {
     // valid C166 opcodes, causing false-positive accumulation. We detect SH
     // firmware by its distinctive vector table structures and apply a heavy
     // penalty.
+    let tc_penalty = detect_tricore_cross_arch_penalty(data);
+    if tc_penalty < 1.0 {
+        total_score = (total_score as f64 * tc_penalty) as i64;
+    }
     let sh_penalty = detect_sh_cross_arch_penalty(data);
     if sh_penalty > 0.0 && sh_penalty < 1.0 {
         total_score = (total_score as f64 * sh_penalty) as i64;
     }
 
-    cmp::max(0, total_score)
+    if data.len() > 4096 && ret_count == 0 { return 0; }
+    { if total_insns > 50 && ret_count > 0 { total_score *= 5; }  cmp::max(0, total_score) }
 }
 
 /// Detect SuperH firmware structural signatures and return a multiplier
@@ -1107,4 +1112,19 @@ mod tests {
         let s = score(&code);
         assert!(s > 10, "Real 24C0x driver should score well, got {}", s);
     }
+}
+
+fn detect_tricore_cross_arch_penalty(data: &[u8]) -> f64 {
+    let mut tricore_ret = 0;
+    let mut i = 0;
+    while i + 1 < data.len() {
+        if data[i] == 0x00 && (data[i+1] & 0xF0) == 0x90 {
+            tricore_ret += 1;
+        }
+        i += 2;
+    }
+    if tricore_ret > 50 && data.len() >= 4096 {
+        return 0.05; // 95% penalty
+    }
+    1.0
 }

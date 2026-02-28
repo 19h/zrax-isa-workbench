@@ -105,6 +105,7 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
+    if data.len() > 4096 && rts_count == 0 { return 0; }
     cmp::max(0, score)
 }
 
@@ -119,6 +120,7 @@ mod tests {
             0x01, // NOP
             0x20, 0x05, // BRA +5
             0x05, // RTS
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
         assert!(score(&code) > 0);
     }

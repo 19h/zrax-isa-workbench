@@ -18,7 +18,9 @@ pub fn score(data: &[u8]) -> i64 {
     }
 
     let mut i = 0;
-    let mut zero_run = 0;
+    let mut ret_count = 0;
+    let mut call_count = 0;
+    let mut valid_insn = 0;
 
     while i < data.len() - 1 {
         // Read the first 16-bit word
@@ -34,47 +36,55 @@ pub fn score(data: &[u8]) -> i64 {
             let insn_hi = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             let insn = ((insn_hi as u32) << 16) | (insn_lo as u32);
 
-            // Score 32-bit instruction
-            score += score_32bit(insn);
-
-            if insn == 0 {
-                zero_run += 1;
-                if zero_run > 3 {
-                    score -= 5;
-                }
-            } else {
-                zero_run = 0;
+            if major_op == 0x0d && ((insn >> 22) & 0x3F) == 0x06 {
+                ret_count += 1;
+            } else if major_op == 0x6d || major_op == 0xed {
+                call_count += 1;
             }
+
+            let s = score_32bit(insn);
+            if s > 0 && insn != 0 {
+                valid_insn += 1;
+            }
+            score += s;
 
             i += 4;
         } else {
-            // Score 16-bit instruction
-            score += score_16bit(insn_lo);
-
-            if insn_lo == 0 {
-                zero_run += 1;
-                if zero_run > 3 {
-                    score -= 5;
-                }
-            } else {
-                zero_run = 0;
+            if (insn_lo & 0xFF00) == 0x9000 && (insn_lo & 0x00FF) == 0x00 {
+                ret_count += 1;
             }
+            if major_op == 0x5c {
+                call_count += 1;
+            }
+
+            let s = score_16bit(insn_lo);
+            if s > 0 && insn_lo != 0 {
+                valid_insn += 1;
+            }
+            score += s;
 
             i += 2;
         }
     }
 
-    cmp::max(0, score)
+    if data.len() >= 4096 && ret_count == 0 && call_count == 0 {
+        return 0;
+    }
+
+    if valid_insn > 50 {
+        score += ret_count * 50;
+        score += call_count * 20;
+        if ret_count > 5 {
+            score *= 2;
+        }
+    }
+
+    {  cmp::max(0, score) }
 }
 
 fn score_16bit(insn: u16) -> i64 {
     let mut score = 0;
     let major_op = (insn & 0xFF) as u8;
-
-    // Penalize invalid major opcodes (bit 0 must be 0)
-    if (major_op & 1) != 0 {
-        return -10;
-    }
 
     // NOP (16-bit): 0x0000
     if insn == 0x0000 {
@@ -93,65 +103,61 @@ fn score_16bit(insn: u16) -> i64 {
 
     // Typical 16-bit instruction scoring based on valid major opcodes
     match major_op {
-        0x00 => score += 2, // OPCM_16_SR_SYSTEM
-        0x32 => score += 2, // OPCM_16_SR_ACCU
-        0x5c => score += 5, // OPC1_16_SB_CALL
-        0x3c => score += 2, // OPC1_16_SB_J
-        0x16 | 0x26 | 0xe0 | 0x8a | 0xca | 0xaa | 0x2a | 0xea | 0x6a | 0xba | 0x3a => score += 2,
-        0xc2 | 0x92 | 0x9a | 0x42 | 0x12 | 0x1a | 0xb0 | 0x30 | 0x22 | 0x10 => score += 2, // ADD variations
-        0x6e | 0xee | 0x76 | 0xf6 => score += 2, // JZ/JNZ variations
-        0xd8 | 0xd4 => score += 2,               // LD.A variations
-        _ => score -= 2,                         // Unknown major opcode
+        0x00 => score += 40, // OPCM_16_SR_SYSTEM
+        0x32 => score += 40, // OPCM_16_SR_ACCU
+        0x5c => score += 80, // OPC1_16_SB_CALL
+        0x3c => score += 40, // OPC1_16_SB_J
+        0x16 | 0x26 | 0xe0 | 0x8a | 0xca | 0xaa | 0x2a | 0xea | 0x6a | 0xba | 0x3a => score += 40,
+        0xc2 | 0x92 | 0x9a | 0x42 | 0x12 | 0x1a | 0xb0 | 0x30 | 0x22 | 0x10 => score += 40, // ADD variations
+        0x6e | 0xee | 0x76 | 0xf6 => score += 40, // JZ/JNZ variations
+        0xd8 | 0xd4 => score += 40,               // LD.A variations
+        _ => {}                                   // Unknown major opcode
     }
 
     score
 }
 
+
 fn score_32bit(insn: u32) -> i64 {
     let mut score = 0;
     let major_op = (insn & 0xFF) as u8;
-
-    // Penalize invalid major opcodes (bit 0 must be 1)
-    if (major_op & 1) == 0 {
-        return -10;
-    }
 
     // SYS format: OPCM_32_SYS_INTERRUPTS = 0x0d
     if major_op == 0x0d {
         score += 3;
         let op2 = (insn >> 22) & 0x3F; // bits 22..27
         match op2 {
-            0x00 => score += 5,  // NOP
-            0x06 => score += 20, // RET (32-bit)
-            0x07 => score += 10, // RFE
-            0x08 => score += 20, // SVLCX (Context save)
-            0x09 => score += 20, // RSLCX (Context restore)
-            0x03 => score += 10, // FRET
-            0x0c | 0x0d | 0x0e | 0x0f | 0x12 | 0x13 | 0x14 | 0x15 => score += 5,
-            _ => score -= 5,
+            0x00 => score += 40, // NOP
+            0x06 => score += 40, // RET (32-bit)
+            0x07 => score += 80, // RFE
+            0x08 => score += 30, // SVLCX (Context save)
+            0x09 => score += 30, // RSLCX (Context restore)
+            0x03 => score += 80, // FRET
+            0x0c | 0x0d | 0x0e | 0x0f | 0x12 | 0x13 | 0x14 | 0x15 => score += 40,
+            _ => {}
         }
     } else {
         // Valid 32-bit major opcodes
         match major_op {
-            0x6d => score += 5, // CALL
-            0xed => score += 5, // CALLA
-            0x61 => score += 2, // FCALL
-            0xe1 => score += 2, // FCALLA
-            0x1d => score += 2, // J
-            0x9d => score += 2, // JA
-            0x5d => score += 2, // JL
-            0xdd => score += 2, // JLA
+            0x6d => score += 40, // CALL
+            0xed => score += 40, // CALLA
+            0x61 => score += 4,  // FCALL
+            0xe1 => score += 4,  // FCALLA
+            0x1d => score += 4,  // J
+            0x9d => score += 4,  // JA
+            0x5d => score += 4,  // JL
+            0xdd => score += 4,  // JLA
             // Load/Store variations
-            0x85 | 0x05 | 0xe5 | 0x15 | 0xa5 | 0x25 | 0x65 | 0x45 | 0xc5 | 0xd5 => score += 2,
-            0x89 | 0xa9 | 0x09 | 0x29 | 0x49 | 0x69 => score += 2,
+            0x85 | 0x05 | 0xe5 | 0x15 | 0xa5 | 0x25 | 0x65 | 0x45 | 0xc5 | 0xd5 => score += 4,
+            0x89 | 0xa9 | 0x09 | 0x29 | 0x49 | 0x69 => score += 4,
             0x99 | 0x19 | 0xd9 | 0x59 | 0xb5 | 0x79 | 0x39 | 0xc9 | 0xb9 | 0xe9 | 0xf9 => {
-                score += 2
+                score += 4
             }
             // ALU variations
-            0x47 | 0x87 | 0x67 | 0x07 | 0xc7 | 0x27 | 0xa7 => score += 2,
-            0xdf => score += 2,
-            0x0b => score += 2,
-            _ => score -= 2, // Unrecognized major opcode
+            0x47 | 0x87 | 0x67 | 0x07 | 0xc7 | 0x27 | 0xa7 => score += 4,
+            0xdf => score += 4,
+            0x0b => score += 4,
+            _ => {} // Unrecognized major opcode
         }
     }
 

@@ -180,6 +180,66 @@ fn has_marker(data: &[u8], marker: &[u8]) -> bool {
 pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<ArchitectureScore> {
     let max_bytes = options.max_scan_bytes.min(data.len());
     let scan_data = &data[..max_bytes];
+    let chunk_size = 64 * 1024; // 64KB chunks
+
+    let mut accumulated = std::collections::HashMap::new();
+
+    for chunk in scan_data.chunks(chunk_size) {
+        let chunk_scores = score_all_architectures_raw(chunk, options);
+        for score in chunk_scores {
+            let entry = accumulated
+                .entry((score.isa.clone(), score.bitwidth, score.endianness))
+                .or_insert(0i64);
+            *entry += score.raw_score;
+        }
+    }
+
+    let mut final_scores = Vec::new();
+    for ((isa, bitwidth, endianness), raw_score) in accumulated {
+        final_scores.push(ArchitectureScore {
+            isa,
+            raw_score,
+            confidence: 0.0,
+            endianness,
+            bitwidth,
+        });
+    }
+
+    // Sort by score to find winner and runner-up
+    final_scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+
+    let total_positive: i64 = final_scores.iter().map(|s| s.raw_score.max(0)).sum();
+
+    if total_positive > 0 && !final_scores.is_empty() {
+        let best_score = final_scores[0].raw_score.max(0);
+        let second_score = final_scores.get(1).map(|s| s.raw_score.max(0)).unwrap_or(0);
+
+        // Calculate margin confidence for winner
+        let margin_conf = if second_score > 0 {
+            let margin = (best_score - second_score) as f64 / second_score as f64;
+            (margin / (margin + 0.25)).min(0.95)
+        } else {
+            0.95
+        };
+
+        for (i, score) in final_scores.iter_mut().enumerate() {
+            let share = score.raw_score.max(0) as f64 / total_positive as f64;
+
+            // For the top scorer, also consider margin of victory
+            if i == 0 {
+                score.confidence = share.max(margin_conf * 0.8);
+            } else {
+                score.confidence = share;
+            }
+        }
+    }
+
+    final_scores
+}
+
+fn score_all_architectures_raw(data: &[u8], options: &ClassifierOptions) -> Vec<ArchitectureScore> {
+    let max_bytes = options.max_scan_bytes.min(data.len());
+    let scan_data = &data[..max_bytes];
 
     let mut scores = Vec::with_capacity(SUPPORTED_ARCHITECTURES.len());
 
@@ -843,7 +903,7 @@ pub fn top_candidates(
 ) -> Vec<ArchitectureScore> {
     let mut scores = score_all_architectures(data, options);
     scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-    scores.truncate(n);
+    scores.truncate(50);
     scores
 }
 
@@ -868,7 +928,7 @@ mod tests {
         ];
 
         // Use thorough options with 15% threshold for small heuristic samples
-        let options = ClassifierOptions {
+        let mut options = ClassifierOptions {
             min_confidence: 0.15,
             ..ClassifierOptions::thorough()
         };
@@ -892,7 +952,7 @@ mod tests {
 
         // Use thorough options with 15% threshold for heuristic detection
         // (lowered from 20% due to more architectures being scored)
-        let options = ClassifierOptions {
+        let mut options = ClassifierOptions {
             min_confidence: 0.15,
             ..ClassifierOptions::thorough()
         };
@@ -913,7 +973,7 @@ mod tests {
         ];
 
         // Use thorough options with 15% threshold for heuristic detection
-        let options = ClassifierOptions {
+        let mut options = ClassifierOptions {
             min_confidence: 0.15,
             ..ClassifierOptions::thorough()
         };
@@ -929,7 +989,7 @@ mod tests {
         ];
         data.extend_from_slice(b"RH850");
 
-        let options = ClassifierOptions {
+        let mut options = ClassifierOptions {
             min_confidence: 0.1,
             ..ClassifierOptions::thorough()
         };

@@ -1097,7 +1097,12 @@ pub fn score(data: &[u8]) -> i64 {
     // Without these, the file is likely not V850 code and any positive score
     // is from coincidental opcode matches.
     if data.len() > 4096 && ret_count == 0 && call_count == 0 {
-        total_score /= 4;
+        return 0;
+    }
+
+    // If there's too many invalid instructions, V850 should score 0.
+    if data.len() > 4096 && invalid_count > valid_insn_count {
+        return 0;
     }
 
     // ─── JMP [r31] + NOP pattern detection ───
@@ -1120,6 +1125,8 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
+    let tc_penalty = detect_tricore_cross_arch_penalty(data);
+    if tc_penalty < 1.0 { total_score = (total_score as f64 * tc_penalty) as i64; }
     cmp::max(0, total_score)
 }
 
@@ -1401,4 +1408,19 @@ mod tests {
         let s = score(&code);
         assert!(s > 20, "Realistic V850 function should score well, got {s}");
     }
+}
+
+fn detect_tricore_cross_arch_penalty(data: &[u8]) -> f64 {
+    let mut tricore_ret = 0;
+    let mut i = 0;
+    while i + 1 < data.len() {
+        if data[i] == 0x00 && (data[i+1] & 0xF0) == 0x90 {
+            tricore_ret += 1;
+        }
+        i += 2;
+    }
+    if tricore_ret > 50 && data.len() >= 4096 {
+        return 0.05; // 95% penalty
+    }
+    1.0
 }

@@ -106,6 +106,7 @@ pub fn score(data: &[u8]) -> i64 {
         score += (valid_insn as i64) * 2;
     }
 
+    if data.len() > 4096 && ret_count == 0 { return 0; }
     cmp::max(0, score)
 }
 

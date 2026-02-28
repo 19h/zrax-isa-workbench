@@ -89,12 +89,6 @@ pub fn score(data: &[u8]) -> i64 {
         }
         // 0xFF bytes (erased flash)
         if opcode == 0xFF {
-            zero_run += 1;
-            if zero_run <= 2 {
-                total_score -= 1;
-            } else {
-                total_score -= 4;
-            }
             i += 1;
             continue;
         }
@@ -329,6 +323,9 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
+    if data.len() > 4096 && ret_count == 0 && call_count == 0 { return 0; }
+    let tc_penalty = detect_tricore_cross_arch_penalty(data);
+    if tc_penalty < 1.0 { total_score = (total_score as f64 * tc_penalty) as i64; }
     cmp::max(0, total_score)
 }
 
@@ -1618,4 +1615,19 @@ mod tests {
             s
         );
     }
+}
+
+fn detect_tricore_cross_arch_penalty(data: &[u8]) -> f64 {
+    let mut tricore_ret = 0;
+    let mut i = 0;
+    while i + 1 < data.len() {
+        if data[i] == 0x00 && (data[i+1] & 0xF0) == 0x90 {
+            tricore_ret += 1;
+        }
+        i += 2;
+    }
+    if tricore_ret > 50 && data.len() >= 4096 {
+        return 0.05; // 95% penalty
+    }
+    1.0
 }
