@@ -47,10 +47,6 @@ pub fn score(data: &[u8]) -> i64 {
 
         // Track zero runs
         if word == 0x00000000 {
-            zero_run += 1;
-            if zero_run > 2 {
-                score -= 3;
-            }
             last_word = word;
             continue;
         }
