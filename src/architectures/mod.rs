@@ -13,6 +13,7 @@ pub mod blackfin;
 pub mod c166;
 pub mod cellspu;
 pub mod dalvik;
+pub mod hc11;
 pub mod hcs12;
 pub mod hexagon;
 pub mod i860;
@@ -29,10 +30,12 @@ pub mod openrisc;
 pub mod parisc;
 pub mod ppc;
 pub mod riscv;
+pub mod rl78;
 pub mod s390x;
 pub mod sparc;
 pub mod superh;
 pub mod tricore;
+pub mod v850;
 pub mod vax;
 pub mod wasm;
 pub mod x86;
@@ -51,8 +54,11 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::LoongArch32 | Isa::LoongArch64 => Endianness::Little,
         Isa::Hexagon => Endianness::Little,
         Isa::Tricore => Endianness::Little,
-        Isa::Hcs12 => Endianness::Big, // Motorola architecture — big-endian
+        Isa::Hcs12 => Endianness::Big,  // Motorola architecture — big-endian
+        Isa::Hc11 => Endianness::Big,   // Motorola 68HC11 — big-endian
         Isa::C166 => Endianness::Little, // Infineon/Siemens C166 — little-endian
+        Isa::Rl78 => Endianness::Little, // Renesas RL78 — little-endian
+        Isa::V850 => Endianness::Little, // Renesas/NEC V850 — little-endian
         Isa::Bpf => Endianness::Little,
         Isa::Cuda => Endianness::Little,
         Isa::AmdGpu => Endianness::Little,
@@ -130,7 +136,10 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Avr => 2,
         Isa::Msp430 => 2,
         Isa::Tricore => 2, // TriCore has 16/32-bit instructions (16-bit aligned)
-        Isa::Hcs12 => 1,   // HC12/HCS12X has variable-length instructions (1-8 bytes), byte-aligned
+        Isa::Hcs12 => 1, // HC12/HCS12X has variable-length instructions (1-8 bytes), byte-aligned
+        Isa::Hc11 => 1, // 68HC11 has variable-length instructions (1-5 bytes), byte-aligned
+        Isa::Rl78 => 1, // RL78 has variable-length instructions (1-4 bytes), byte-aligned
+        Isa::V850 => 2, // V850 has 16-bit and 32-bit instructions, 2-byte aligned
 
         _ => 4,
     }
@@ -160,6 +169,9 @@ pub fn supports_compressed(isa: Isa) -> bool {
             | Isa::Vax     // VAX has variable-length CISC (1-37 bytes)
             | Isa::Blackfin // Blackfin has variable-length (16/32/64-bit)
             | Isa::Hcs12 // HC12/HCS12X has variable-length instructions (1-8 bytes)
+            | Isa::Hc11  // 68HC11 has variable-length instructions (1-5 bytes)
+            | Isa::Rl78  // RL78 has variable-length instructions (1-4 bytes)
+            | Isa::V850  // V850 has 16/32-bit instructions
     )
 }
 

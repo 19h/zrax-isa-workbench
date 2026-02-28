@@ -9,9 +9,9 @@
 //! The actual scoring logic is implemented in `crate::architectures::*::score()`.
 
 use crate::architectures::{
-    aarch64, alpha, arc, arm, avr, blackfin, c166, cellspu, dalvik, hcs12, hexagon, i860, ia64,
-    jvm, lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv,
-    s390x, sparc, superh, tricore, vax, wasm, x86, xtensa,
+    aarch64, alpha, arc, arm, avr, blackfin, c166, cellspu, dalvik, hc11, hcs12, hexagon, i860,
+    ia64, jvm, lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc,
+    riscv, rl78, s390x, sparc, superh, tricore, v850, vax, wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -296,12 +296,36 @@ pub fn score_hcs12(data: &[u8]) -> i64 {
     hcs12::score(data)
 }
 
+/// Score likelihood of Motorola 68HC11 code.
+///
+/// Delegates to `crate::architectures::hc11::score()`.
+#[inline]
+pub fn score_hc11(data: &[u8]) -> i64 {
+    hc11::score(data)
+}
+
 /// Score likelihood of Infineon/Siemens C166 (C16x/ST10) code.
 ///
 /// Delegates to `crate::architectures::c166::score()`.
 #[inline]
 pub fn score_c166(data: &[u8]) -> i64 {
     c166::score(data)
+}
+
+/// Score likelihood of Renesas RL78 (successor to NEC 78K) code.
+///
+/// Delegates to `crate::architectures::rl78::score()`.
+#[inline]
+pub fn score_rl78(data: &[u8]) -> i64 {
+    rl78::score(data)
+}
+
+/// Score likelihood of Renesas (NEC) V850 code.
+///
+/// Delegates to `crate::architectures::v850::score()`.
+#[inline]
+pub fn score_v850(data: &[u8]) -> i64 {
+    v850::score(data)
 }
 
 #[cfg(test)]

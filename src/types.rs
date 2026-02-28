@@ -113,8 +113,14 @@ pub enum Isa {
     // Freescale/NXP HCS12X (MC68HC12 / CPU12) — automotive 16-bit big-endian MCU
     Hcs12,
 
+    // Motorola/Freescale 68HC11 — 8-bit big-endian MCU (predecessor to HC12)
+    Hc11,
+
     // Infineon/Siemens C166 (C16x/ST10) — automotive 16-bit little-endian MCU
     C166,
+
+    // Renesas RL78 (successor to NEC 78K) — 8/16-bit little-endian MCU
+    Rl78,
 
     // Embedded/Microcontrollers
     Avr,
@@ -228,7 +234,9 @@ impl Isa {
             Isa::Sharc => "Analog Devices SHARC",
             Isa::Tricore => "Infineon TriCore",
             Isa::Hcs12 => "Freescale/NXP HCS12",
+            Isa::Hc11 => "Motorola 68HC11",
             Isa::C166 => "Infineon/Siemens C166",
+            Isa::Rl78 => "Renesas RL78",
             Isa::Avr => "Atmel AVR",
             Isa::Avr32 => "Atmel AVR32",
             Isa::Msp430 => "TI MSP430",
@@ -329,7 +337,9 @@ impl Isa {
             | Isa::Mcs6502
             | Isa::W65816
             | Isa::Hcs12
-            | Isa::C166 => 16,
+            | Isa::Hc11
+            | Isa::C166
+            | Isa::Rl78 => 16,
 
             Isa::Pdp11 => 16,
             Isa::Vax => 32,
@@ -368,6 +378,8 @@ impl Isa {
                 | Isa::Tricore
                 | Isa::Xtensa
                 | Isa::Hcs12
+                | Isa::Hc11
+                | Isa::Rl78
         )
     }
 }

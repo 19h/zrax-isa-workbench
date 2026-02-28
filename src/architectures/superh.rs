@@ -419,6 +419,9 @@ fn score_word(word: u16) -> (i64, bool, bool, bool) {
     // In firmware binaries, 0x0000 and 0xFFFF are extremely common (erased NOR flash
     // is all 0xFF). Penalizing these massively skews results for firmware where 30-50%
     // of the image is blank. Treat as neutral.
+    // Note: 0xC3C3 is also a common EEPROM fill pattern (e.g., in Bosch ECU firmware)
+    // but it maps to TRAPA in SH (0xC3xx). Repeated halfword detection in score()
+    // handles this case via run-length tracking.
     if word == 0x0000 || word == 0xFFFF {
         return (0, false, false, false);
     }
@@ -448,8 +451,13 @@ fn score_word(word: u16) -> (i64, bool, bool, bool) {
     }
 
     // TRAPA (0xC3xx) - 256 values out of 65536 = 0.39%
+    // Score positively but do NOT mark as distinctive. TRAPA is a valid SH
+    // instruction, but 0xC3xx patterns are also common fill/padding bytes
+    // in non-SH firmware (e.g., Bosch ECU EEPROMs use 0xC3 fill).
+    // The run-length detector handles bulk fill, but scattered 0xC3xx values
+    // should not alone satisfy the structural requirement for "this is SH code".
     if is_trapa(word) {
-        return (15, false, false, true);
+        return (8, false, false, false);
     }
 
     // JSR @Rm (0x4m0B) - 16 values = 0.024%
@@ -1035,6 +1043,20 @@ pub fn score(data: &[u8]) -> (i64, i64) {
     let mut compound_be = 0u32; // RTS;NOP, JSR;NOP, JMP;NOP, RTE;NOP pairs
     let mut compound_le = 0u32;
 
+    // Run-length tracking for repeated halfwords.
+    // Firmware/EEPROM images often contain large regions filled with a single
+    // value (e.g., 0xC3C3 in Bosch ECUs, 0xA5A5 security patterns, etc.).
+    // SH's broad opcode coverage means almost any halfword maps to a "valid"
+    // instruction, so these fill regions inflate the score massively.
+    // We track consecutive identical halfwords and suppress scoring after
+    // a short threshold (3 repeats). Beyond that, the repeated value is
+    // clearly fill/padding, not real instructions.
+    const FILL_RUN_THRESHOLD: u32 = 3; // allow first 3, suppress rest
+    let mut run_word_be: u16 = 0xDEAD; // sentinel — won't match first word
+    let mut run_word_le: u16 = 0xDEAD;
+    let mut run_len_be: u32 = 0;
+    let mut run_len_le: u32 = 0;
+
     // Check for vector tables at the start of the data
     score_be += detect_be_vector_table(data);
     score_le += detect_le_vector_table(data);
@@ -1109,8 +1131,29 @@ pub fn score(data: &[u8]) -> (i64, i64) {
             }
         }
 
+        // Update run-length tracking for repeated halfword detection
+        if word_le == run_word_le {
+            run_len_le += 1;
+        } else {
+            run_word_le = word_le;
+            run_len_le = 1;
+        }
+        if word_be == run_word_be {
+            run_len_be += 1;
+        } else {
+            run_word_be = word_be;
+            run_len_be = 1;
+        }
+
         // Score the LE interpretation
-        {
+        // Suppress scoring for repeated-fill halfwords beyond the threshold.
+        // This prevents EEPROM/flash fill patterns (e.g., 0xC3C3, 0xA5A5)
+        // from inflating the score via broad opcode matches like TRAPA (0xC3xx).
+        if run_len_le > FILL_RUN_THRESHOLD {
+            // Long run of identical halfwords — this is fill/padding, not code.
+            // Apply a small penalty to actively push down the score.
+            score_le -= 1;
+        } else {
             let penalty = cross_arch_penalty_le(word_le);
             if penalty != 0 {
                 score_le += penalty;
@@ -1129,8 +1172,10 @@ pub fn score(data: &[u8]) -> (i64, i64) {
             }
         }
 
-        // Score the BE interpretation
-        {
+        // Score the BE interpretation (same run-length logic)
+        if run_len_be > FILL_RUN_THRESHOLD {
+            score_be -= 1;
+        } else {
             let penalty = cross_arch_penalty_be(word_be);
             if penalty != 0 {
                 score_be += penalty;
@@ -1361,5 +1406,65 @@ mod tests {
         assert_eq!(score_word(0x0000), (0, false, false, false));
         // 0xFFFF — neutral (erased flash)
         assert_eq!(score_word(0xFFFF), (0, false, false, false));
+        // TRAPA — positive but NOT distinctive (prevents fill-byte inflation)
+        let (delta, is_ret, is_call, is_dist) = score_word(0xC300);
+        assert!(delta > 0, "TRAPA should have positive score");
+        assert!(!is_dist, "TRAPA should NOT be marked distinctive");
+        assert!(!is_ret);
+        assert!(!is_call);
+    }
+
+    #[test]
+    fn test_fill_byte_run_suppression() {
+        // Simulate an EEPROM with 0xC3C3 fill (like Bosch ECU firmware).
+        // This should NOT produce a high SH score because the repeated
+        // halfwords are detected as fill/padding.
+        let mut data = vec![0xC3u8; 4096]; // 2048 halfwords of 0xC3C3
+
+        // Sprinkle a few non-fill bytes to make it look like a real EEPROM
+        // (header + small data blocks)
+        data[0] = 0x55; // 'U' marker
+        data[1] = 0x00;
+        data[2] = 0x56; // 'V'
+        data[3] = 0x33;
+
+        let (be, le) = score(&data);
+        // With 2048 repeated TRAPA halfwords, the score should be very low
+        // because the run-length detector suppresses them.
+        assert!(
+            be < 200 && le < 200,
+            "Score should be very low for fill-heavy data: BE={be}, LE={le}"
+        );
+    }
+
+    #[test]
+    fn test_genuine_sh_code_with_fill() {
+        // Mix of real SH code (BE) and fill regions.
+        // The code should still score well despite the fill.
+        let mut data = vec![0xC3u8; 256]; // Start with fill
+
+        // Insert genuine SH2 BE code starting at offset 128
+        let code_start = 128;
+        let sh_code: &[u8] = &[
+            0xD1, 0x02, // mov.l @(8,PC), r1
+            0x41, 0x00, // shll r1
+            0x30, 0x0C, // add r1, r0
+            0x4F, 0x03, // stc.l sr, @-r15
+            0x00, 0x09, // nop
+            0x00, 0x0B, // rts
+            0x00, 0x09, // nop (delay slot)
+            0xD2, 0x04, // mov.l @(16,PC), r2
+            0x42, 0x00, // shll r2
+            0x00, 0x09, // nop
+            0x00, 0x0B, // rts
+            0x00, 0x09, // nop (delay slot)
+        ];
+        data[code_start..code_start + sh_code.len()].copy_from_slice(sh_code);
+
+        let (be, _le) = score(&data);
+        assert!(
+            be > 0,
+            "BE score should be positive for genuine SH code mixed with fill: BE={be}"
+        );
     }
 }

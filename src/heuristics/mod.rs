@@ -54,7 +54,10 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::CellSpu, "Cell SPU"),
     (Isa::Tricore, "Infineon TriCore"),
     (Isa::Hcs12, "Freescale/NXP HCS12"),
+    (Isa::Hc11, "Motorola 68HC11"),
     (Isa::C166, "Infineon/Siemens C166"),
+    (Isa::V850, "Renesas/NEC V850"),
+    (Isa::Rl78, "Renesas RL78"),
 ];
 
 /// Result of heuristic scoring for a single architecture.
@@ -543,6 +546,16 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 16,
     });
 
+    // Motorola 68HC11
+    let hc11_score = scorer::score_hc11(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Hc11,
+        raw_score: hc11_score,
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 8,
+    });
+
     // C166/C167/ST10 (Infineon/Siemens)
     let c166_score = scorer::score_c166(scan_data);
     scores.push(ArchitectureScore {
@@ -551,6 +564,26 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         confidence: 0.0,
         endianness: Endianness::Little,
         bitwidth: 16,
+    });
+
+    // Renesas RL78 (successor to NEC 78K) — 8/16-bit little-endian MCU
+    let rl78_score = scorer::score_rl78(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Rl78,
+        raw_score: rl78_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 16,
+    });
+
+    // Renesas/NEC V850
+    let v850_score = scorer::score_v850(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::V850,
+        raw_score: v850_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
     });
 
     // Calculate confidence using margin-based approach

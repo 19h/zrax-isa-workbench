@@ -202,7 +202,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x45 => (Isa::Unknown(0x45), 16),
 
         // Motorola MC68HC11
-        0x46 => (Isa::Unknown(0x46), 8),
+        0x46 => (Isa::Hc11, 16),
 
         // Motorola MC68HC08
         0x47 => (Isa::Unknown(0x47), 8),
@@ -502,13 +502,13 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0xC4 => (Isa::Unknown(0xC4), 8),
 
         // Renesas RL78
-        0xC5 => (Isa::Unknown(0xC5), 16),
+        0xC5 => (Isa::Rl78, 16),
 
         // Broadcom VideoCore V
         0xC6 => (Isa::VideoCore5, 32),
 
-        // Renesas 78KOR
-        0xC7 => (Isa::Unknown(0xC7), 8),
+        // Renesas 78KOR (mapped to RL78 — the 78K successor)
+        0xC7 => (Isa::Rl78, 16),
 
         // Freescale 56800EX
         0xC8 => (Isa::Unknown(0xC8), 16),
