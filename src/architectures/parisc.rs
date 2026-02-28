@@ -67,16 +67,36 @@ pub fn score(data: &[u8]) -> i64 {
 
         // --- Cross-architecture penalties (BE ISAs) ---
         // PPC
-        if word == 0x60000000 { score -= 12; continue; }  // NOP
-        if word == 0x4E800020 { score -= 15; continue; }  // BLR
-        if (word >> 26) == 18 { score -= 5; }             // B/BL
-        // SPARC
-        if word == 0x01000000 { score -= 10; continue; }  // NOP
-        if word == 0x81C7E008 { score -= 15; continue; }  // RET
-        // MIPS BE
-        if word == 0x03E00008 { score -= 12; continue; }  // JR $ra
-        // S390x
-        if (word >> 16) == 0x07FE { score -= 12; continue; }  // BR %r14
+        if word == 0x60000000 {
+            score -= 12;
+            continue;
+        } // NOP
+        if word == 0x4E800020 {
+            score -= 15;
+            continue;
+        } // BLR
+        if (word >> 26) == 18 {
+            score -= 5;
+        } // B/BL
+          // SPARC
+        if word == 0x01000000 {
+            score -= 10;
+            continue;
+        } // NOP
+        if word == 0x81C7E008 {
+            score -= 15;
+            continue;
+        } // RET
+          // MIPS BE
+        if word == 0x03E00008 {
+            score -= 12;
+            continue;
+        } // JR $ra
+          // S390x
+        if (word >> 16) == 0x07FE {
+            score -= 12;
+            continue;
+        } // BR %r14
 
         // Exact matches
         if word == PARISC_NOP {
@@ -113,7 +133,9 @@ pub fn score(data: &[u8]) -> i64 {
                 branch_count += 1;
             }
             OP_ADDI | OP_SUBI => score += 3,
-            _ => { matched = false; }
+            _ => {
+                matched = false;
+            }
         }
 
         if !matched {

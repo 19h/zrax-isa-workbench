@@ -1084,8 +1084,110 @@ pub fn score(data: &[u8]) -> i64 {
         100
     };
 
-    let final_score = (base_score + vector_bonus) * multiplier / 100;
+    let mut final_score = (base_score + vector_bonus) * multiplier / 100;
+
+    // ─── Cross-architecture penalty: SuperH firmware detection ───
+    //
+    // ARM scores high on SH (SuperH) firmware because ARM's 4-byte little-endian
+    // word format reads SH's 2-byte big-endian instructions as arbitrary ARM
+    // words. Many of these happen to partially match ARM instruction patterns
+    // (conditional fields, data processing opcodes, etc.), accumulating a high
+    // false-positive score.
+    //
+    // We detect SH firmware by its SH7058 sparse vector table: 16-byte stride
+    // entries with 0xFF00xxxx addresses and 12 bytes 0xFF padding — a format
+    // that is unmistakable and unique to Renesas SH7058 Mitsubishi ECU firmware.
+    // When detected, we apply a penalty to the ARM score.
+    if data.len() >= 0x80 {
+        if has_sh7058_sparse_vector_table(data) {
+            // SH7058 sparse vector table detected — this is definitively SH
+            // firmware, not ARM. Apply a heavy penalty.
+            final_score = (final_score as f64 * 0.10) as i64;
+        } else if has_sh_packed_vector_table(data) {
+            // Standard SH packed vector table (SH7052-style) detected.
+            // Apply a moderate penalty.
+            final_score = (final_score as f64 * 0.25) as i64;
+        }
+    }
+
     final_score.max(0)
+}
+
+/// Detect SH7058 sparse vector table at the start of firmware.
+///
+/// Pattern: 4 consecutive 16-byte entries, each containing:
+/// - 4-byte big-endian address in 0xFF000000-0xFF0FFFFF (ROM alias) or
+///   0xFFF80000-0xFFFFBFFF (RAM) or 0x00000040-0x00FFFFFF (low ROM)
+/// - 12 bytes of 0xFF padding
+///
+/// Returns true if this pattern is detected.
+fn has_sh7058_sparse_vector_table(data: &[u8]) -> bool {
+    let mut sparse_valid = 0u32;
+    let mut sparse_ff_padding = 0u32;
+
+    for entry_idx in 0..4 {
+        let off = entry_idx * 16;
+        if off + 16 > data.len() {
+            return false;
+        }
+        let addr = u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+        let padding_all_ff = data[off + 4..off + 16].iter().all(|&b| b == 0xFF);
+
+        if is_sh_vector_addr(addr) {
+            sparse_valid += 1;
+        }
+        if padding_all_ff {
+            sparse_ff_padding += 1;
+        }
+    }
+
+    sparse_valid >= 2 && sparse_ff_padding >= 3
+}
+
+/// Detect standard SH packed vector table (SH7052-style) at the start of firmware.
+///
+/// Pattern: packed 32-bit big-endian addresses at offset 0, with most entries
+/// pointing to valid SH address ranges.
+fn has_sh_packed_vector_table(data: &[u8]) -> bool {
+    if data.len() < 32 {
+        return false;
+    }
+
+    let check_count = (data.len().min(64) / 4).min(16);
+    let mut valid = 0u32;
+    let mut nontrivial = 0u32;
+
+    for v in 0..check_count {
+        let off = v * 4;
+        let addr = u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+        if addr != 0x00000000 && addr != 0xFFFFFFFF {
+            nontrivial += 1;
+            if is_sh_vector_addr(addr) && (addr & 1) == 0 {
+                valid += 1;
+            }
+        }
+    }
+
+    // Need most entries to be valid and nontrivial
+    let valid_fraction = if nontrivial > 0 {
+        valid as f64 / check_count as f64
+    } else {
+        0.0
+    };
+
+    valid >= 6 && valid_fraction >= 0.50 && nontrivial >= 5
+}
+
+/// Check if a 32-bit address is a valid SuperH vector table entry.
+#[inline]
+fn is_sh_vector_addr(addr: u32) -> bool {
+    if addr == 0x00000000 || addr == 0xFFFFFFFF {
+        return false;
+    }
+    let is_rom = addr >= 0x00000040 && addr < 0x01000000;
+    let is_rom_alias = addr >= 0xFF000000 && addr < 0xFF100000;
+    let is_ram = addr >= 0xFFF80000 && addr < 0xFFFFFF00;
+    is_rom || is_rom_alias || is_ram
 }
 
 #[cfg(test)]

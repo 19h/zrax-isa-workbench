@@ -56,18 +56,38 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 1 < data.len() {
             let hw = u16::from_le_bytes([data[j], data[j + 1]]);
             // Thumb patterns
-            if hw == 0x4770 { score -= 15; }  // BX LR
-            if hw == 0xBF00 { score -= 10; }  // NOP
-            if matches!(hw, 0xB672 | 0xB662 | 0xB673 | 0xB663) { score -= 12; } // CPSID/CPSIE
-            if matches!(hw, 0xBF30 | 0xBF20 | 0xBF40) { score -= 10; } // WFI/WFE/SEV
-            if (hw & 0xFF00) == 0xB500 { score -= 8; }  // PUSH {.., LR}
-            if (hw & 0xFF00) == 0xBD00 { score -= 8; }  // POP {.., PC}
-            // AVR patterns
-            if hw == 0x9508 { score -= 12; }  // AVR RET
-            if hw == 0x9518 { score -= 10; }  // AVR RETI
-            // MSP430 patterns
-            if hw == 0x4130 { score -= 12; }  // MSP430 RET
-            if hw == 0x4303 { score -= 8; }   // MSP430 NOP
+            if hw == 0x4770 {
+                score -= 15;
+            } // BX LR
+            if hw == 0xBF00 {
+                score -= 10;
+            } // NOP
+            if matches!(hw, 0xB672 | 0xB662 | 0xB673 | 0xB663) {
+                score -= 12;
+            } // CPSID/CPSIE
+            if matches!(hw, 0xBF30 | 0xBF20 | 0xBF40) {
+                score -= 10;
+            } // WFI/WFE/SEV
+            if (hw & 0xFF00) == 0xB500 {
+                score -= 8;
+            } // PUSH {.., LR}
+            if (hw & 0xFF00) == 0xBD00 {
+                score -= 8;
+            } // POP {.., PC}
+              // AVR patterns
+            if hw == 0x9508 {
+                score -= 12;
+            } // AVR RET
+            if hw == 0x9518 {
+                score -= 10;
+            } // AVR RETI
+              // MSP430 patterns
+            if hw == 0x4130 {
+                score -= 12;
+            } // MSP430 RET
+            if hw == 0x4303 {
+                score -= 8;
+            } // MSP430 NOP
             j += 2;
         }
     }
@@ -77,45 +97,88 @@ pub fn score(data: &[u8]) -> i64 {
         let word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
 
         // AArch64 (LE)
-        if word == 0xD65F03C0 { score -= 15; continue; }  // RET
-        if word == 0xD503201F { score -= 10; continue; }  // NOP
-        if (word >> 26) == 0x25 { score -= 5; }           // BL
-        // RISC-V (LE)
-        if word == 0x00008067 { score -= 12; continue; }  // RET
-        if word == 0x00000013 { score -= 8; continue; }   // NOP
+        if word == 0xD65F03C0 {
+            score -= 15;
+            continue;
+        } // RET
+        if word == 0xD503201F {
+            score -= 10;
+            continue;
+        } // NOP
+        if (word >> 26) == 0x25 {
+            score -= 5;
+        } // BL
+          // RISC-V (LE)
+        if word == 0x00008067 {
+            score -= 12;
+            continue;
+        } // RET
+        if word == 0x00000013 {
+            score -= 8;
+            continue;
+        } // NOP
 
         // Thumb-2 32-bit patterns
         {
             let hw_low = (word & 0xFFFF) as u16;
             let hw_high = (word >> 16) as u16;
-            if hw_low == 0xE92D { score -= 10; continue; }  // PUSH.W
-            if hw_low == 0xE8BD { score -= 10; continue; }  // POP.W
+            if hw_low == 0xE92D {
+                score -= 10;
+                continue;
+            } // PUSH.W
+            if hw_low == 0xE8BD {
+                score -= 10;
+                continue;
+            } // POP.W
             if (hw_low & 0xF800) == 0xF000 && (hw_high & 0xD000) == 0xD000 {
                 score -= 8; // Thumb-2 BL
                 continue;
             }
         }
         // MIPS LE patterns
-        if word == 0x03E00008 { score -= 15; continue; }  // JR $ra
-        if (word & 0xFFFF0000) == 0x27BD0000 { score -= 10; }  // ADDIU $sp
-        if (word & 0xFFFF0000) == 0xAFBF0000 { score -= 10; }  // SW $ra
-        if (word & 0xFFFF0000) == 0x8FBF0000 { score -= 10; }  // LW $ra
-        // MIPS BE patterns (read as LE)
+        if word == 0x03E00008 {
+            score -= 15;
+            continue;
+        } // JR $ra
+        if (word & 0xFFFF0000) == 0x27BD0000 {
+            score -= 10;
+        } // ADDIU $sp
+        if (word & 0xFFFF0000) == 0xAFBF0000 {
+            score -= 10;
+        } // SW $ra
+        if (word & 0xFFFF0000) == 0x8FBF0000 {
+            score -= 10;
+        } // LW $ra
+          // MIPS BE patterns (read as LE)
         {
             let be32 = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-            if be32 == 0x03E00008 { score -= 15; }  // JR $ra
-            if (be32 & 0xFFFF0000) == 0x27BD0000 { score -= 10; }  // ADDIU $sp
-            if (be32 & 0xFFFF0000) == 0xAFBF0000 { score -= 10; }  // SW $ra
+            if be32 == 0x03E00008 {
+                score -= 15;
+            } // JR $ra
+            if (be32 & 0xFFFF0000) == 0x27BD0000 {
+                score -= 10;
+            } // ADDIU $sp
+            if (be32 & 0xFFFF0000) == 0xAFBF0000 {
+                score -= 10;
+            } // SW $ra
         }
         // PPC BLR (BE 0x4E800020)
         {
             let be32 = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
-            if be32 == 0x4E800020 { score -= 12; }
-            if be32 == 0x60000000 { score -= 8; }  // PPC NOP
+            if be32 == 0x4E800020 {
+                score -= 12;
+            }
+            if be32 == 0x60000000 {
+                score -= 8;
+            } // PPC NOP
         }
         // LoongArch
-        if word == 0x4C000020 { score -= 10; }  // RET
-        if word == 0x03400000 { score -= 8; }   // NOP
+        if word == 0x4C000020 {
+            score -= 10;
+        } // RET
+        if word == 0x03400000 {
+            score -= 8;
+        } // NOP
 
         // --- Nios II instruction scoring ---
         let opcode = word & 0x3F;
@@ -146,8 +209,14 @@ pub fn score(data: &[u8]) -> i64 {
             match opx {
                 OPX_ADD | OPX_SUB => score += 5,
                 OPX_AND | OPX_OR | OPX_XOR => score += 4,
-                OPX_JMP_RET => { score += 8; ret_count += 1; }
-                OPX_CALL => { score += 8; call_count += 1; }
+                OPX_JMP_RET => {
+                    score += 8;
+                    ret_count += 1;
+                }
+                OPX_CALL => {
+                    score += 8;
+                    call_count += 1;
+                }
                 _ => score += 1,
             }
             continue;
@@ -161,9 +230,18 @@ pub fn score(data: &[u8]) -> i64 {
             OP_ORI => score += 3,
             OP_LDW => score += 4,
             OP_STW => score += 4,
-            OP_BR => { score += 4; branch_count += 1; }
-            OP_BEQ => { score += 4; branch_count += 1; }
-            OP_BNE => { score += 4; branch_count += 1; }
+            OP_BR => {
+                score += 4;
+                branch_count += 1;
+            }
+            OP_BEQ => {
+                score += 4;
+                branch_count += 1;
+            }
+            OP_BNE => {
+                score += 4;
+                branch_count += 1;
+            }
             OP_CALL => {
                 // CALL target is bits 31:6 — require non-zero target
                 // (word 0x00000000 is not a real CALL)
@@ -172,7 +250,9 @@ pub fn score(data: &[u8]) -> i64 {
                     call_count += 1;
                 }
             }
-            _ => { matched = false; }
+            _ => {
+                matched = false;
+            }
         }
 
         // Penalty for unrecognized instructions

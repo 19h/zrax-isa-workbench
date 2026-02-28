@@ -9,9 +9,9 @@
 //! The actual scoring logic is implemented in `crate::architectures::*::score()`.
 
 use crate::architectures::{
-    aarch64, alpha, arc, arm, avr, blackfin, c16x, cellspu, dalvik, hexagon, i860, ia64, jvm,
-    lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv, s390x,
-    sparc, superh, tricore, vax, wasm, x86, xtensa,
+    aarch64, alpha, arc, arm, avr, blackfin, c166, cellspu, dalvik, hcs12, hexagon, i860, ia64,
+    jvm, lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc, riscv,
+    s390x, sparc, superh, tricore, vax, wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -101,9 +101,10 @@ pub fn score_m68k(data: &[u8]) -> i64 {
 
 /// Score likelihood of SuperH code.
 ///
+/// Returns (big_endian_score, little_endian_score).
 /// Delegates to `crate::architectures::superh::score()`.
 #[inline]
-pub fn score_superh(data: &[u8]) -> i64 {
+pub fn score_superh(data: &[u8]) -> (i64, i64) {
     superh::score(data)
 }
 
@@ -287,12 +288,20 @@ pub fn score_cellspu(data: &[u8]) -> i64 {
     cellspu::score(data)
 }
 
-/// Score likelihood of Infineon/Siemens C16x code.
+/// Score likelihood of Freescale/NXP HCS12/HCS12X (MC68HC12 / CPU12) code.
 ///
-/// Delegates to `crate::architectures::c16x::score()`.
+/// Delegates to `crate::architectures::hcs12::score()`.
 #[inline]
-pub fn score_c16x(data: &[u8]) -> i64 {
-    c16x::score(data)
+pub fn score_hcs12(data: &[u8]) -> i64 {
+    hcs12::score(data)
+}
+
+/// Score likelihood of Infineon/Siemens C166 (C16x/ST10) code.
+///
+/// Delegates to `crate::architectures::c166::score()`.
+#[inline]
+pub fn score_c166(data: &[u8]) -> i64 {
+    c166::score(data)
 }
 
 #[cfg(test)]
@@ -379,12 +388,31 @@ mod tests {
     }
 
     #[test]
-    fn test_superh_scoring() {
+    fn test_superh_scoring_le() {
+        // SH NOP + RTS in little-endian byte order
         let code = [
-            0x09, 0x00, // NOP
-            0x0B, 0x00, // RTS
+            0x09, 0x00, // NOP (LE)
+            0x0B, 0x00, // RTS (LE)
         ];
-        assert!(score_superh(&code) > 0);
+        let (_be, le) = score_superh(&code);
+        assert!(
+            le > 0,
+            "LE score should be positive for LE-encoded SH code, got {le}"
+        );
+    }
+
+    #[test]
+    fn test_superh_scoring_be() {
+        // SH NOP + RTS in big-endian byte order
+        let code = [
+            0x00, 0x09, // NOP (BE)
+            0x00, 0x0B, // RTS (BE)
+        ];
+        let (be, _le) = score_superh(&code);
+        assert!(
+            be > 0,
+            "BE score should be positive for BE-encoded SH code, got {be}"
+        );
     }
 
     #[test]

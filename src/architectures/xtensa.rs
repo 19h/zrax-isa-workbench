@@ -74,21 +74,73 @@ pub fn score(data: &[u8]) -> i64 {
 
             // --- Cross-architecture penalties for 16-bit LE ISAs ---
             // AVR distinctive patterns
-            if half == 0x9508 { score -= 15; i += 2; continue; } // AVR RET
-            if half == 0x9518 { score -= 15; i += 2; continue; } // AVR RETI
-            if half == 0x9588 { score -= 10; i += 2; continue; } // AVR SLEEP
-            if half == 0x9598 { score -= 8; i += 2; continue; }  // AVR BREAK
-            if half == 0x9478 { score -= 8; i += 2; continue; }  // AVR SEI
-            if half == 0x94F8 { score -= 8; i += 2; continue; }  // AVR CLI
-            // MSP430 distinctive patterns
-            if half == 0x4130 { score -= 15; i += 2; continue; } // MSP430 RET
-            if half == 0x4303 { score -= 10; i += 2; continue; } // MSP430 NOP
-            if half == 0x1300 { score -= 10; i += 2; continue; } // MSP430 RETI
-            // Thumb distinctive patterns
-            if half == 0x4770 { score -= 15; i += 2; continue; } // Thumb BX LR
-            if half == 0xBF00 { score -= 10; i += 2; continue; } // Thumb NOP
-            if (half & 0xFF00) == 0xB500 { score -= 8; i += 2; continue; } // Thumb PUSH {.., LR}
-            if (half & 0xFF00) == 0xBD00 { score -= 8; i += 2; continue; } // Thumb POP {.., PC}
+            if half == 0x9508 {
+                score -= 15;
+                i += 2;
+                continue;
+            } // AVR RET
+            if half == 0x9518 {
+                score -= 15;
+                i += 2;
+                continue;
+            } // AVR RETI
+            if half == 0x9588 {
+                score -= 10;
+                i += 2;
+                continue;
+            } // AVR SLEEP
+            if half == 0x9598 {
+                score -= 8;
+                i += 2;
+                continue;
+            } // AVR BREAK
+            if half == 0x9478 {
+                score -= 8;
+                i += 2;
+                continue;
+            } // AVR SEI
+            if half == 0x94F8 {
+                score -= 8;
+                i += 2;
+                continue;
+            } // AVR CLI
+              // MSP430 distinctive patterns
+            if half == 0x4130 {
+                score -= 15;
+                i += 2;
+                continue;
+            } // MSP430 RET
+            if half == 0x4303 {
+                score -= 10;
+                i += 2;
+                continue;
+            } // MSP430 NOP
+            if half == 0x1300 {
+                score -= 10;
+                i += 2;
+                continue;
+            } // MSP430 RETI
+              // Thumb distinctive patterns
+            if half == 0x4770 {
+                score -= 15;
+                i += 2;
+                continue;
+            } // Thumb BX LR
+            if half == 0xBF00 {
+                score -= 10;
+                i += 2;
+                continue;
+            } // Thumb NOP
+            if (half & 0xFF00) == 0xB500 {
+                score -= 8;
+                i += 2;
+                continue;
+            } // Thumb PUSH {.., LR}
+            if (half & 0xFF00) == 0xBD00 {
+                score -= 8;
+                i += 2;
+                continue;
+            } // Thumb POP {.., PC}
 
             if half == XTENSA_NOP_N || half == XTENSA_NOP_N_ALT {
                 score += 20; // NOP.N
@@ -102,7 +154,9 @@ pub fn score(data: &[u8]) -> i64 {
                 score += 3; // MOV.N
             } else if (half & MASK_MOVI_N) == PATTERN_MOVI_N {
                 score += 3; // MOVI.N
-            } else if (half & MASK_L32I_N) == PATTERN_L32I_N || (half & MASK_S32I_N) == PATTERN_S32I_N {
+            } else if (half & MASK_L32I_N) == PATTERN_L32I_N
+                || (half & MASK_S32I_N) == PATTERN_S32I_N
+            {
                 score += 3; // L32I.N / S32I.N
             }
             i += 2;

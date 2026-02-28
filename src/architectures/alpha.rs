@@ -89,11 +89,24 @@ pub fn score(data: &[u8]) -> i64 {
         if opcode == OP_JUMP {
             let func = (word >> 14) & 0x3;
             match func {
-                0 => { score += 8; call_count += 1; }
-                1 => { score += 8; ret_count += 1; }
-                2 => { score += 5; }
-                3 => { score += 6; call_count += 1; }
-                _ => { score += 3; }
+                0 => {
+                    score += 8;
+                    call_count += 1;
+                }
+                1 => {
+                    score += 8;
+                    ret_count += 1;
+                }
+                2 => {
+                    score += 5;
+                }
+                3 => {
+                    score += 6;
+                    call_count += 1;
+                }
+                _ => {
+                    score += 3;
+                }
             }
             continue;
         }
@@ -116,31 +129,58 @@ pub fn score(data: &[u8]) -> i64 {
 
         // --- Cross-architecture penalties ---
         // AArch64 (LE)
-        if word == 0xD65F03C0 { score -= 15; continue; }  // RET
-        if word == 0xD503201F { score -= 10; continue; }  // NOP
-        if (word >> 26) == 0x25 { score -= 5; }           // BL
+        if word == 0xD65F03C0 {
+            score -= 15;
+            continue;
+        } // RET
+        if word == 0xD503201F {
+            score -= 10;
+            continue;
+        } // NOP
+        if (word >> 26) == 0x25 {
+            score -= 5;
+        } // BL
 
         // RISC-V (LE)
-        if word == 0x00008067 { score -= 12; continue; }  // RET
-        if word == 0x00000013 { score -= 8; continue; }   // NOP
+        if word == 0x00008067 {
+            score -= 12;
+            continue;
+        } // RET
+        if word == 0x00000013 {
+            score -= 8;
+            continue;
+        } // NOP
 
         // Thumb-2 32-bit patterns
         {
             let hw_low = (word & 0xFFFF) as u16;
             let hw_high = (word >> 16) as u16;
-            if hw_low == 0xE92D { score -= 10; continue; }  // PUSH.W
-            if hw_low == 0xE8BD { score -= 10; continue; }  // POP.W
+            if hw_low == 0xE92D {
+                score -= 10;
+                continue;
+            } // PUSH.W
+            if hw_low == 0xE8BD {
+                score -= 10;
+                continue;
+            } // POP.W
             if (hw_low & 0xF800) == 0xF000 && (hw_high & 0xD000) == 0xD000 {
-                score -= 8; continue;  // Thumb-2 BL
+                score -= 8;
+                continue; // Thumb-2 BL
             }
         }
 
         // ARM32 patterns
         {
             let cond = (word >> 28) & 0xF;
-            if word == 0xE12FFF1E { score -= 15; }  // BX LR
-            if word == 0xE1A00000 { score -= 12; }  // NOP
-            if cond == 0xE && ((word & 0x0FFF0000) == 0x092D0000 || (word & 0x0FFF0000) == 0x08BD0000) {
+            if word == 0xE12FFF1E {
+                score -= 15;
+            } // BX LR
+            if word == 0xE1A00000 {
+                score -= 12;
+            } // NOP
+            if cond == 0xE
+                && ((word & 0x0FFF0000) == 0x092D0000 || (word & 0x0FFF0000) == 0x08BD0000)
+            {
                 score -= 8;
             }
         }
@@ -155,7 +195,30 @@ pub fn score(data: &[u8]) -> i64 {
             }
             OP_INT_ARITH => {
                 let func = (word >> 5) & 0x7F;
-                if matches!(func, 0x00 | 0x02 | 0x09 | 0x0B | 0x0F | 0x12 | 0x1B | 0x1D | 0x20 | 0x22 | 0x29 | 0x2B | 0x2D | 0x32 | 0x3B | 0x3D | 0x40 | 0x49 | 0x4D | 0x60 | 0x69 | 0x6D) {
+                if matches!(
+                    func,
+                    0x00 | 0x02
+                        | 0x09
+                        | 0x0B
+                        | 0x0F
+                        | 0x12
+                        | 0x1B
+                        | 0x1D
+                        | 0x20
+                        | 0x22
+                        | 0x29
+                        | 0x2B
+                        | 0x2D
+                        | 0x32
+                        | 0x3B
+                        | 0x3D
+                        | 0x40
+                        | 0x49
+                        | 0x4D
+                        | 0x60
+                        | 0x69
+                        | 0x6D
+                ) {
                     score += 4;
                 } else {
                     score += 1;
@@ -179,7 +242,9 @@ pub fn score(data: &[u8]) -> i64 {
                     branch_count += 1;
                 }
             }
-            _ => { matched = false; }
+            _ => {
+                matched = false;
+            }
         }
 
         if !matched {

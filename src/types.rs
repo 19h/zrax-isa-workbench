@@ -110,8 +110,11 @@ pub enum Isa {
     // Infineon TriCore
     Tricore,
 
-    // Infineon/Siemens C16x family (C161, C164, C165, C166, C167)
-    C16x,
+    // Freescale/NXP HCS12X (MC68HC12 / CPU12) — automotive 16-bit big-endian MCU
+    Hcs12,
+
+    // Infineon/Siemens C166 (C16x/ST10) — automotive 16-bit little-endian MCU
+    C166,
 
     // Embedded/Microcontrollers
     Avr,
@@ -224,7 +227,8 @@ impl Isa {
             Isa::Blackfin => "Analog Devices Blackfin",
             Isa::Sharc => "Analog Devices SHARC",
             Isa::Tricore => "Infineon TriCore",
-            Isa::C16x => "Infineon/Siemens C16x",
+            Isa::Hcs12 => "Freescale/NXP HCS12",
+            Isa::C166 => "Infineon/Siemens C166",
             Isa::Avr => "Atmel AVR",
             Isa::Avr32 => "Atmel AVR32",
             Isa::Msp430 => "TI MSP430",
@@ -324,7 +328,8 @@ impl Isa {
             | Isa::Z80
             | Isa::Mcs6502
             | Isa::W65816
-            | Isa::C16x => 16,
+            | Isa::Hcs12
+            | Isa::C166 => 16,
 
             Isa::Pdp11 => 16,
             Isa::Vax => 32,
@@ -362,7 +367,7 @@ impl Isa {
                 | Isa::RiscV128
                 | Isa::Tricore
                 | Isa::Xtensa
-                | Isa::C16x
+                | Isa::Hcs12
         )
     }
 }

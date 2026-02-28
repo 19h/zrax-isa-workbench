@@ -53,7 +53,8 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::I860, "Intel i860"),
     (Isa::CellSpu, "Cell SPU"),
     (Isa::Tricore, "Infineon TriCore"),
-    (Isa::C16x, "Infineon/Siemens C16x"),
+    (Isa::Hcs12, "Freescale/NXP HCS12"),
+    (Isa::C166, "Infineon/Siemens C166"),
 ];
 
 /// Result of heuristic scoring for a single architecture.
@@ -307,13 +308,18 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 32,
     });
 
-    // SuperH
-    let sh_score = scorer::score_superh(scan_data);
+    // SuperH (both endiannesses — SH-1/SH-2 are typically BE, SH-3/SH-4 typically LE)
+    let (sh_be, sh_le) = scorer::score_superh(scan_data);
+    let (sh_score, sh_endian) = if sh_be >= sh_le {
+        (sh_be, Endianness::Big)
+    } else {
+        (sh_le, Endianness::Little)
+    };
     scores.push(ArchitectureScore {
         isa: Isa::Sh,
         raw_score: sh_score,
         confidence: 0.0,
-        endianness: Endianness::Little,
+        endianness: sh_endian,
         bitwidth: 32,
     });
 
@@ -527,11 +533,21 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 32,
     });
 
-    // C16x (Infineon/Siemens C161-C167)
-    let c16x_score = scorer::score_c16x(scan_data);
+    // HCS12/HCS12X (Freescale/NXP MC68HC12 / CPU12)
+    let hcs12_score = scorer::score_hcs12(scan_data);
     scores.push(ArchitectureScore {
-        isa: Isa::C16x,
-        raw_score: c16x_score,
+        isa: Isa::Hcs12,
+        raw_score: hcs12_score,
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 16,
+    });
+
+    // C166/C167/ST10 (Infineon/Siemens)
+    let c166_score = scorer::score_c166(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::C166,
+        raw_score: c166_score,
         confidence: 0.0,
         endianness: Endianness::Little,
         bitwidth: 16,

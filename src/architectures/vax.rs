@@ -520,16 +520,30 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 1 < data.len() {
             let hw = u16::from_le_bytes([data[j], data[j + 1]]);
             // MSP430
-            if hw == 0x4130 { total_score -= 15; } // MSP430 RET
-            if hw == 0x4303 { total_score -= 8; }  // MSP430 NOP
-            if hw == 0x1300 { total_score -= 10; } // MSP430 RETI
-            // MSP430 MOV instructions (0x4xxx with common src/dst modes)
-            if (hw & 0xF000) == 0x4000 { total_score -= 1; }
+            if hw == 0x4130 {
+                total_score -= 15;
+            } // MSP430 RET
+            if hw == 0x4303 {
+                total_score -= 8;
+            } // MSP430 NOP
+            if hw == 0x1300 {
+                total_score -= 10;
+            } // MSP430 RETI
+              // MSP430 MOV instructions (0x4xxx with common src/dst modes)
+            if (hw & 0xF000) == 0x4000 {
+                total_score -= 1;
+            }
             // AVR
-            if hw == 0x9508 { total_score -= 12; } // AVR RET
-            if hw == 0x9518 { total_score -= 10; } // AVR RETI
-            // Thumb
-            if hw == 0x4770 { total_score -= 10; } // Thumb BX LR
+            if hw == 0x9508 {
+                total_score -= 12;
+            } // AVR RET
+            if hw == 0x9518 {
+                total_score -= 10;
+            } // AVR RETI
+              // Thumb
+            if hw == 0x4770 {
+                total_score -= 10;
+            } // Thumb BX LR
             j += 2;
         }
     }
@@ -545,7 +559,12 @@ pub fn score(data: &[u8]) -> i64 {
                 continue;
             }
             // x86-64 prologue: PUSH RBP + MOV RBP,RSP (55 48 89 E5)
-            if b == 0x55 && j + 3 < data.len() && data[j + 1] == 0x48 && data[j + 2] == 0x89 && data[j + 3] == 0xE5 {
+            if b == 0x55
+                && j + 3 < data.len()
+                && data[j + 1] == 0x48
+                && data[j + 2] == 0x89
+                && data[j + 3] == 0xE5
+            {
                 total_score -= 15;
                 j += 4;
                 continue;
@@ -560,7 +579,12 @@ pub fn score(data: &[u8]) -> i64 {
                 }
             }
             // ENDBR64 (F3 0F 1E FA)
-            if b == 0xF3 && j + 3 < data.len() && data[j + 1] == 0x0F && data[j + 2] == 0x1E && data[j + 3] == 0xFA {
+            if b == 0xF3
+                && j + 3 < data.len()
+                && data[j + 1] == 0x0F
+                && data[j + 2] == 0x1E
+                && data[j + 3] == 0xFA
+            {
                 total_score -= 12;
                 j += 4;
                 continue;
@@ -593,15 +617,24 @@ pub fn score(data: &[u8]) -> i64 {
                 x86_evidence += 3;
             }
             // x86-64 REX.W + common opcode
-            if b == 0x48 && j + 1 < data.len() && matches!(data[j + 1], 0x89 | 0x8B | 0x83 | 0x8D | 0x85 | 0xC7) {
+            if b == 0x48
+                && j + 1 < data.len()
+                && matches!(data[j + 1], 0x89 | 0x8B | 0x83 | 0x8D | 0x85 | 0xC7)
+            {
                 x86_evidence += 2;
             }
             // x86 CALL rel32 (0xE8) followed by 4 bytes
-            if b == 0xE8 && j + 4 < data.len() { x86_evidence += 1; }
+            if b == 0xE8 && j + 4 < data.len() {
+                x86_evidence += 1;
+            }
             // x86 RET (0xC3)
-            if b == 0xC3 { x86_evidence += 1; }
+            if b == 0xC3 {
+                x86_evidence += 1;
+            }
             // x86 NOP (0x90)
-            if b == 0x90 { x86_evidence += 1; }
+            if b == 0x90 {
+                x86_evidence += 1;
+            }
             j += 1;
         }
     }
@@ -650,7 +683,9 @@ pub fn score(data: &[u8]) -> i64 {
                 // Only give high score if next byte is also a plausible opcode
                 if i + 1 < data.len() {
                     let next = data[i + 1];
-                    if next <= 0x1F || matches!(next, 0x04 | 0x05 | 0xD0 | 0xD4 | 0xD5 | 0xDD | 0xC0..=0xC7) {
+                    if next <= 0x1F
+                        || matches!(next, 0x04 | 0x05 | 0xD0 | 0xD4 | 0xD5 | 0xDD | 0xC0..=0xC7)
+                    {
                         total_score += 6; // Plausible instruction follows
                     } else {
                         total_score += 2;
@@ -668,29 +703,42 @@ pub fn score(data: &[u8]) -> i64 {
                 if i + 1 < data.len() {
                     let disp = data[i + 1] as i8;
                     if disp != 0 && disp.unsigned_abs() < 64 {
-                        total_score += 3; branch_count += 1;
+                        total_score += 3;
+                        branch_count += 1;
                     } else if disp != 0 {
-                        total_score += 1; branch_count += 1;
+                        total_score += 1;
+                        branch_count += 1;
                     }
                 }
             }
-            opcode::BGTR | opcode::BLEQ | opcode::BGEQ | opcode::BLSS |
-            opcode::BGTRU | opcode::BLEQU | opcode::BVC | opcode::BVS |
-            opcode::BCC | opcode::BCS => {
+            opcode::BGTR
+            | opcode::BLEQ
+            | opcode::BGEQ
+            | opcode::BLSS
+            | opcode::BGTRU
+            | opcode::BLEQU
+            | opcode::BVC
+            | opcode::BVS
+            | opcode::BCC
+            | opcode::BCS => {
                 if i + 1 < data.len() {
                     let disp = data[i + 1] as i8;
                     if disp != 0 && disp.unsigned_abs() < 64 {
-                        total_score += 2; branch_count += 1;
+                        total_score += 2;
+                        branch_count += 1;
                     } else if disp != 0 {
-                        total_score += 1; branch_count += 1;
+                        total_score += 1;
+                        branch_count += 1;
                     }
                 }
             }
             opcode::BRB | opcode::BRW => {
-                total_score += 1; branch_count += 1;
+                total_score += 1;
+                branch_count += 1;
             }
             opcode::JSB | opcode::BSBB | opcode::BSBW => {
-                total_score += 2; branch_count += 1;
+                total_score += 2;
+                branch_count += 1;
             }
 
             // Data movement with operand validation
@@ -709,48 +757,107 @@ pub fn score(data: &[u8]) -> i64 {
             opcode::PUSHL => total_score += 2,
 
             // Longword ALU
-            opcode::ADDL2 | opcode::ADDL3 | opcode::SUBL2 | opcode::SUBL3 |
-            opcode::MULL2 | opcode::MULL3 | opcode::DIVL2 | opcode::DIVL3 => total_score += 1,
+            opcode::ADDL2
+            | opcode::ADDL3
+            | opcode::SUBL2
+            | opcode::SUBL3
+            | opcode::MULL2
+            | opcode::MULL3
+            | opcode::DIVL2
+            | opcode::DIVL3 => total_score += 1,
             opcode::CMPL => total_score += 1,
 
             // Byte/word ALU - minimal scores
-            opcode::ADDB2 | opcode::ADDB3 | opcode::SUBB2 | opcode::SUBB3 |
-            opcode::MULB2 | opcode::MULB3 | opcode::DIVB2 | opcode::DIVB3 |
-            opcode::BISB2 | opcode::BISB3 | opcode::BICB2 | opcode::BICB3 |
-            opcode::XORB2 | opcode::XORB3 | opcode::MNEGB | opcode::CASEB |
-            opcode::MCOMB | opcode::BITB | opcode::CMPB | opcode::CMPW |
-            opcode::TSTL | opcode::TSTB | opcode::TSTW |
-            opcode::CLRL | opcode::CLRB | opcode::CLRW |
-            opcode::INCB | opcode::DECB => total_score += 1,
+            opcode::ADDB2
+            | opcode::ADDB3
+            | opcode::SUBB2
+            | opcode::SUBB3
+            | opcode::MULB2
+            | opcode::MULB3
+            | opcode::DIVB2
+            | opcode::DIVB3
+            | opcode::BISB2
+            | opcode::BISB3
+            | opcode::BICB2
+            | opcode::BICB3
+            | opcode::XORB2
+            | opcode::XORB3
+            | opcode::MNEGB
+            | opcode::CASEB
+            | opcode::MCOMB
+            | opcode::BITB
+            | opcode::CMPB
+            | opcode::CMPW
+            | opcode::TSTL
+            | opcode::TSTB
+            | opcode::TSTW
+            | opcode::CLRL
+            | opcode::CLRB
+            | opcode::CLRW
+            | opcode::INCB
+            | opcode::DECB => total_score += 1,
 
             // Loop constructs (truly VAX-specific)
             // BUT: 0xF2=REPNE, 0xF4=HLT, 0xF5=CMC in x86 — discount if x86 detected
             opcode::SOBGEQ | opcode::SOBGTR => {
-                if likely_x86 { total_score += 1; } else { total_score += 15; vax_specific_count += 1; }
+                if likely_x86 {
+                    total_score += 1;
+                } else {
+                    total_score += 15;
+                    vax_specific_count += 1;
+                }
             }
             opcode::AOBLSS | opcode::AOBLEQ | opcode::ACBL => {
-                if likely_x86 { total_score += 1; } else { total_score += 15; vax_specific_count += 1; }
+                if likely_x86 {
+                    total_score += 1;
+                } else {
+                    total_score += 15;
+                    vax_specific_count += 1;
+                }
             }
 
             // Bit field operations (distinctive)
-            opcode::BBS | opcode::BBC => { total_score += 5; vax_specific_count += 1; }
-            opcode::EXTV | opcode::EXTZV | opcode::INSV => { total_score += 6; vax_specific_count += 1; }
+            opcode::BBS | opcode::BBC => {
+                total_score += 5;
+                vax_specific_count += 1;
+            }
+            opcode::EXTV | opcode::EXTZV | opcode::INSV => {
+                total_score += 6;
+                vax_specific_count += 1;
+            }
             opcode::FFS | opcode::FFC => total_score += 4,
             opcode::CMPV | opcode::CMPZV => total_score += 4,
 
             // Extended opcodes
             // 0xFD = x86 STD instruction — discount if x86 detected
             opcode::ESCAPE_FD => {
-                if likely_x86 { total_score += 1; } else { total_score += 15; vax_specific_count += 1; }
+                if likely_x86 {
+                    total_score += 1;
+                } else {
+                    total_score += 15;
+                    vax_specific_count += 1;
+                }
             }
 
             // System instructions
             opcode::REI => total_score += 6,
             opcode::BPT => total_score += 3,
-            opcode::LDPCTX | opcode::SVPCTX => { total_score += 10; vax_specific_count += 1; }
-            opcode::INDEX | opcode::CRC => { total_score += 8; vax_specific_count += 1; }
-            opcode::PROBER | opcode::PROBEW => { total_score += 8; vax_specific_count += 1; }
-            opcode::INSQUE | opcode::REMQUE => { total_score += 6; vax_specific_count += 1; }
+            opcode::LDPCTX | opcode::SVPCTX => {
+                total_score += 10;
+                vax_specific_count += 1;
+            }
+            opcode::INDEX | opcode::CRC => {
+                total_score += 8;
+                vax_specific_count += 1;
+            }
+            opcode::PROBER | opcode::PROBEW => {
+                total_score += 8;
+                vax_specific_count += 1;
+            }
+            opcode::INSQUE | opcode::REMQUE => {
+                total_score += 6;
+                vax_specific_count += 1;
+            }
 
             // Everything else: no score
             _ => {}

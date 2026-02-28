@@ -167,33 +167,75 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
         while j + 1 < data.len() {
             let hw = u16::from_le_bytes([data[j], data[j + 1]]);
             // MSP430
-            if hw == 0x4130 { score -= 15; } // MSP430 RET
-            if hw == 0x4303 { score -= 8; }  // MSP430 NOP
-            if hw == 0x1300 { score -= 10; } // MSP430 RETI
-            // AVR
-            if hw == 0x9508 { score -= 12; } // AVR RET
-            if hw == 0x9518 { score -= 10; } // AVR RETI
-            if hw == 0x9588 { score -= 8; }  // AVR SLEEP
-            if hw == 0x9598 { score -= 8; }  // AVR BREAK
-            // Thumb
-            if hw == 0x4770 { score -= 12; } // Thumb BX LR
-            if hw == 0xBF00 { score -= 8; }  // Thumb NOP
-            if (hw & 0xFF00) == 0xB500 { score -= 5; } // Thumb PUSH {.., LR}
-            if (hw & 0xFF00) == 0xBD00 { score -= 5; } // Thumb POP {.., PC}
-            // SH (SuperH)
-            if hw == 0x000B { score -= 12; } // SH RTS
-            if hw == 0x0009 { score -= 8; }  // SH NOP
-            // MIPS LE compound register patterns (upper halfword of MIPS instructions)
-            if hw == 0x27BD { score -= 10; } // MIPS ADDIU $sp,$sp,N
-            if hw == 0xAFBF { score -= 10; } // MIPS SW $ra,N($sp)
-            if hw == 0x8FBF { score -= 10; } // MIPS LW $ra,N($sp)
-            if hw == 0xAFBE { score -= 6; }  // MIPS SW $fp,N($sp)
-            if hw == 0x8FBE { score -= 6; }  // MIPS LW $fp,N($sp)
-            // MIPS SW/LW callee-saved regs to/from stack
-            if (hw & 0xFFF8) == 0xAFA0 || (hw & 0xFFF8) == 0xAFB0 { score -= 4; }
-            if (hw & 0xFFF8) == 0x8FA0 || (hw & 0xFFF8) == 0x8FB0 { score -= 4; }
+            if hw == 0x4130 {
+                score -= 15;
+            } // MSP430 RET
+            if hw == 0x4303 {
+                score -= 8;
+            } // MSP430 NOP
+            if hw == 0x1300 {
+                score -= 10;
+            } // MSP430 RETI
+              // AVR
+            if hw == 0x9508 {
+                score -= 12;
+            } // AVR RET
+            if hw == 0x9518 {
+                score -= 10;
+            } // AVR RETI
+            if hw == 0x9588 {
+                score -= 8;
+            } // AVR SLEEP
+            if hw == 0x9598 {
+                score -= 8;
+            } // AVR BREAK
+              // Thumb
+            if hw == 0x4770 {
+                score -= 12;
+            } // Thumb BX LR
+            if hw == 0xBF00 {
+                score -= 8;
+            } // Thumb NOP
+            if (hw & 0xFF00) == 0xB500 {
+                score -= 5;
+            } // Thumb PUSH {.., LR}
+            if (hw & 0xFF00) == 0xBD00 {
+                score -= 5;
+            } // Thumb POP {.., PC}
+              // SH (SuperH)
+            if hw == 0x000B {
+                score -= 12;
+            } // SH RTS
+            if hw == 0x0009 {
+                score -= 8;
+            } // SH NOP
+              // MIPS LE compound register patterns (upper halfword of MIPS instructions)
+            if hw == 0x27BD {
+                score -= 10;
+            } // MIPS ADDIU $sp,$sp,N
+            if hw == 0xAFBF {
+                score -= 10;
+            } // MIPS SW $ra,N($sp)
+            if hw == 0x8FBF {
+                score -= 10;
+            } // MIPS LW $ra,N($sp)
+            if hw == 0xAFBE {
+                score -= 6;
+            } // MIPS SW $fp,N($sp)
+            if hw == 0x8FBE {
+                score -= 6;
+            } // MIPS LW $fp,N($sp)
+              // MIPS SW/LW callee-saved regs to/from stack
+            if (hw & 0xFFF8) == 0xAFA0 || (hw & 0xFFF8) == 0xAFB0 {
+                score -= 4;
+            }
+            if (hw & 0xFFF8) == 0x8FA0 || (hw & 0xFFF8) == 0x8FB0 {
+                score -= 4;
+            }
             // MIPS LUI (opcode 0x0F, rs=0, upper hw = 0x3C00-0x3C1F)
-            if (hw & 0xFFE0) == 0x3C00 { score -= 5; }
+            if (hw & 0xFFE0) == 0x3C00 {
+                score -= 5;
+            }
             j += 2;
         }
     }
@@ -206,29 +248,47 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             // SPARC (BE encoded, read as LE — byte-swap)
             // SPARC NOP (BE 0x01000000 → LE 0x00000001) — but that's low bits = 01 = compressed
             // SPARC RET (BE 0x81C7E008 → LE 0x08E0C781)
-            if le32 == 0x08E0C781 { score -= 15; } // SPARC RET as LE
-            // SPARC RETL (BE 0x81C3E008 → LE 0x08E0C381)
-            if le32 == 0x08E0C381 { score -= 15; } // SPARC RETL as LE
-            // PPC BLR (BE 0x4E800020 → LE 0x2000804E)
-            if le32 == 0x2000804E { score -= 15; } // PPC BLR as LE
-            // PPC NOP (BE 0x60000000 → LE 0x00000060)
-            if le32 == 0x00000060 { score -= 10; } // PPC NOP as LE
-            // PPC MFLR r0 (BE 0x7C0802A6 → LE 0xA602087C)
-            if le32 == 0xA602087C { score -= 10; }
+            if le32 == 0x08E0C781 {
+                score -= 15;
+            } // SPARC RET as LE
+              // SPARC RETL (BE 0x81C3E008 → LE 0x08E0C381)
+            if le32 == 0x08E0C381 {
+                score -= 15;
+            } // SPARC RETL as LE
+              // PPC BLR (BE 0x4E800020 → LE 0x2000804E)
+            if le32 == 0x2000804E {
+                score -= 15;
+            } // PPC BLR as LE
+              // PPC NOP (BE 0x60000000 → LE 0x00000060)
+            if le32 == 0x00000060 {
+                score -= 10;
+            } // PPC NOP as LE
+              // PPC MFLR r0 (BE 0x7C0802A6 → LE 0xA602087C)
+            if le32 == 0xA602087C {
+                score -= 10;
+            }
             // SPARC exact patterns (BE values swapped to LE for comparison)
             {
                 let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
                 // SPARC NOP (0x01000000)
-                if be32 == 0x01000000 { score -= 10; }
+                if be32 == 0x01000000 {
+                    score -= 10;
+                }
                 // SPARC RESTORE %g0,%g0,%g0 (0x81E80000)
-                if be32 == 0x81E80000 { score -= 12; }
+                if be32 == 0x81E80000 {
+                    score -= 12;
+                }
                 // SPARC SAVE with %sp as source (common: save %sp, -N, %sp)
                 // Format: 10 rd 111100 rs1 1 imm13 — rs1=%sp(14)=%o6
                 if (be32 >> 30) == 2 {
                     let op3 = ((be32 >> 19) & 0x3F) as u8;
                     let rs1 = ((be32 >> 14) & 0x1F) as u8;
-                    if op3 == 0x3C && rs1 == 14 { score -= 12; } // SAVE %sp,...
-                    if op3 == 0x3D { score -= 8; } // any RESTORE
+                    if op3 == 0x3C && rs1 == 14 {
+                        score -= 12;
+                    } // SAVE %sp,...
+                    if op3 == 0x3D {
+                        score -= 8;
+                    } // any RESTORE
                 }
             }
             j += 4;
@@ -280,7 +340,11 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                     match funct3 {
                         0 => {
                             // C.ADDI4SPN - nzuimm must be non-zero
-                            if (half >> 5) != 0 { score += 3; } else { score -= 1; }
+                            if (half >> 5) != 0 {
+                                score += 3;
+                            } else {
+                                score -= 1;
+                            }
                         }
                         1 | 2 | 3 | 5 | 6 | 7 => score += 2, // Valid C load/store
                         _ => score -= 1,
@@ -291,17 +355,23 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                     match funct3 {
                         0 | 1 | 2 | 3 => score += 2,
                         4 => score += 2, // C.MISC-ALU (SRLI, SRAI, ANDI, SUB, XOR, OR, AND)
-                        5 => { score += 3; jal_jalr_count += 1; } // C.J - very common
-                        6 | 7 => { score += 2; branch_count += 1; } // C.BEQZ, C.BNEZ
+                        5 => {
+                            score += 3;
+                            jal_jalr_count += 1;
+                        } // C.J - very common
+                        6 | 7 => {
+                            score += 2;
+                            branch_count += 1;
+                        } // C.BEQZ, C.BNEZ
                         _ => score -= 1,
                     }
                 }
                 2 => {
                     // Quadrant 2: C.SLLI, C.FLDSP, C.LWSP, C.FLWSP/C.LDSP, C.JR/C.MV/C.EBREAK/C.JALR/C.ADD, C.FSDSP, C.SWSP, C.FSWSP/C.SDSP
                     match funct3 {
-                        0 => score += 2, // C.SLLI
+                        0 => score += 2,         // C.SLLI
                         1 | 2 | 3 => score += 2, // C.xLSP (stack loads)
-                        4 => score += 3, // C.JR/C.MV/C.JALR/C.ADD - very common
+                        4 => score += 3,         // C.JR/C.MV/C.JALR/C.ADD - very common
                         5 | 6 | 7 => score += 2, // C.xSSP (stack stores)
                         _ => score -= 1,
                     }
@@ -344,7 +414,8 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                     || mips_upper16 == 0x8FBF // LW $ra,N($sp)
                     || mips_upper16 == 0x67BD // DADDIU $sp,$sp,N (MIPS64)
                     || mips_upper16 == 0xFFBF // SD $ra,N($sp) (MIPS64)
-                    || mips_upper16 == 0xDFBF // LD $ra,N($sp) (MIPS64)
+                    || mips_upper16 == 0xDFBF
+                // LD $ra,N($sp) (MIPS64)
                 {
                     score -= 8;
                     i += 4;
@@ -352,7 +423,8 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                 }
                 // Common MIPS LE opcodes that overlap with valid RISC-V
                 let mips_op = (word >> 26) & 0x3F;
-                if mips_op == 0x09 { // ADDIU
+                if mips_op == 0x09 {
+                    // ADDIU
                     let mips_rs = (word >> 21) & 0x1F;
                     if matches!(mips_rs as u8, 28 | 29 | 30 | 31) {
                         score -= 3; // ADDIU with $sp/$gp/$ra
@@ -361,9 +433,12 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                 // MIPS R-type ADDU with common register combos
                 if mips_op == 0 {
                     let funct = (word & 0x3F) as u8;
-                    if funct == 0x21 { // ADDU
+                    if funct == 0x21 {
+                        // ADDU
                         let rd = ((word >> 11) & 0x1F) as u8;
-                        if matches!(rd, 2 | 4 | 5 | 6 | 7) { score -= 3; } // result in $v0/$a0-$a3
+                        if matches!(rd, 2 | 4 | 5 | 6 | 7) {
+                            score -= 3;
+                        } // result in $v0/$a0-$a3
                     }
                 }
             }
@@ -398,7 +473,11 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             match op {
                 o if o == opcode::LOAD => {
                     // funct3: 0=LB, 1=LH, 2=LW, 3=LD, 4=LBU, 5=LHU, 6=LWU
-                    if f3 <= 6 { score += 4; } else { score -= 1; }
+                    if f3 <= 6 {
+                        score += 4;
+                    } else {
+                        score -= 1;
+                    }
                 }
                 o if o == opcode::OP_IMM => {
                     // funct3: 0=ADDI, 1=SLLI, 2=SLTI, 3=SLTIU, 4=XORI, 5=SRLI/SRAI, 6=ORI, 7=ANDI
@@ -407,27 +486,52 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                 o if o == opcode::AUIPC => score += 5,
                 o if o == opcode::STORE => {
                     // funct3: 0=SB, 1=SH, 2=SW, 3=SD
-                    if f3 <= 3 { score += 4; } else { score -= 1; }
+                    if f3 <= 3 {
+                        score += 4;
+                    } else {
+                        score -= 1;
+                    }
                 }
                 o if o == opcode::OP => {
                     // funct7: 0x00=base, 0x01=M extension, 0x20=SUB/SRA
-                    if matches!(f7, 0x00 | 0x01 | 0x20) { score += 5; } else { score -= 1; }
+                    if matches!(f7, 0x00 | 0x01 | 0x20) {
+                        score += 5;
+                    } else {
+                        score -= 1;
+                    }
                 }
                 o if o == opcode::LUI => score += 5,
                 o if o == opcode::BRANCH => {
                     // funct3: 0=BEQ, 1=BNE, 4=BLT, 5=BGE, 6=BLTU, 7=BGEU
-                    if matches!(f3, 0 | 1 | 4 | 5 | 6 | 7) { score += 4; branch_count += 1; } else { score -= 1; }
+                    if matches!(f3, 0 | 1 | 4 | 5 | 6 | 7) {
+                        score += 4;
+                        branch_count += 1;
+                    } else {
+                        score -= 1;
+                    }
                 }
                 o if o == opcode::JALR => {
                     // funct3 must be 0
-                    if f3 == 0 { score += 5; jal_jalr_count += 1; } else { score -= 2; }
+                    if f3 == 0 {
+                        score += 5;
+                        jal_jalr_count += 1;
+                    } else {
+                        score -= 2;
+                    }
                 }
-                o if o == opcode::JAL => { score += 5; jal_jalr_count += 1; }
+                o if o == opcode::JAL => {
+                    score += 5;
+                    jal_jalr_count += 1;
+                }
                 o if o == opcode::SYSTEM => score += 4,
                 // 64-bit specific
                 o if o == opcode::OP_IMM_32 && is_64 => score += 5,
                 o if o == opcode::OP_32 && is_64 => {
-                    if matches!(f7, 0x00 | 0x01 | 0x20) { score += 5; } else { score -= 1; }
+                    if matches!(f7, 0x00 | 0x01 | 0x20) {
+                        score += 5;
+                    } else {
+                        score -= 1;
+                    }
                 }
                 // Extensions
                 o if o == opcode::LOAD_FP => score += 3,
@@ -437,7 +541,9 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                 o if o == opcode::OP_V => score += 3,
                 o if o == opcode::MISC_MEM => score += 3, // FENCE
                 // Unrecognized 32-bit opcode
-                _ => { score -= 2; }
+                _ => {
+                    score -= 2;
+                }
             }
 
             i += 4;

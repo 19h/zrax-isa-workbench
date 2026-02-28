@@ -432,11 +432,23 @@ pub fn score(data: &[u8]) -> i64 {
         // Cross-architecture penalties for other big-endian 32-bit ISAs
 
         // PPC patterns (BE)
-        if word == 0x60000000 { total_score -= 15; continue; } // PPC NOP
-        if word == 0x4E800020 { total_score -= 20; continue; } // PPC BLR
-        if word == 0x7C0802A6 { total_score -= 15; continue; } // PPC MFLR r0
-        if word == 0x7C0803A6 { total_score -= 15; continue; } // PPC MTLR r0
-        // PPC primary opcode check
+        if word == 0x60000000 {
+            total_score -= 15;
+            continue;
+        } // PPC NOP
+        if word == 0x4E800020 {
+            total_score -= 20;
+            continue;
+        } // PPC BLR
+        if word == 0x7C0802A6 {
+            total_score -= 15;
+            continue;
+        } // PPC MFLR r0
+        if word == 0x7C0803A6 {
+            total_score -= 15;
+            continue;
+        } // PPC MTLR r0
+          // PPC primary opcode check
         {
             let ppc_op = (word >> 26) & 0x3F;
             // PPC STWU (0x25) - very common prologue
@@ -450,17 +462,35 @@ pub fn score(data: &[u8]) -> i64 {
         {
             let le_word = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
             // ARM32 NOP
-            if le_word == 0xE1A00000 || le_word == 0xE320F000 { total_score -= 12; continue; }
+            if le_word == 0xE1A00000 || le_word == 0xE320F000 {
+                total_score -= 12;
+                continue;
+            }
             // ARM32 BX LR
-            if le_word == 0xE12FFF1E { total_score -= 15; continue; }
+            if le_word == 0xE12FFF1E {
+                total_score -= 15;
+                continue;
+            }
             // RISC-V NOP
-            if le_word == 0x00000013 { total_score -= 10; continue; }
+            if le_word == 0x00000013 {
+                total_score -= 10;
+                continue;
+            }
             // RISC-V RET
-            if le_word == 0x00008067 { total_score -= 15; continue; }
+            if le_word == 0x00008067 {
+                total_score -= 15;
+                continue;
+            }
             // LoongArch NOP
-            if le_word == 0x03400000 { total_score -= 10; continue; }
+            if le_word == 0x03400000 {
+                total_score -= 10;
+                continue;
+            }
             // LoongArch RET
-            if le_word == 0x4C000020 { total_score -= 15; continue; }
+            if le_word == 0x4C000020 {
+                total_score -= 15;
+                continue;
+            }
         }
 
         // Detect 16-bit LE instruction pairs (Thumb, MSP430, AVR)
@@ -468,34 +498,67 @@ pub fn score(data: &[u8]) -> i64 {
             let hw0 = u16::from_le_bytes([data[i], data[i + 1]]);
             let hw1 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             // Thumb BX LR
-            if hw0 == 0x4770 || hw1 == 0x4770 { total_score -= 8; continue; }
+            if hw0 == 0x4770 || hw1 == 0x4770 {
+                total_score -= 8;
+                continue;
+            }
             // Thumb NOP
-            if hw0 == 0xBF00 || hw1 == 0xBF00 { total_score -= 5; }
+            if hw0 == 0xBF00 || hw1 == 0xBF00 {
+                total_score -= 5;
+            }
             // Thumb PUSH/POP
-            if (hw0 & 0xFE00) == 0xB400 || (hw0 & 0xFE00) == 0xBC00
-                || (hw1 & 0xFE00) == 0xB400 || (hw1 & 0xFE00) == 0xBC00 {
+            if (hw0 & 0xFE00) == 0xB400
+                || (hw0 & 0xFE00) == 0xBC00
+                || (hw1 & 0xFE00) == 0xB400
+                || (hw1 & 0xFE00) == 0xBC00
+            {
                 total_score -= 4;
             }
             // MSP430 RET (0x4130)
-            if hw0 == 0x4130 || hw1 == 0x4130 { total_score -= 10; continue; }
+            if hw0 == 0x4130 || hw1 == 0x4130 {
+                total_score -= 10;
+                continue;
+            }
             // MSP430 NOP (0x4303)
-            if hw0 == 0x4303 || hw1 == 0x4303 { total_score -= 8; }
+            if hw0 == 0x4303 || hw1 == 0x4303 {
+                total_score -= 8;
+            }
             // AVR RET (0x9508)
-            if hw0 == 0x9508 || hw1 == 0x9508 { total_score -= 10; continue; }
+            if hw0 == 0x9508 || hw1 == 0x9508 {
+                total_score -= 10;
+                continue;
+            }
             // AVR RETI (0x9518)
-            if hw0 == 0x9518 || hw1 == 0x9518 { total_score -= 8; continue; }
+            if hw0 == 0x9518 || hw1 == 0x9518 {
+                total_score -= 8;
+                continue;
+            }
             // AVR SLEEP
-            if hw0 == 0x9588 || hw1 == 0x9588 { total_score -= 8; }
+            if hw0 == 0x9588 || hw1 == 0x9588 {
+                total_score -= 8;
+            }
             // AVR SEI / CLI
-            if hw0 == 0x9478 || hw1 == 0x9478 { total_score -= 6; }
-            if hw0 == 0x94F8 || hw1 == 0x94F8 { total_score -= 6; }
+            if hw0 == 0x9478 || hw1 == 0x9478 {
+                total_score -= 6;
+            }
+            if hw0 == 0x94F8 || hw1 == 0x94F8 {
+                total_score -= 6;
+            }
             // AVR IJMP / ICALL
-            if hw0 == 0x9409 || hw1 == 0x9409 { total_score -= 6; }
-            if hw0 == 0x9509 || hw1 == 0x9509 { total_score -= 6; }
+            if hw0 == 0x9409 || hw1 == 0x9409 {
+                total_score -= 6;
+            }
+            if hw0 == 0x9509 || hw1 == 0x9509 {
+                total_score -= 6;
+            }
             // AVR PUSH (mask 0xFE0F = 0x920F)
-            if (hw0 & 0xFE0F) == 0x920F || (hw1 & 0xFE0F) == 0x920F { total_score -= 4; }
+            if (hw0 & 0xFE0F) == 0x920F || (hw1 & 0xFE0F) == 0x920F {
+                total_score -= 4;
+            }
             // AVR POP (mask 0xFE0F = 0x900F)
-            if (hw0 & 0xFE0F) == 0x900F || (hw1 & 0xFE0F) == 0x900F { total_score -= 4; }
+            if (hw0 & 0xFE0F) == 0x900F || (hw1 & 0xFE0F) == 0x900F {
+                total_score -= 4;
+            }
         }
 
         // NOP (exact match) - very strong indicator
@@ -544,15 +607,23 @@ pub fn score(data: &[u8]) -> i64 {
                 op2::SETHI => {
                     // SETHI is very common; check rd != 0 for more confidence
                     let rd = get_rd(word);
-                    if rd != 0 { total_score += 5; } else { total_score += 2; }
+                    if rd != 0 {
+                        total_score += 5;
+                    } else {
+                        total_score += 2;
+                    }
                     valid_count += 1;
                 }
                 op2::BICC => {
                     let cc = get_cond(word);
                     // All condition codes are valid
-                    if cc == cond::NEVER { total_score += 2; }
-                    else if cc == cond::ALWAYS { total_score += 5; }
-                    else { total_score += 4; }
+                    if cc == cond::NEVER {
+                        total_score += 2;
+                    } else if cc == cond::ALWAYS {
+                        total_score += 5;
+                    } else {
+                        total_score += 4;
+                    }
                     valid_count += 1;
                 }
                 op2::BPCC => {
@@ -630,7 +701,8 @@ pub fn score(data: &[u8]) -> i64 {
             }
 
             // Common ALU operations
-            if matches!(op3,
+            if matches!(
+                op3,
                 0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x05 | 0x06 | 0x07 | // ADD, AND, OR, XOR, SUB, ANDN, ORN, XNOR
                 0x08 | 0x0A | 0x0B | 0x0C | 0x0E | 0x0F |  // ADDX, UMUL, SMUL, SUBX, UDIV, SDIV
                 0x10 | 0x11 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 | 0x17 | // cc variants
@@ -659,7 +731,8 @@ pub fn score(data: &[u8]) -> i64 {
         // Load/Store (format 11) - validate op3
         if fmt == format::LOAD_STORE {
             let op3 = get_op3(word);
-            if matches!(op3,
+            if matches!(
+                op3,
                 0x00 | 0x01 | 0x02 | 0x03 | // LD, LDUB, LDUH, LDD
                 0x04 | 0x05 | 0x06 | 0x07 | // ST, STB, STH, STD
                 0x09 | 0x0A | 0x0B |         // LDSB, LDSH, LDX (V9)
@@ -671,7 +744,7 @@ pub fn score(data: &[u8]) -> i64 {
                 0x20 | 0x21 | 0x23 |          // LDF, LDFSR, LDDF
                 0x24 | 0x25 | 0x26 | 0x27 |  // STF, STFSR, STDFQ, STDF
                 0x2D |                         // PREFETCH (V9)
-                0x3C | 0x3E                    // CAS, CASX (V9)
+                0x3C | 0x3E // CAS, CASX (V9)
             ) {
                 total_score += 4;
                 valid_count += 1;

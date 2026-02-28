@@ -206,16 +206,32 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 3 < data.len() {
             let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // MIPS
-            if be32 == 0x03E00008 { total_score -= 20; } // MIPS JR $ra
-            if be32 == 0x00000000 { total_score -= 3; }   // MIPS NOP (also all-zero)
-            if (be32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; } // MIPS ADDIU $sp
-            if (be32 & 0xFC000000) == 0x0C000000 { total_score -= 5; }  // MIPS JAL
-            // SPARC
-            if be32 == 0x81C7E008 { total_score -= 15; } // SPARC RET
-            if be32 == 0x01000000 { total_score -= 12; } // SPARC NOP
-            // PPC
-            if be32 == 0x4E800020 { total_score -= 15; } // PPC BLR
-            if be32 == 0x60000000 { total_score -= 12; } // PPC NOP
+            if be32 == 0x03E00008 {
+                total_score -= 20;
+            } // MIPS JR $ra
+            if be32 == 0x00000000 {
+                total_score -= 3;
+            } // MIPS NOP (also all-zero)
+            if (be32 & 0xFFFF0000) == 0x27BD0000 {
+                total_score -= 10;
+            } // MIPS ADDIU $sp
+            if (be32 & 0xFC000000) == 0x0C000000 {
+                total_score -= 5;
+            } // MIPS JAL
+              // SPARC
+            if be32 == 0x81C7E008 {
+                total_score -= 15;
+            } // SPARC RET
+            if be32 == 0x01000000 {
+                total_score -= 12;
+            } // SPARC NOP
+              // PPC
+            if be32 == 0x4E800020 {
+                total_score -= 15;
+            } // PPC BLR
+            if be32 == 0x60000000 {
+                total_score -= 12;
+            } // PPC NOP
             j += 4;
         }
     }
@@ -230,44 +246,79 @@ pub fn score(data: &[u8]) -> i64 {
                 // End-of-packet marker + non-zero iclass — common Hexagon
                 // Only penalize if it looks like a valid Hexagon instruction class
                 let iclass = (le32 >> 28) as u8;
-                if iclass <= 0xB { total_score -= 2; }
+                if iclass <= 0xB {
+                    total_score -= 2;
+                }
             }
             // LoongArch
-            if le32 == 0x4C000020 { total_score -= 12; } // LoongArch JIRL ra (RET)
-            if le32 == 0x03400000 { total_score -= 10; } // LoongArch NOP
-            // LoongArch BL (top6 = 0x15 = 010101)
-            if (le32 >> 26) == 0x15 { total_score -= 5; }
+            if le32 == 0x4C000020 {
+                total_score -= 12;
+            } // LoongArch JIRL ra (RET)
+            if le32 == 0x03400000 {
+                total_score -= 10;
+            } // LoongArch NOP
+              // LoongArch BL (top6 = 0x15 = 010101)
+            if (le32 >> 26) == 0x15 {
+                total_score -= 5;
+            }
             // LoongArch PCADDU12I (top7 = 0x0E)
-            if (le32 >> 25) == 0x0E { total_score -= 3; }
+            if (le32 >> 25) == 0x0E {
+                total_score -= 3;
+            }
             // LoongArch B (branch, top6 = 0x14)
-            if (le32 >> 26) == 0x14 { total_score -= 3; }
+            if (le32 >> 26) == 0x14 {
+                total_score -= 3;
+            }
             // LoongArch ADDI.D (top10 = 0x00B) - very common in prologues
-            if (le32 >> 22) & 0x3FF == 0x00B { total_score -= 3; }
+            if (le32 >> 22) & 0x3FF == 0x00B {
+                total_score -= 3;
+            }
             // LoongArch ST.D (top10 = 0x0A7) - store in prologue
-            if (le32 >> 22) & 0x3FF == 0x0A7 { total_score -= 3; }
+            if (le32 >> 22) & 0x3FF == 0x0A7 {
+                total_score -= 3;
+            }
             // LoongArch LD.D (top10 = 0x0A3) - load in epilogue
-            if (le32 >> 22) & 0x3FF == 0x0A3 { total_score -= 3; }
+            if (le32 >> 22) & 0x3FF == 0x0A3 {
+                total_score -= 3;
+            }
             // LoongArch conditional branches (common in branch-heavy code)
             // BEQZ=0x10, BNEZ=0x11, JIRL=0x13, BEQ=0x16, BNE=0x17
             // BLT=0x18, BGE=0x19, BLTU=0x1A, BGEU=0x1B
             {
                 let la_top6 = le32 >> 26;
-                if matches!(la_top6, 0x10 | 0x11 | 0x16 | 0x17 | 0x18 | 0x19 | 0x1A | 0x1B) {
+                if matches!(
+                    la_top6,
+                    0x10 | 0x11 | 0x16 | 0x17 | 0x18 | 0x19 | 0x1A | 0x1B
+                ) {
                     total_score -= 4;
                 }
-                if la_top6 == 0x13 { total_score -= 5; } // JIRL
+                if la_top6 == 0x13 {
+                    total_score -= 5;
+                } // JIRL
             }
             // LoongArch address formation: LU12I.W(0x0A), LU32I.D(0x0B), PCALAU12I(0x0D)
-            if matches!((le32 >> 25) & 0x7F, 0x0A | 0x0B | 0x0D) { total_score -= 3; }
+            if matches!((le32 >> 25) & 0x7F, 0x0A | 0x0B | 0x0D) {
+                total_score -= 3;
+            }
             // LoongArch ALU immediate: ORI(0x00E), XORI(0x00F), ANDI(0x00D), SLTI(0x008)
-            if matches!((le32 >> 22) & 0x3FF, 0x00D | 0x00E | 0x00F | 0x008 | 0x009) { total_score -= 3; }
+            if matches!((le32 >> 22) & 0x3FF, 0x00D | 0x00E | 0x00F | 0x008 | 0x009) {
+                total_score -= 3;
+            }
             // RISC-V
-            if le32 == 0x00000013 { total_score -= 10; } // RISC-V NOP
-            if le32 == 0x00008067 { total_score -= 12; } // RISC-V RET
+            if le32 == 0x00000013 {
+                total_score -= 10;
+            } // RISC-V NOP
+            if le32 == 0x00008067 {
+                total_score -= 12;
+            } // RISC-V RET
 
             // AArch64 patterns (LE)
-            if le32 == 0xD65F03C0 { total_score -= 12; } // AArch64 RET
-            if le32 == 0xD503201F { total_score -= 10; } // AArch64 NOP
+            if le32 == 0xD65F03C0 {
+                total_score -= 12;
+            } // AArch64 RET
+            if le32 == 0xD503201F {
+                total_score -= 10;
+            } // AArch64 NOP
 
             j += 4;
         }
@@ -365,13 +416,19 @@ pub fn score(data: &[u8]) -> i64 {
         let mut j = 0;
         while j + 1 < data.len() {
             let w = u16::from_le_bytes([data[j], data[j + 1]]);
-            if is_return(w) { has_returns = true; }
-            if matches!(w, opcode::CSYNC | opcode::SSYNC | opcode::EMUEXCPT) { has_sync = true; }
+            if is_return(w) {
+                has_returns = true;
+            }
+            if matches!(w, opcode::CSYNC | opcode::SSYNC | opcode::EMUEXCPT) {
+                has_sync = true;
+            }
             // Check for 32-bit DSP instructions
             let hb = (w >> 8) as u8;
             if j + 3 < data.len() && is_32bit_prefix(hb) {
-                if is_mac_instruction(hb) || hb == opcode::DUAL_MAC
-                    || hb == opcode::VIDEO_PIXEL || hb == opcode::SAA_OPS
+                if is_mac_instruction(hb)
+                    || hb == opcode::DUAL_MAC
+                    || hb == opcode::VIDEO_PIXEL
+                    || hb == opcode::SAA_OPS
                 {
                     has_dsp = true;
                 }

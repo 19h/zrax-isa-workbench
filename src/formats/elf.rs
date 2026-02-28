@@ -150,8 +150,8 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // Motorola ColdFire
         0x34 => (Isa::ColdFire, 32),
 
-        // Motorola M68HC12
-        0x35 => (Isa::Unknown(0x35), 16),
+        // Motorola M68HC12 / HCS12
+        0x35 => (Isa::Hcs12, 16),
 
         // Fujitsu MMA
         0x36 => (Isa::Unknown(0x36), 32),
@@ -339,8 +339,8 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // Motorola XGATE
         0x73 => (Isa::Unknown(0x73), 16),
 
-        // Infineon C16x
-        0x74 => (Isa::Unknown(0x74), 16),
+        // Infineon C16x/C166/ST10
+        0x74 => (Isa::C166, 16),
 
         // Renesas M16C
         0x75 => (Isa::Unknown(0x75), 16),

@@ -10,9 +10,10 @@ pub mod arc;
 pub mod arm;
 pub mod avr;
 pub mod blackfin;
-pub mod c16x;
+pub mod c166;
 pub mod cellspu;
 pub mod dalvik;
+pub mod hcs12;
 pub mod hexagon;
 pub mod i860;
 pub mod ia64;
@@ -50,7 +51,8 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::LoongArch32 | Isa::LoongArch64 => Endianness::Little,
         Isa::Hexagon => Endianness::Little,
         Isa::Tricore => Endianness::Little,
-        Isa::C16x => Endianness::Little,
+        Isa::Hcs12 => Endianness::Big, // Motorola architecture — big-endian
+        Isa::C166 => Endianness::Little, // Infineon/Siemens C166 — little-endian
         Isa::Bpf => Endianness::Little,
         Isa::Cuda => Endianness::Little,
         Isa::AmdGpu => Endianness::Little,
@@ -113,7 +115,7 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Sparc | Isa::Sparc64 => 4,
         Isa::Alpha => 4,
         Isa::Parisc => 4,
-        Isa::I860 => 4,    // i860 is 32-bit fixed
+        Isa::I860 => 4, // i860 is 32-bit fixed
         Isa::Lanai => 4,
         Isa::CellSpu => 4, // Cell SPU is 32-bit fixed
         Isa::Ia64 => 16,   // IA-64 bundles are 128-bit (16-byte) aligned
@@ -128,7 +130,7 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Avr => 2,
         Isa::Msp430 => 2,
         Isa::Tricore => 2, // TriCore has 16/32-bit instructions (16-bit aligned)
-        Isa::C16x => 2,   // C16x has 2-byte and 4-byte instructions (16-bit aligned)
+        Isa::Hcs12 => 1,   // HC12/HCS12X has variable-length instructions (1-8 bytes), byte-aligned
 
         _ => 4,
     }
@@ -157,7 +159,7 @@ pub fn supports_compressed(isa: Isa) -> bool {
             | Isa::Dalvik  // DEX has variable-length bytecode
             | Isa::Vax     // VAX has variable-length CISC (1-37 bytes)
             | Isa::Blackfin // Blackfin has variable-length (16/32/64-bit)
-            | Isa::C16x    // C16x has 2-byte and 4-byte instructions
+            | Isa::Hcs12 // HC12/HCS12X has variable-length instructions (1-8 bytes)
     )
 }
 

@@ -784,14 +784,19 @@ pub fn score(data: &[u8]) -> i64 {
             // x86-64 REX.W (0x48) + common opcodes
             if b == 0x48 && j + 1 < data.len() {
                 match data[j + 1] {
-                    0x89 | 0x8B => total_score -= 6,  // MOV r64
-                    0x83 | 0x8D => total_score -= 5,  // arith imm8, LEA
-                    0x85 | 0xC7 => total_score -= 4,  // TEST, MOV imm
+                    0x89 | 0x8B => total_score -= 6, // MOV r64
+                    0x83 | 0x8D => total_score -= 5, // arith imm8, LEA
+                    0x85 | 0xC7 => total_score -= 4, // TEST, MOV imm
                     _ => {}
                 }
             }
             // ENDBR64 (F3 0F 1E FA)
-            if b == 0xF3 && j + 3 < data.len() && data[j + 1] == 0x0F && data[j + 2] == 0x1E && data[j + 3] == 0xFA {
+            if b == 0xF3
+                && j + 3 < data.len()
+                && data[j + 1] == 0x0F
+                && data[j + 2] == 0x1E
+                && data[j + 3] == 0xFA
+            {
                 total_score -= 12;
                 j += 4;
                 continue;
@@ -808,7 +813,9 @@ pub fn score(data: &[u8]) -> i64 {
                 }
             }
             // x86 RET (0xC3)
-            if b == 0xC3 { total_score -= 3; }
+            if b == 0xC3 {
+                total_score -= 3;
+            }
             j += 1;
         }
     }
@@ -859,11 +866,20 @@ pub fn score(data: &[u8]) -> i64 {
 
             // Common: control flow
             opcode::BR | opcode::BR_IF => total_score += 3,
-            opcode::RETURN => { total_score += 5; return_count += 1; }
+            opcode::RETURN => {
+                total_score += 5;
+                return_count += 1;
+            }
 
             // Common: calls
-            opcode::CALL => { total_score += 5; call_count += 1; }
-            opcode::CALL_INDIRECT => { total_score += 4; call_count += 1; }
+            opcode::CALL => {
+                total_score += 5;
+                call_count += 1;
+            }
+            opcode::CALL_INDIRECT => {
+                total_score += 4;
+                call_count += 1;
+            }
 
             // Common: memory access
             opcode::I32_LOAD | opcode::I32_STORE => total_score += 3,

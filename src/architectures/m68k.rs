@@ -386,20 +386,44 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 1 < data.len() {
             let hw_le = u16::from_le_bytes([data[j], data[j + 1]]);
             // AVR distinctive patterns
-            if hw_le == 0x9508 { score -= 12; } // AVR RET
-            if hw_le == 0x9518 { score -= 10; } // AVR RETI
-            if hw_le == 0x9588 { score -= 8; }  // AVR SLEEP
-            if hw_le == 0x95A8 { score -= 8; }  // AVR WDR
-            if hw_le == 0x9409 { score -= 6; }  // AVR IJMP
-            if hw_le == 0x9509 { score -= 6; }  // AVR ICALL
-            // Thumb
-            if hw_le == 0x4770 { score -= 10; } // Thumb BX LR
-            if hw_le == 0xBF00 { score -= 6; }  // Thumb NOP
-            if (hw_le & 0xFF00) == 0xB500 { score -= 5; } // Thumb PUSH {.., LR}
-            if (hw_le & 0xFF00) == 0xBD00 { score -= 5; } // Thumb POP {.., PC}
-            // MSP430
-            if hw_le == 0x4130 { score -= 10; } // MSP430 RET
-            if hw_le == 0x4303 { score -= 6; }  // MSP430 NOP
+            if hw_le == 0x9508 {
+                score -= 12;
+            } // AVR RET
+            if hw_le == 0x9518 {
+                score -= 10;
+            } // AVR RETI
+            if hw_le == 0x9588 {
+                score -= 8;
+            } // AVR SLEEP
+            if hw_le == 0x95A8 {
+                score -= 8;
+            } // AVR WDR
+            if hw_le == 0x9409 {
+                score -= 6;
+            } // AVR IJMP
+            if hw_le == 0x9509 {
+                score -= 6;
+            } // AVR ICALL
+              // Thumb
+            if hw_le == 0x4770 {
+                score -= 10;
+            } // Thumb BX LR
+            if hw_le == 0xBF00 {
+                score -= 6;
+            } // Thumb NOP
+            if (hw_le & 0xFF00) == 0xB500 {
+                score -= 5;
+            } // Thumb PUSH {.., LR}
+            if (hw_le & 0xFF00) == 0xBD00 {
+                score -= 5;
+            } // Thumb POP {.., PC}
+              // MSP430
+            if hw_le == 0x4130 {
+                score -= 10;
+            } // MSP430 RET
+            if hw_le == 0x4303 {
+                score -= 6;
+            } // MSP430 NOP
             j += 2;
         }
     }
@@ -416,9 +440,15 @@ pub fn score(data: &[u8]) -> i64 {
 
         // --- Cross-architecture penalties (BE 16-bit) ---
         // S390x: BR %r14
-        if word == 0x07FE { score -= 12; continue; }
+        if word == 0x07FE {
+            score -= 12;
+            continue;
+        }
         // SPARC NOP top halfword
-        if word == 0x0100 { score -= 5; continue; }
+        if word == 0x0100 {
+            score -= 5;
+            continue;
+        }
 
         // NOP
         if is_nop(word) {
@@ -529,7 +559,9 @@ pub fn score(data: &[u8]) -> i64 {
                 score -= 3;
                 matched = false;
             }
-            _ => { matched = false; }
+            _ => {
+                matched = false;
+            }
         }
 
         if !matched {

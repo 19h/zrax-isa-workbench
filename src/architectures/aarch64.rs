@@ -290,24 +290,53 @@ pub fn score(data: &[u8]) -> i64 {
             let hw0 = u16::from_le_bytes([data[i], data[i + 1]]);
             let hw1 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             // MSP430
-            if hw0 == 0x4130 || hw1 == 0x4130 { score -= 15; continue; } // MSP430 RET
-            if hw0 == 0x4303 || hw1 == 0x4303 { score -= 10; }           // MSP430 NOP
-            if hw0 == 0x1300 || hw1 == 0x1300 { score -= 10; continue; } // MSP430 RETI
-            // AVR
-            if hw0 == 0x9508 || hw1 == 0x9508 { score -= 15; continue; } // AVR RET
-            if hw0 == 0x9518 || hw1 == 0x9518 { score -= 12; continue; } // AVR RETI
-            // Thumb
-            if hw0 == 0x4770 || hw1 == 0x4770 { score -= 12; continue; } // Thumb BX LR
-            if hw0 == 0xBF00 || hw1 == 0xBF00 { score -= 8; }            // Thumb NOP
-            // Thumb PUSH {.., LR} / POP {.., PC}
-            if (hw0 & 0xFF00) == 0xB500 || (hw1 & 0xFF00) == 0xB500 { score -= 6; }
-            if (hw0 & 0xFF00) == 0xBD00 || (hw1 & 0xFF00) == 0xBD00 { score -= 6; }
+            if hw0 == 0x4130 || hw1 == 0x4130 {
+                score -= 15;
+                continue;
+            } // MSP430 RET
+            if hw0 == 0x4303 || hw1 == 0x4303 {
+                score -= 10;
+            } // MSP430 NOP
+            if hw0 == 0x1300 || hw1 == 0x1300 {
+                score -= 10;
+                continue;
+            } // MSP430 RETI
+              // AVR
+            if hw0 == 0x9508 || hw1 == 0x9508 {
+                score -= 15;
+                continue;
+            } // AVR RET
+            if hw0 == 0x9518 || hw1 == 0x9518 {
+                score -= 12;
+                continue;
+            } // AVR RETI
+              // Thumb
+            if hw0 == 0x4770 || hw1 == 0x4770 {
+                score -= 12;
+                continue;
+            } // Thumb BX LR
+            if hw0 == 0xBF00 || hw1 == 0xBF00 {
+                score -= 8;
+            } // Thumb NOP
+              // Thumb PUSH {.., LR} / POP {.., PC}
+            if (hw0 & 0xFF00) == 0xB500 || (hw1 & 0xFF00) == 0xB500 {
+                score -= 6;
+            }
+            if (hw0 & 0xFF00) == 0xBD00 || (hw1 & 0xFF00) == 0xBD00 {
+                score -= 6;
+            }
         }
 
         // --- Cross-architecture penalties for other 32-bit LE ISAs ---
         // RISC-V
-        if word == 0x00008067 { score -= 15; continue; } // RISC-V RET
-        if word == 0x00000013 { score -= 10; continue; } // RISC-V NOP
+        if word == 0x00008067 {
+            score -= 15;
+            continue;
+        } // RISC-V RET
+        if word == 0x00000013 {
+            score -= 10;
+            continue;
+        } // RISC-V NOP
 
         // Multi-instruction pattern detection (very high value - unique to AArch64)
 
@@ -618,7 +647,8 @@ pub fn score(data: &[u8]) -> i64 {
     // AArch64 has broad pattern matches (~20-25% of random words score), so without
     // this check, random data from 16-bit ISAs (MSP430, AVR) accumulates high scores
     if num_words > 20 {
-        let distinctive = ret_count + mrs_msr_count + prologue_count + stp_fp_lr_count + extra_distinctive;
+        let distinctive =
+            ret_count + mrs_msr_count + prologue_count + stp_fp_lr_count + extra_distinctive;
         if distinctive == 0 && bl_count == 0 {
             score = (score as f64 * 0.15) as i64;
         } else if distinctive == 0 && bl_count >= 3 {

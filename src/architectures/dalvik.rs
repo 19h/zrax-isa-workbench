@@ -661,41 +661,79 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 3 < data.len() {
             let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // RISC-V
-            if le32 == 0x00000013 { total_score -= 12; } // RISC-V NOP (addi x0,x0,0)
-            if le32 == 0x00008067 { total_score -= 15; } // RISC-V RET (jalr x0,ra,0)
-            // RISC-V common instruction formats (low 7 bits = opcode)
+            if le32 == 0x00000013 {
+                total_score -= 12;
+            } // RISC-V NOP (addi x0,x0,0)
+            if le32 == 0x00008067 {
+                total_score -= 15;
+            } // RISC-V RET (jalr x0,ra,0)
+              // RISC-V common instruction formats (low 7 bits = opcode)
             {
                 let rv_op = le32 & 0x7F;
                 // RISC-V AUIPC (0x17) and LUI (0x37) are highly distinctive
-                if rv_op == 0x17 { total_score -= 5; } // AUIPC
-                if rv_op == 0x37 { total_score -= 5; } // LUI
-                // RISC-V JAL (0x6F) with rd=ra(1): distinctive call pattern
-                if rv_op == 0x6F && ((le32 >> 7) & 0x1F) == 1 { total_score -= 8; }
+                if rv_op == 0x17 {
+                    total_score -= 5;
+                } // AUIPC
+                if rv_op == 0x37 {
+                    total_score -= 5;
+                } // LUI
+                  // RISC-V JAL (0x6F) with rd=ra(1): distinctive call pattern
+                if rv_op == 0x6F && ((le32 >> 7) & 0x1F) == 1 {
+                    total_score -= 8;
+                }
                 // RISC-V floating-point opcodes (distinctive for FP-heavy code)
-                if rv_op == 0x53 { total_score -= 4; } // OP-FP (fadd, fsub, fmul, etc.)
-                if rv_op == 0x07 { total_score -= 3; } // LOAD-FP (flw, fld)
-                if rv_op == 0x27 { total_score -= 3; } // STORE-FP (fsw, fsd)
-                // RISC-V BRANCH (0x63) with common funct3 patterns
-                if rv_op == 0x63 { total_score -= 3; }
+                if rv_op == 0x53 {
+                    total_score -= 4;
+                } // OP-FP (fadd, fsub, fmul, etc.)
+                if rv_op == 0x07 {
+                    total_score -= 3;
+                } // LOAD-FP (flw, fld)
+                if rv_op == 0x27 {
+                    total_score -= 3;
+                } // STORE-FP (fsw, fsd)
+                  // RISC-V BRANCH (0x63) with common funct3 patterns
+                if rv_op == 0x63 {
+                    total_score -= 3;
+                }
             }
             // AArch64
-            if le32 == 0xD65F03C0 { total_score -= 12; } // AArch64 RET
-            if le32 == 0xD503201F { total_score -= 10; } // AArch64 NOP
-            // LoongArch
-            if le32 == 0x4C000020 { total_score -= 10; } // LoongArch JIRL ra (RET)
-            if le32 == 0x03400000 { total_score -= 8; }  // LoongArch NOP
-            // x86-64: push rbp; mov rbp,rsp (bytes: 55 48 89 E5)
-            if le32 == 0xE5894855 { total_score -= 15; }
+            if le32 == 0xD65F03C0 {
+                total_score -= 12;
+            } // AArch64 RET
+            if le32 == 0xD503201F {
+                total_score -= 10;
+            } // AArch64 NOP
+              // LoongArch
+            if le32 == 0x4C000020 {
+                total_score -= 10;
+            } // LoongArch JIRL ra (RET)
+            if le32 == 0x03400000 {
+                total_score -= 8;
+            } // LoongArch NOP
+              // x86-64: push rbp; mov rbp,rsp (bytes: 55 48 89 E5)
+            if le32 == 0xE5894855 {
+                total_score -= 15;
+            }
             // x86-64: ENDBR64 (F3 0F 1E FA)
-            if le32 == 0xFA1E0FF3 { total_score -= 12; }
+            if le32 == 0xFA1E0FF3 {
+                total_score -= 12;
+            }
             // x86-64: REX.W + MOV (48 89/8B)
-            if (le32 & 0xFFFF) == 0x8948 || (le32 & 0xFFFF) == 0x8B48 { total_score -= 6; }
+            if (le32 & 0xFFFF) == 0x8948 || (le32 & 0xFFFF) == 0x8B48 {
+                total_score -= 6;
+            }
             // x86-64: REX.W + SUB/ADD (48 83/81)
-            if (le32 & 0xFFFF) == 0x8348 || (le32 & 0xFFFF) == 0x8148 { total_score -= 5; }
+            if (le32 & 0xFFFF) == 0x8348 || (le32 & 0xFFFF) == 0x8148 {
+                total_score -= 5;
+            }
             // x86-64: REX.W + LEA (48 8D)
-            if (le32 & 0xFFFF) == 0x8D48 { total_score -= 5; }
+            if (le32 & 0xFFFF) == 0x8D48 {
+                total_score -= 5;
+            }
             // x86-64: REX.W + TEST (48 85)
-            if (le32 & 0xFFFF) == 0x8548 { total_score -= 4; }
+            if (le32 & 0xFFFF) == 0x8548 {
+                total_score -= 4;
+            }
             j += 4;
         }
     }
@@ -705,22 +743,44 @@ pub fn score(data: &[u8]) -> i64 {
         let mut j = 0;
         while j + 1 < data.len() {
             let hw = u16::from_le_bytes([data[j], data[j + 1]]);
-            if hw == 0x4770 { total_score -= 12; } // Thumb BX LR
-            if hw == 0xBF00 { total_score -= 6; }  // Thumb NOP
-            if (hw & 0xFF00) == 0xB500 { total_score -= 5; } // Thumb PUSH {.., LR}
-            if (hw & 0xFF00) == 0xBD00 { total_score -= 5; } // Thumb POP {.., PC}
-            if hw == 0x4130 { total_score -= 10; } // MSP430 RET
-            if hw == 0x9508 { total_score -= 10; } // AVR RET
-            // x86 SSE prefixes: F2 0F (REPNE+escape) and F3 0F (REP+escape)
-            if hw == 0x0FF2 || hw == 0x0FF3 { total_score -= 8; }
+            if hw == 0x4770 {
+                total_score -= 12;
+            } // Thumb BX LR
+            if hw == 0xBF00 {
+                total_score -= 6;
+            } // Thumb NOP
+            if (hw & 0xFF00) == 0xB500 {
+                total_score -= 5;
+            } // Thumb PUSH {.., LR}
+            if (hw & 0xFF00) == 0xBD00 {
+                total_score -= 5;
+            } // Thumb POP {.., PC}
+            if hw == 0x4130 {
+                total_score -= 10;
+            } // MSP430 RET
+            if hw == 0x9508 {
+                total_score -= 10;
+            } // AVR RET
+              // x86 SSE prefixes: F2 0F (REPNE+escape) and F3 0F (REP+escape)
+            if hw == 0x0FF2 || hw == 0x0FF3 {
+                total_score -= 8;
+            }
             // x86 SSE: 0F 28/29 (MOVAPS), 0F 10/11 (MOVUPS)
-            if hw == 0x280F || hw == 0x290F || hw == 0x100F || hw == 0x110F { total_score -= 6; }
+            if hw == 0x280F || hw == 0x290F || hw == 0x100F || hw == 0x110F {
+                total_score -= 6;
+            }
             // x86 SSE2 packed prefix: 66 0F
-            if hw == 0x0F66 { total_score -= 6; }
+            if hw == 0x0F66 {
+                total_score -= 6;
+            }
             // x86 RET (C3) followed by common padding/alignment (CC=INT3, 90=NOP)
-            if (hw & 0xFF) == 0xC3 && matches!(hw >> 8, 0xCC | 0x90 | 0xC3 | 0x55) { total_score -= 8; }
+            if (hw & 0xFF) == 0xC3 && matches!(hw >> 8, 0xCC | 0x90 | 0xC3 | 0x55) {
+                total_score -= 8;
+            }
             // x86 VEX 2-byte prefix (C5 xx): AVX instructions
-            if (hw & 0xFF) == 0xC5 { total_score -= 8; }
+            if (hw & 0xFF) == 0xC5 {
+                total_score -= 8;
+            }
             // x86 EVEX prefix (62 P0 P1): AVX-512, check P0 bits[3:2]==0, P1 bit[2]==1
             if (hw & 0xFF) == 0x62 && j + 2 < data.len() {
                 let p0 = data[j + 1];
@@ -754,13 +814,28 @@ pub fn score(data: &[u8]) -> i64 {
         // Score common patterns
         match op {
             // Very common: return instructions
-            opcode::RETURN_VOID => { total_score += 10; return_count += 1; }
-            opcode::RETURN | opcode::RETURN_OBJECT => { total_score += 8; return_count += 1; }
+            opcode::RETURN_VOID => {
+                total_score += 10;
+                return_count += 1;
+            }
+            opcode::RETURN | opcode::RETURN_OBJECT => {
+                total_score += 8;
+                return_count += 1;
+            }
 
             // Very common: invoke instructions
-            opcode::INVOKE_VIRTUAL | opcode::INVOKE_DIRECT => { total_score += 8; invoke_count += 1; }
-            opcode::INVOKE_STATIC => { total_score += 7; invoke_count += 1; }
-            opcode::INVOKE_INTERFACE | opcode::INVOKE_SUPER => { total_score += 6; invoke_count += 1; }
+            opcode::INVOKE_VIRTUAL | opcode::INVOKE_DIRECT => {
+                total_score += 8;
+                invoke_count += 1;
+            }
+            opcode::INVOKE_STATIC => {
+                total_score += 7;
+                invoke_count += 1;
+            }
+            opcode::INVOKE_INTERFACE | opcode::INVOKE_SUPER => {
+                total_score += 6;
+                invoke_count += 1;
+            }
 
             // Common: field access
             opcode::IGET..=opcode::IPUT_SHORT => total_score += 5,

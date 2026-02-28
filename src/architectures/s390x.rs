@@ -407,23 +407,43 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 3 < data.len() {
             let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // AArch64
-            if le32 == 0xD65F03C0 { score -= 15; } // RET
-            if le32 == 0xD503201F { score -= 10; } // NOP
-            // RISC-V
-            if le32 == 0x00008067 { score -= 12; } // RET
-            if le32 == 0x00000013 { score -= 8; }  // NOP
-            // PPC64-LE
-            if le32 == 0x4E800020 { score -= 15; } // BLR
-            if le32 == 0x7C0802A6 { score -= 12; } // MFLR r0
-            // LoongArch
-            if le32 == 0x4C000020 { score -= 12; } // RET
-            if le32 == 0x03400000 { score -= 8; }  // NOP
-            // Hexagon: packet end markers (parse bits = 11 in bits 15:14)
-            // When read as LE, valid Hexagon has bits 15:14 = 00/01/10/11
-            // Hexagon NOP
-            if (le32 & 0xFFFF0000) == 0x7F000000 { score -= 10; }
+            if le32 == 0xD65F03C0 {
+                score -= 15;
+            } // RET
+            if le32 == 0xD503201F {
+                score -= 10;
+            } // NOP
+              // RISC-V
+            if le32 == 0x00008067 {
+                score -= 12;
+            } // RET
+            if le32 == 0x00000013 {
+                score -= 8;
+            } // NOP
+              // PPC64-LE
+            if le32 == 0x4E800020 {
+                score -= 15;
+            } // BLR
+            if le32 == 0x7C0802A6 {
+                score -= 12;
+            } // MFLR r0
+              // LoongArch
+            if le32 == 0x4C000020 {
+                score -= 12;
+            } // RET
+            if le32 == 0x03400000 {
+                score -= 8;
+            } // NOP
+              // Hexagon: packet end markers (parse bits = 11 in bits 15:14)
+              // When read as LE, valid Hexagon has bits 15:14 = 00/01/10/11
+              // Hexagon NOP
+            if (le32 & 0xFFFF0000) == 0x7F000000 {
+                score -= 10;
+            }
             // Hexagon DEALLOC_RETURN
-            if le32 == 0x961EC01E { score -= 15; }
+            if le32 == 0x961EC01E {
+                score -= 15;
+            }
             j += 4;
         }
     }
@@ -434,14 +454,26 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 3 < data.len() {
             let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // SPARC
-            if be32 == 0x01000000 { score -= 10; } // NOP
-            if be32 == 0x81C7E008 { score -= 15; } // RET
-            if be32 == 0x81C3E008 { score -= 15; } // RETL
-            // PPC BE
-            if be32 == 0x4E800020 { score -= 15; } // BLR
-            if be32 == 0x60000000 { score -= 10; } // NOP
-            // MIPS BE
-            if be32 == 0x03E00008 { score -= 12; } // JR $ra
+            if be32 == 0x01000000 {
+                score -= 10;
+            } // NOP
+            if be32 == 0x81C7E008 {
+                score -= 15;
+            } // RET
+            if be32 == 0x81C3E008 {
+                score -= 15;
+            } // RETL
+              // PPC BE
+            if be32 == 0x4E800020 {
+                score -= 15;
+            } // BLR
+            if be32 == 0x60000000 {
+                score -= 10;
+            } // NOP
+              // MIPS BE
+            if be32 == 0x03E00008 {
+                score -= 12;
+            } // JR $ra
             j += 4;
         }
     }
@@ -452,11 +484,17 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 1 < data.len() {
             let hw = u16::from_le_bytes([data[j], data[j + 1]]);
             // Thumb BX LR
-            if hw == 0x4770 { score -= 10; }
+            if hw == 0x4770 {
+                score -= 10;
+            }
             // MSP430 RET
-            if hw == 0x4130 { score -= 10; }
+            if hw == 0x4130 {
+                score -= 10;
+            }
             // AVR RET
-            if hw == 0x9508 { score -= 8; }
+            if hw == 0x9508 {
+                score -= 8;
+            }
             j += 2;
         }
     }
@@ -536,7 +574,9 @@ pub fn score(data: &[u8]) -> i64 {
                     o if o == opcode_rx::ST => score += 5,
                     o if o == opcode_rx::L => score += 5,
                     o if o == opcode_rx::BAL || o == opcode_rx::BAS => score += 5,
-                    o if o == opcode_rx::LH || o == opcode_rx::STD || o == opcode_rx::LD => score += 4,
+                    o if o == opcode_rx::LH || o == opcode_rx::STD || o == opcode_rx::LD => {
+                        score += 4
+                    }
                     _ => score += 3,
                 }
                 valid_count += 1;
@@ -545,25 +585,68 @@ pub fn score(data: &[u8]) -> i64 {
                 // These include: STM(0x90), LM(0x98), SLL(0x89), SRL(0x88), SLA(0x8B), etc.
                 // Also: A7xx (RI format: TMHH, TMHL, TMLH, TMLL, BRC, AGHI, etc.)
                 match op {
-                    0x88 | 0x89 | 0x8A | 0x8B => { score += 3; valid_count += 1; } // shifts
-                    0x90 | 0x91 | 0x92 | 0x93 => { score += 4; valid_count += 1; } // STM, TM, MVI, TS
-                    0x94 | 0x95 | 0x96 | 0x97 => { score += 3; valid_count += 1; } // NI, CLI, OI, XI
-                    0x98 | 0x99 | 0x9A | 0x9B => { score += 4; valid_count += 1; } // LM, TRACE, etc
-                    0xA7 => { // RI format - very common in z/Arch
+                    0x88 | 0x89 | 0x8A | 0x8B => {
+                        score += 3;
+                        valid_count += 1;
+                    } // shifts
+                    0x90 | 0x91 | 0x92 | 0x93 => {
+                        score += 4;
+                        valid_count += 1;
+                    } // STM, TM, MVI, TS
+                    0x94 | 0x95 | 0x96 | 0x97 => {
+                        score += 3;
+                        valid_count += 1;
+                    } // NI, CLI, OI, XI
+                    0x98 | 0x99 | 0x9A | 0x9B => {
+                        score += 4;
+                        valid_count += 1;
+                    } // LM, TRACE, etc
+                    0xA7 => {
+                        // RI format - very common in z/Arch
                         let ri_op = ((word >> 16) & 0x0F) as u8;
                         match ri_op {
-                            0x04 => { score += 5; valid_count += 1; } // BRC (branch)
-                            0x08 => { score += 5; valid_count += 1; } // LHI (load halfword imm)
-                            0x09 => { score += 5; valid_count += 1; } // LGHI
-                            0x0A => { score += 4; valid_count += 1; } // AGHI (add halfword imm)
-                            0x0B => { score += 4; valid_count += 1; } // MGHI (multiply)
-                            0x0C => { score += 4; valid_count += 1; } // MHI
-                            0x0E => { score += 4; valid_count += 1; } // CHI (compare)
-                            0x0F => { score += 4; valid_count += 1; } // CGHI
-                            _ => { score += 2; valid_count += 1; }
+                            0x04 => {
+                                score += 5;
+                                valid_count += 1;
+                            } // BRC (branch)
+                            0x08 => {
+                                score += 5;
+                                valid_count += 1;
+                            } // LHI (load halfword imm)
+                            0x09 => {
+                                score += 5;
+                                valid_count += 1;
+                            } // LGHI
+                            0x0A => {
+                                score += 4;
+                                valid_count += 1;
+                            } // AGHI (add halfword imm)
+                            0x0B => {
+                                score += 4;
+                                valid_count += 1;
+                            } // MGHI (multiply)
+                            0x0C => {
+                                score += 4;
+                                valid_count += 1;
+                            } // MHI
+                            0x0E => {
+                                score += 4;
+                                valid_count += 1;
+                            } // CHI (compare)
+                            0x0F => {
+                                score += 4;
+                                valid_count += 1;
+                            } // CGHI
+                            _ => {
+                                score += 2;
+                                valid_count += 1;
+                            }
                         }
                     }
-                    0xB2 | 0xB3 | 0xB9 => { score += 3; valid_count += 1; } // Extended RRE/RRF
+                    0xB2 | 0xB3 | 0xB9 => {
+                        score += 3;
+                        valid_count += 1;
+                    } // Extended RRE/RRF
                     _ => {}
                 }
             }
@@ -593,19 +676,19 @@ pub fn score(data: &[u8]) -> i64 {
                 0xE3 => {
                     // RXY format: LG, STG, LGF, etc. Very common in 64-bit code
                     match op2 {
-                        0x04 => score += 6, // LG
-                        0x24 => score += 6, // STG
+                        0x04 => score += 6,               // LG
+                        0x24 => score += 6,               // STG
                         0x14 | 0x16 | 0x17 => score += 5, // LGF, LLGF, LLGT
-                        0x58 | 0x50 => score += 5, // LY, STY
-                        0x71 => score += 5, // LAY
+                        0x58 | 0x50 => score += 5,        // LY, STY
+                        0x71 => score += 5,               // LAY
                         _ => score += 3,
                     }
                 }
                 0xEB => {
                     // RSY format: STMG, LMG, SLLG, SRLG etc.
                     match op2 {
-                        0x04 => score += 6, // LMG (load multiple)
-                        0x24 => score += 6, // STMG (store multiple)
+                        0x04 => score += 6,        // LMG (load multiple)
+                        0x24 => score += 6,        // STMG (store multiple)
                         0x0C | 0x0D => score += 4, // SRLG, SLLG
                         _ => score += 3,
                     }
@@ -620,7 +703,9 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0xED => score += 3, // RXE: FP operations
                 0xE5 => score += 3, // SSE format
-                _ => { valid_count -= 1; } // Not a recognized 6-byte
+                _ => {
+                    valid_count -= 1;
+                } // Not a recognized 6-byte
             }
         }
 
@@ -644,8 +729,12 @@ pub fn score(data: &[u8]) -> i64 {
         let mut j = 0;
         while j < data.len() {
             let len_check = length::from_first_byte(data[j]);
-            if len_check == 2 { len2_count += 1; }
-            if j + len_check > data.len() { break; }
+            if len_check == 2 {
+                len2_count += 1;
+            }
+            if j + len_check > data.len() {
+                break;
+            }
             j += len_check;
         }
         let total_instrs = total_count;

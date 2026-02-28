@@ -85,16 +85,36 @@ pub fn score(data: &[u8]) -> i64 {
 
         // --- Cross-architecture penalties (BE ISAs) ---
         // PPC
-        if word == 0x60000000 { score -= 12; continue; }  // NOP
-        if word == 0x4E800020 { score -= 15; continue; }  // BLR
-        if (word >> 26) == 18 { score -= 5; }             // B/BL
-        // SPARC
-        if word == 0x01000000 { score -= 10; continue; }  // NOP
-        if word == 0x81C7E008 { score -= 15; continue; }  // RET
-        // MIPS BE
-        if word == 0x03E00008 { score -= 12; continue; }  // JR $ra
-        // S390x
-        if (word >> 16) == 0x07FE { score -= 12; continue; }  // BR %r14
+        if word == 0x60000000 {
+            score -= 12;
+            continue;
+        } // NOP
+        if word == 0x4E800020 {
+            score -= 15;
+            continue;
+        } // BLR
+        if (word >> 26) == 18 {
+            score -= 5;
+        } // B/BL
+          // SPARC
+        if word == 0x01000000 {
+            score -= 10;
+            continue;
+        } // NOP
+        if word == 0x81C7E008 {
+            score -= 15;
+            continue;
+        } // RET
+          // MIPS BE
+        if word == 0x03E00008 {
+            score -= 12;
+            continue;
+        } // JR $ra
+          // S390x
+        if (word >> 16) == 0x07FE {
+            score -= 12;
+            continue;
+        } // BR %r14
 
         // --- Cross-architecture penalties (32-bit LE ISAs) ---
         // PPC64-LE, AArch64, RISC-V store instructions in LE byte order.
@@ -102,44 +122,90 @@ pub fn score(data: &[u8]) -> i64 {
         {
             let le32 = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
             // PPC64-LE
-            if le32 == 0x4E800020 { score -= 15; } // BLR
-            if le32 == 0x7C0802A6 { score -= 12; } // MFLR r0
-            if le32 == 0x7C0803A6 { score -= 12; } // MTLR r0
-            if (le32 & 0xFFFF0000) == 0xF8010000 { score -= 8; } // STD r0,N(r1)
-            if (le32 & 0xFFFF0000) == 0xE8010000 { score -= 8; } // LD r0,N(r1)
-            if (le32 & 0xFC000000) == 0xFC000000 { score -= 5; } // PPC FP double arith
-            if (le32 & 0xFC000000) == 0xEC000000 { score -= 5; } // PPC FP single arith
-            if (le32 & 0xFC000000) == 0xC0000000 { score -= 4; } // LFS
-            if (le32 & 0xFC000000) == 0xC8000000 { score -= 4; } // LFD
-            if (le32 & 0xFC000000) == 0xD0000000 { score -= 4; } // STFS
-            if (le32 & 0xFC000000) == 0xD8000000 { score -= 4; } // STFD
-            // AArch64
-            if le32 == 0xD65F03C0 { score -= 15; } // RET
-            if le32 == 0xD503201F { score -= 10; } // NOP
-            // RISC-V
-            if le32 == 0x00008067 { score -= 12; } // RET
-            if le32 == 0x00000013 { score -= 8; }  // NOP
+            if le32 == 0x4E800020 {
+                score -= 15;
+            } // BLR
+            if le32 == 0x7C0802A6 {
+                score -= 12;
+            } // MFLR r0
+            if le32 == 0x7C0803A6 {
+                score -= 12;
+            } // MTLR r0
+            if (le32 & 0xFFFF0000) == 0xF8010000 {
+                score -= 8;
+            } // STD r0,N(r1)
+            if (le32 & 0xFFFF0000) == 0xE8010000 {
+                score -= 8;
+            } // LD r0,N(r1)
+            if (le32 & 0xFC000000) == 0xFC000000 {
+                score -= 5;
+            } // PPC FP double arith
+            if (le32 & 0xFC000000) == 0xEC000000 {
+                score -= 5;
+            } // PPC FP single arith
+            if (le32 & 0xFC000000) == 0xC0000000 {
+                score -= 4;
+            } // LFS
+            if (le32 & 0xFC000000) == 0xC8000000 {
+                score -= 4;
+            } // LFD
+            if (le32 & 0xFC000000) == 0xD0000000 {
+                score -= 4;
+            } // STFS
+            if (le32 & 0xFC000000) == 0xD8000000 {
+                score -= 4;
+            } // STFD
+              // AArch64
+            if le32 == 0xD65F03C0 {
+                score -= 15;
+            } // RET
+            if le32 == 0xD503201F {
+                score -= 10;
+            } // NOP
+              // RISC-V
+            if le32 == 0x00008067 {
+                score -= 12;
+            } // RET
+            if le32 == 0x00000013 {
+                score -= 8;
+            } // NOP
         }
 
         // --- Cross-architecture penalties (16-bit LE ISAs) ---
         // OpenRISC is 32-bit BE; when 16-bit LE data (Thumb, AVR, MSP430) is read
         // as 32-bit BE, distinctive patterns appear in the halfwords.
         {
-            let hw0 = (word >> 16) as u16;  // first halfword (BE byte order)
-            let hw0_le = hw0.swap_bytes();  // convert to LE interpretation
+            let hw0 = (word >> 16) as u16; // first halfword (BE byte order)
+            let hw0_le = hw0.swap_bytes(); // convert to LE interpretation
             let hw1 = (word & 0xFFFF) as u16;
             let hw1_le = hw1.swap_bytes();
             // Thumb
-            if hw0_le == 0x4770 || hw1_le == 0x4770 { score -= 12; } // BX LR
-            if hw0_le == 0xBF00 || hw1_le == 0xBF00 { score -= 8; }  // NOP
-            if (hw0_le & 0xFF00) == 0xB500 || (hw1_le & 0xFF00) == 0xB500 { score -= 6; } // PUSH {..,LR}
-            if (hw0_le & 0xFF00) == 0xBD00 || (hw1_le & 0xFF00) == 0xBD00 { score -= 6; } // POP {..,PC}
-            // AVR
-            if hw0_le == 0x9508 || hw1_le == 0x9508 { score -= 10; } // RET
-            if hw0_le == 0x9518 || hw1_le == 0x9518 { score -= 10; } // RETI
-            // MSP430
-            if hw0_le == 0x4130 || hw1_le == 0x4130 { score -= 10; } // RET
-            if hw0_le == 0x4303 || hw1_le == 0x4303 { score -= 8; }  // NOP
+            if hw0_le == 0x4770 || hw1_le == 0x4770 {
+                score -= 12;
+            } // BX LR
+            if hw0_le == 0xBF00 || hw1_le == 0xBF00 {
+                score -= 8;
+            } // NOP
+            if (hw0_le & 0xFF00) == 0xB500 || (hw1_le & 0xFF00) == 0xB500 {
+                score -= 6;
+            } // PUSH {..,LR}
+            if (hw0_le & 0xFF00) == 0xBD00 || (hw1_le & 0xFF00) == 0xBD00 {
+                score -= 6;
+            } // POP {..,PC}
+              // AVR
+            if hw0_le == 0x9508 || hw1_le == 0x9508 {
+                score -= 10;
+            } // RET
+            if hw0_le == 0x9518 || hw1_le == 0x9518 {
+                score -= 10;
+            } // RETI
+              // MSP430
+            if hw0_le == 0x4130 || hw1_le == 0x4130 {
+                score -= 10;
+            } // RET
+            if hw0_le == 0x4303 || hw1_le == 0x4303 {
+                score -= 8;
+            } // NOP
         }
 
         // Exact matches (high confidence)
@@ -199,8 +265,12 @@ pub fn score(data: &[u8]) -> i64 {
         }
 
         // Load/store
-        if opcode == OP_LWZ || opcode == OP_LWS || opcode == OP_LBZ
-            || opcode == OP_LBS || opcode == OP_LHZ || opcode == OP_LHS
+        if opcode == OP_LWZ
+            || opcode == OP_LWS
+            || opcode == OP_LBZ
+            || opcode == OP_LBS
+            || opcode == OP_LHZ
+            || opcode == OP_LHS
         {
             score += 2;
             continue;

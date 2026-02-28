@@ -280,14 +280,26 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 1 < data.len() {
             let hw = u16::from_le_bytes([data[j], data[j + 1]]);
             // MSP430
-            if hw == 0x4130 { total_score -= 15; } // MSP430 RET
-            if hw == 0x4303 { total_score -= 8; }  // MSP430 NOP
-            if hw == 0x1300 { total_score -= 10; } // MSP430 RETI
-            // AVR
-            if hw == 0x9508 { total_score -= 12; } // AVR RET
-            if hw == 0x9518 { total_score -= 10; } // AVR RETI
-            // Thumb
-            if hw == 0x4770 { total_score -= 10; } // Thumb BX LR
+            if hw == 0x4130 {
+                total_score -= 15;
+            } // MSP430 RET
+            if hw == 0x4303 {
+                total_score -= 8;
+            } // MSP430 NOP
+            if hw == 0x1300 {
+                total_score -= 10;
+            } // MSP430 RETI
+              // AVR
+            if hw == 0x9508 {
+                total_score -= 12;
+            } // AVR RET
+            if hw == 0x9518 {
+                total_score -= 10;
+            } // AVR RETI
+              // Thumb
+            if hw == 0x4770 {
+                total_score -= 10;
+            } // Thumb BX LR
             j += 2;
         }
     }
@@ -297,11 +309,19 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 3 < data.len() {
             let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // MIPS BE
-            if be32 == 0x03E00008 { total_score -= 15; } // JR $ra
-            if (be32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; } // ADDIU $sp
-            if (be32 & 0xFFFF0000) == 0xAFBF0000 { total_score -= 10; } // SW $ra
-            if (be32 & 0xFFFF0000) == 0x8FBF0000 { total_score -= 10; } // LW $ra
-            // MIPS generic opcodes (bits 31:26)
+            if be32 == 0x03E00008 {
+                total_score -= 15;
+            } // JR $ra
+            if (be32 & 0xFFFF0000) == 0x27BD0000 {
+                total_score -= 10;
+            } // ADDIU $sp
+            if (be32 & 0xFFFF0000) == 0xAFBF0000 {
+                total_score -= 10;
+            } // SW $ra
+            if (be32 & 0xFFFF0000) == 0x8FBF0000 {
+                total_score -= 10;
+            } // LW $ra
+              // MIPS generic opcodes (bits 31:26)
             {
                 let mips_op = (be32 >> 26) & 0x3F;
                 match mips_op {
@@ -314,15 +334,29 @@ pub fn score(data: &[u8]) -> i64 {
                 }
             }
             // PPC
-            if be32 == 0x4E800020 { total_score -= 15; } // BLR
-            if be32 == 0x7C0802A6 { total_score -= 10; } // MFLR r0
-            if be32 == 0x60000000 { total_score -= 8; }  // NOP
-            // PPC STWU r1 (store word update, stack frame setup)
-            if (be32 & 0xFFFF0000) == 0x94210000 { total_score -= 8; }
+            if be32 == 0x4E800020 {
+                total_score -= 15;
+            } // BLR
+            if be32 == 0x7C0802A6 {
+                total_score -= 10;
+            } // MFLR r0
+            if be32 == 0x60000000 {
+                total_score -= 8;
+            } // NOP
+              // PPC STWU r1 (store word update, stack frame setup)
+            if (be32 & 0xFFFF0000) == 0x94210000 {
+                total_score -= 8;
+            }
             // SPARC
-            if be32 == 0x81C7E008 { total_score -= 12; } // RET
-            if be32 == 0x81C3E008 { total_score -= 12; } // RETL
-            if be32 == 0x01000000 { total_score -= 8; }  // NOP
+            if be32 == 0x81C7E008 {
+                total_score -= 12;
+            } // RET
+            if be32 == 0x81C3E008 {
+                total_score -= 12;
+            } // RETL
+            if be32 == 0x01000000 {
+                total_score -= 8;
+            } // NOP
             j += 4;
         }
     }
@@ -332,17 +366,33 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 3 < data.len() {
             let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // MIPS LE
-            if le32 == 0x03E00008 { total_score -= 15; } // JR $ra
-            if (le32 & 0xFFFF0000) == 0x27BD0000 { total_score -= 10; } // ADDIU $sp
-            if (le32 & 0xFFFF0000) == 0xAFBF0000 { total_score -= 10; } // SW $ra
-            // AArch64
-            if le32 == 0xD65F03C0 { total_score -= 12; } // RET
-            if le32 == 0xD503201F { total_score -= 8; }  // NOP
-            // RISC-V
-            if le32 == 0x00008067 { total_score -= 12; } // RET
-            if le32 == 0x00000013 { total_score -= 8; }  // NOP
-            // LoongArch
-            if le32 == 0x4C000020 { total_score -= 10; } // RET
+            if le32 == 0x03E00008 {
+                total_score -= 15;
+            } // JR $ra
+            if (le32 & 0xFFFF0000) == 0x27BD0000 {
+                total_score -= 10;
+            } // ADDIU $sp
+            if (le32 & 0xFFFF0000) == 0xAFBF0000 {
+                total_score -= 10;
+            } // SW $ra
+              // AArch64
+            if le32 == 0xD65F03C0 {
+                total_score -= 12;
+            } // RET
+            if le32 == 0xD503201F {
+                total_score -= 8;
+            } // NOP
+              // RISC-V
+            if le32 == 0x00008067 {
+                total_score -= 12;
+            } // RET
+            if le32 == 0x00000013 {
+                total_score -= 8;
+            } // NOP
+              // LoongArch
+            if le32 == 0x4C000020 {
+                total_score -= 10;
+            } // RET
             j += 4;
         }
     }

@@ -323,28 +323,58 @@ pub fn score(data: &[u8]) -> i64 {
             let hw = u16::from_le_bytes([data[j], data[j + 1]]);
 
             // === High-confidence anchors (very specific to Thumb) ===
-            if hw == 0x4770 { anchor_count += 1; anchor_penalty += 15; }           // BX LR
-            else if hw == 0xBF00 { anchor_count += 1; anchor_penalty += 10; }      // NOP
-            else if matches!(hw, 0xB672 | 0xB662 | 0xB673 | 0xB663) {             // CPSID/CPSIE
-                anchor_count += 1; anchor_penalty += 20;
+            if hw == 0x4770 {
+                anchor_count += 1;
+                anchor_penalty += 15;
             }
-            else if matches!(hw, 0xBF30 | 0xBF20 | 0xBF40) {                      // WFI/WFE/SEV
-                anchor_count += 1; anchor_penalty += 15;
+            // BX LR
+            else if hw == 0xBF00 {
+                anchor_count += 1;
+                anchor_penalty += 10;
+            }
+            // NOP
+            else if matches!(hw, 0xB672 | 0xB662 | 0xB673 | 0xB663) {
+                // CPSID/CPSIE
+                anchor_count += 1;
+                anchor_penalty += 20;
+            } else if matches!(hw, 0xBF30 | 0xBF20 | 0xBF40) {
+                // WFI/WFE/SEV
+                anchor_count += 1;
+                anchor_penalty += 15;
             }
             // PUSH {.., LR} - function prologue, very common in Thumb firmware
-            else if (hw & 0xFF00) == 0xB500 { anchor_count += 1; anchor_penalty += 8; }
-            // POP {.., PC} - function return, very common in Thumb firmware
-            else if (hw & 0xFF00) == 0xBD00 { anchor_count += 1; anchor_penalty += 8; }
-            // === Medium-confidence patterns (counted for broad evidence) ===
-            else if (hw & 0xFF00) == 0xB000 { broad_penalty += 5; }               // ADD/SUB SP
-            else if (hw & 0xF000) == 0xD000
-                && (hw & 0x0F00) != 0x0E00 && (hw & 0x0F00) != 0x0F00 {
-                broad_penalty += 3;                                                 // B<cond> (conditional branch)
+            else if (hw & 0xFF00) == 0xB500 {
+                anchor_count += 1;
+                anchor_penalty += 8;
             }
-            else if (hw & 0xF800) == 0x4800 { broad_penalty += 3; }               // LDR Rt, [PC, #imm]
-            else if (hw & 0xFF00) == 0xDF00 { broad_penalty += 8; }               // SVC
-            else if (hw & 0xFF00) == 0xBE00 { broad_penalty += 6; }               // BKPT
-            else if (hw & 0xF500) == 0xB100 { broad_penalty += 5; }               // CBZ/CBNZ
+            // POP {.., PC} - function return, very common in Thumb firmware
+            else if (hw & 0xFF00) == 0xBD00 {
+                anchor_count += 1;
+                anchor_penalty += 8;
+            }
+            // === Medium-confidence patterns (counted for broad evidence) ===
+            else if (hw & 0xFF00) == 0xB000 {
+                broad_penalty += 5;
+            }
+            // ADD/SUB SP
+            else if (hw & 0xF000) == 0xD000 && (hw & 0x0F00) != 0x0E00 && (hw & 0x0F00) != 0x0F00
+            {
+                broad_penalty += 3; // B<cond> (conditional branch)
+            } else if (hw & 0xF800) == 0x4800 {
+                broad_penalty += 3;
+            }
+            // LDR Rt, [PC, #imm]
+            else if (hw & 0xFF00) == 0xDF00 {
+                broad_penalty += 8;
+            }
+            // SVC
+            else if (hw & 0xFF00) == 0xBE00 {
+                broad_penalty += 6;
+            }
+            // BKPT
+            else if (hw & 0xF500) == 0xB100 {
+                broad_penalty += 5;
+            } // CBZ/CBNZ
 
             // Thumb-2 32-bit patterns
             if j + 3 < data.len() {
@@ -378,22 +408,44 @@ pub fn score(data: &[u8]) -> i64 {
         while j + 3 < data.len() {
             let le32 = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
             // AArch64
-            if le32 == 0xD65F03C0 { cross_arch_penalty += 20; }  // AArch64 RET
-            if le32 == 0xD503201F { cross_arch_penalty += 15; }  // AArch64 NOP
-            if (le32 >> 26) == 0x25 { cross_arch_penalty += 5; } // AArch64 BL
-            // RISC-V
-            if le32 == 0x00008067 { cross_arch_penalty += 15; }  // RISC-V RET
-            if le32 == 0x00000013 { cross_arch_penalty += 10; }  // RISC-V NOP
-            // PPC (LE mode)
-            if le32 == 0x4E800020 { cross_arch_penalty += 15; }  // PPC BLR
-            if le32 == 0x60000000 { cross_arch_penalty += 10; }  // PPC NOP
-            if le32 == 0x7C0802A6 { cross_arch_penalty += 12; }  // PPC MFLR r0
-            if le32 == 0x7C0803A6 { cross_arch_penalty += 12; }  // PPC MTLR r0
-            // LoongArch
-            if le32 == 0x03400000 { cross_arch_penalty += 10; }  // LoongArch NOP
-            if le32 == 0x4C000020 { cross_arch_penalty += 12; }  // LoongArch JIRL ra
-            // ARM Thumb-2 VFP/NEON patterns: upper byte 0xED, 0xEE, 0xEF
-            // These naturally set parse bits 15:14=11 causing false packet matches
+            if le32 == 0xD65F03C0 {
+                cross_arch_penalty += 20;
+            } // AArch64 RET
+            if le32 == 0xD503201F {
+                cross_arch_penalty += 15;
+            } // AArch64 NOP
+            if (le32 >> 26) == 0x25 {
+                cross_arch_penalty += 5;
+            } // AArch64 BL
+              // RISC-V
+            if le32 == 0x00008067 {
+                cross_arch_penalty += 15;
+            } // RISC-V RET
+            if le32 == 0x00000013 {
+                cross_arch_penalty += 10;
+            } // RISC-V NOP
+              // PPC (LE mode)
+            if le32 == 0x4E800020 {
+                cross_arch_penalty += 15;
+            } // PPC BLR
+            if le32 == 0x60000000 {
+                cross_arch_penalty += 10;
+            } // PPC NOP
+            if le32 == 0x7C0802A6 {
+                cross_arch_penalty += 12;
+            } // PPC MFLR r0
+            if le32 == 0x7C0803A6 {
+                cross_arch_penalty += 12;
+            } // PPC MTLR r0
+              // LoongArch
+            if le32 == 0x03400000 {
+                cross_arch_penalty += 10;
+            } // LoongArch NOP
+            if le32 == 0x4C000020 {
+                cross_arch_penalty += 12;
+            } // LoongArch JIRL ra
+              // ARM Thumb-2 VFP/NEON patterns: upper byte 0xED, 0xEE, 0xEF
+              // These naturally set parse bits 15:14=11 causing false packet matches
             {
                 let upper_byte = ((le32 >> 16) & 0xFF) as u8;
                 if matches!(upper_byte, 0xED | 0xEE | 0xEF) {
@@ -462,8 +514,7 @@ pub fn score(data: &[u8]) -> i64 {
             // is broad enough to match non-Hexagon data like Thumb-2)
             else if is_loop_setup(word) {
                 packet_score += 10;
-            }
-            else {
+            } else {
                 // Score based on instruction class with sub-encoding validation
                 let iclass = get_iclass(word);
                 let bits_27_24 = ((word >> 24) & 0x0F) as u8;
@@ -559,8 +610,8 @@ pub fn score(data: &[u8]) -> i64 {
         // Random/non-Hexagon data (especially ARM Thumb-2) often produces
         // 85-92% valid packet ratios due to coincidental parse bit matches.
         // Real Hexagon code has >95% valid packets with proper structure.
-        let very_strong_packets = packet_count > 10
-            && (valid_packets as f64 / packet_count as f64) > 0.93;
+        let very_strong_packets =
+            packet_count > 10 && (valid_packets as f64 / packet_count as f64) > 0.93;
         if !very_strong_packets {
             total_score = (total_score as f64 * 0.20) as i64;
         }
