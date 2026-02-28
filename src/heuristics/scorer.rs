@@ -9,9 +9,9 @@
 //! The actual scoring logic is implemented in `crate::architectures::*::score()`.
 
 use crate::architectures::{
-    aarch64, alpha, arc, arm, avr, blackfin, c166, cellspu, dalvik, hc11, hcs12, hexagon, i860,
-    ia64, jvm, lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc, ppc,
-    riscv, rl78, s390x, sparc, superh, tricore, v850, vax, wasm, x86, xtensa,
+    aarch64, alpha, arc, arm, avr, blackfin, c166, cellspu, dalvik, fr30, hc11, hcs12, hexagon,
+    i860, ia64, jvm, lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc,
+    ppc, ppcvle, riscv, rl78, s12z, s390x, sparc, superh, tricore, v850, vax, wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -587,4 +587,22 @@ mod tests {
         code.extend_from_slice(&nop.to_be_bytes());
         assert!(score_cellspu(&code) > 0);
     }
+}
+
+/// Score likelihood of FR30 code.
+#[inline]
+pub fn score_fr30(data: &[u8]) -> i64 {
+    fr30::score(data)
+}
+
+/// Score likelihood of S12Z code.
+#[inline]
+pub fn score_s12z(data: &[u8]) -> i64 {
+    s12z::score(data)
+}
+
+/// Score likelihood of PPC VLE code.
+#[inline]
+pub fn score_ppcvle(data: &[u8]) -> i64 {
+    ppcvle::score(data)
 }

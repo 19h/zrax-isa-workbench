@@ -4,8 +4,8 @@
 
 use clap::{Parser, ValueEnum};
 use isa_classifier::{
-    detect_multi_isa, detect_payload, ClassifierOptions, DetectionPayload, HumanFormatter,
-    JsonFormatter, PayloadFormatter, ShortFormatter, CandidatesFormatter,
+    detect_multi_isa, detect_payload, CandidatesFormatter, ClassifierOptions, DetectionPayload,
+    HumanFormatter, JsonFormatter, PayloadFormatter, ShortFormatter,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -173,10 +173,7 @@ fn analyze_file(
 }
 
 /// Analyze a file for multiple ISAs using windowed detection.
-fn analyze_multi_isa(
-    path: &PathBuf,
-    args: &Args,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn analyze_multi_isa(path: &PathBuf, args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     let data = std::fs::read(path)?;
     let detected = detect_multi_isa(&data, args.window_size);
 
@@ -306,8 +303,13 @@ mod tests {
     #[test]
     fn test_window_size() {
         let args = Args::try_parse_from([
-            "isa-classify", "--multi-isa", "--window-size", "2048", "test.bin"
-        ]).unwrap();
+            "isa-classify",
+            "--multi-isa",
+            "--window-size",
+            "2048",
+            "test.bin",
+        ])
+        .unwrap();
         assert_eq!(args.window_size, 2048);
     }
 }

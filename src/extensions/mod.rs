@@ -21,7 +21,7 @@ pub fn detect_from_code(data: &[u8], isa: Isa, endianness: Endianness) -> Vec<Ex
             detector::detect_riscv_extensions(data, endianness)
         }
         Isa::Mips | Isa::Mips64 => detector::detect_mips_extensions(data, endianness),
-        Isa::Ppc | Isa::Ppc64 => detector::detect_ppc_extensions(data, endianness),
+        Isa::Ppc | Isa::Ppc64 | Isa::PpcVle => detector::detect_ppc_extensions(data, endianness),
         Isa::S390 | Isa::S390x => detector::detect_s390x_extensions(data),
         Isa::Alpha => detector::detect_alpha_extensions(data),
         Isa::LoongArch32 | Isa::LoongArch64 => detector::detect_loongarch_extensions(data),
@@ -159,7 +159,8 @@ pub fn known_extensions(isa: Isa) -> Vec<(&'static str, ExtensionCategory)> {
             // Other
             ("Ztso", ExtensionCategory::Other),
         ],
-        Isa::Ppc | Isa::Ppc64 => vec![
+        Isa::Ppc | Isa::Ppc64 | Isa::PpcVle => vec![
+            ("VLE", ExtensionCategory::Compressed),
             ("VMX", ExtensionCategory::Simd), // AltiVec
             ("VSX", ExtensionCategory::Simd),
             ("DFP", ExtensionCategory::FloatingPoint),

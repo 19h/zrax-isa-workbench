@@ -93,6 +93,11 @@ pub enum Isa {
 
     // NEC V850
     V850,
+    // Renesas RH850 (V850 successor)
+    Rh850,
+
+    // NEC 78K0R (legacy family, distinct from RL78)
+    K78k0r,
 
     // Renesas RX
     Rx,
@@ -100,6 +105,7 @@ pub enum Isa {
     // TI DSP
     TiC6000,
     TiC2000,
+    TiC28x,
     TiC5500,
     TiPru,
 
@@ -112,6 +118,9 @@ pub enum Isa {
 
     // Freescale/NXP HCS12X (MC68HC12 / CPU12) — automotive 16-bit big-endian MCU
     Hcs12,
+
+    // NXP/Freescale S12Z (CPUZ) — 16-bit successor family to HCS12X
+    S12z,
 
     // Motorola/Freescale 68HC11 — 8-bit big-endian MCU (predecessor to HC12)
     Hc11,
@@ -165,6 +174,13 @@ pub enum Isa {
 
     // Fujitsu FR-V
     Frv,
+
+    // Fujitsu FR family
+    Fr30,
+    Fr80,
+
+    // PowerPC VLE encoding profile (automotive e200/e500-class firmware)
+    PpcVle,
 
     // Virtual Machine ISAs
     /// WebAssembly virtual stack machine
@@ -225,15 +241,19 @@ impl Isa {
             Isa::Lanai => "Lanai",
             Isa::Csky => "C-SKY",
             Isa::V850 => "NEC V850",
+            Isa::Rh850 => "Renesas RH850",
+            Isa::K78k0r => "NEC 78K0R",
             Isa::Rx => "Renesas RX",
             Isa::TiC6000 => "TI TMS320C6000",
             Isa::TiC2000 => "TI TMS320C2000",
+            Isa::TiC28x => "TI TMS320C28x",
             Isa::TiC5500 => "TI TMS320C55x",
             Isa::TiPru => "TI PRU",
             Isa::Blackfin => "Analog Devices Blackfin",
             Isa::Sharc => "Analog Devices SHARC",
             Isa::Tricore => "Infineon TriCore",
             Isa::Hcs12 => "Freescale/NXP HCS12",
+            Isa::S12z => "NXP/Freescale S12Z",
             Isa::Hc11 => "Motorola 68HC11",
             Isa::C166 => "Infineon/Siemens C166",
             Isa::Rl78 => "Renesas RL78",
@@ -261,6 +281,9 @@ impl Isa {
             Isa::Kvx => "Kalray VLIW",
             Isa::McstElbrus => "MCST Elbrus",
             Isa::Frv => "Fujitsu FR-V",
+            Isa::Fr30 => "Fujitsu FR30",
+            Isa::Fr80 => "Fujitsu FR80",
+            Isa::PpcVle => "PowerPC VLE",
             Isa::Wasm => "WebAssembly",
             Isa::Jvm => "JVM Bytecode",
             Isa::Dalvik => "Dalvik/ART Bytecode",
@@ -297,9 +320,11 @@ impl Isa {
             | Isa::Lanai
             | Isa::Csky
             | Isa::V850
+            | Isa::Rh850
             | Isa::Rx
             | Isa::TiC6000
             | Isa::TiC2000
+            | Isa::TiC28x
             | Isa::TiC5500
             | Isa::TiPru
             | Isa::Blackfin
@@ -337,9 +362,11 @@ impl Isa {
             | Isa::Mcs6502
             | Isa::W65816
             | Isa::Hcs12
+            | Isa::S12z
             | Isa::Hc11
             | Isa::C166
-            | Isa::Rl78 => 16,
+            | Isa::Rl78
+            | Isa::K78k0r => 16,
 
             Isa::Pdp11 => 16,
             Isa::Vax => 32,
@@ -347,6 +374,9 @@ impl Isa {
             Isa::AmdGpu | Isa::Cuda => 64,
             Isa::VideoCore3 | Isa::VideoCore5 => 32,
             Isa::Frv => 32,
+            Isa::Fr30 => 32,
+            Isa::Fr80 => 32,
+            Isa::PpcVle => 32,
             Isa::CellSpu => 128,
 
             // Virtual machine ISAs - bitwidth is notional
@@ -378,8 +408,11 @@ impl Isa {
                 | Isa::Tricore
                 | Isa::Xtensa
                 | Isa::Hcs12
+                | Isa::S12z
                 | Isa::Hc11
                 | Isa::Rl78
+                | Isa::K78k0r
+                | Isa::Rh850
         )
     }
 }

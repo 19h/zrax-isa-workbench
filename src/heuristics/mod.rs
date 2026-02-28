@@ -58,6 +58,12 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::C166, "Infineon/Siemens C166"),
     (Isa::V850, "Renesas/NEC V850"),
     (Isa::Rl78, "Renesas RL78"),
+    (Isa::Rh850, "Renesas RH850"),
+    (Isa::K78k0r, "NEC 78K0R"),
+    (Isa::S12z, "NXP/Freescale S12Z"),
+    (Isa::Fr30, "Fujitsu FR30"),
+    (Isa::Fr80, "Fujitsu FR80"),
+    (Isa::PpcVle, "PowerPC VLE"),
 ];
 
 /// Result of heuristic scoring for a single architecture.
@@ -140,8 +146,17 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
     }
 
     // Build result
-    let mut result =
-        ClassificationResult::from_heuristics(best.isa, best.bitwidth, best.endianness, confidence);
+    let mut detected_isa = best.isa;
+    if detected_isa == Isa::V850 && has_marker(data, b"RH850") {
+        detected_isa = Isa::Rh850;
+    }
+
+    let mut result = ClassificationResult::from_heuristics(
+        detected_isa,
+        best.bitwidth,
+        best.endianness,
+        confidence,
+    );
     result.source = ClassificationSource::Heuristic;
     result.format = FileFormat::Raw;
 
@@ -152,6 +167,13 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
     }
 
     Ok(result)
+}
+
+fn has_marker(data: &[u8], marker: &[u8]) -> bool {
+    if marker.is_empty() || data.len() < marker.len() {
+        return false;
+    }
+    data.windows(marker.len()).any(|w| w == marker)
 }
 
 /// Score all supported architectures.
@@ -578,6 +600,33 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
 
     // Renesas/NEC V850
     let v850_score = scorer::score_v850(scan_data);
+
+    let fr30_score = scorer::score_fr30(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Fr30,
+        raw_score: fr30_score,
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 32,
+    });
+
+    let s12z_score = scorer::score_s12z(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::S12z,
+        raw_score: s12z_score,
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 16,
+    });
+
+    let ppcvle_score = scorer::score_ppcvle(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::PpcVle,
+        raw_score: ppcvle_score,
+        confidence: 0.0,
+        endianness: Endianness::Big,
+        bitwidth: 32,
+    });
     scores.push(ArchitectureScore {
         isa: Isa::V850,
         raw_score: v850_score,
@@ -870,5 +919,21 @@ mod tests {
         };
         let result = analyze(&data, &options).unwrap();
         assert!(matches!(result.isa, Isa::RiscV32 | Isa::RiscV64));
+    }
+
+    #[test]
+    fn test_v850_rh850_marker_upgrade() {
+        let mut data = vec![
+            0x6F, 0x00, 0x6F, 0x00, 0x6F, 0x00, 0x6F, 0x00, // repeated JMP [r31]
+            0x00, 0x00, 0x6F, 0x00, 0x00, 0x00, 0x6F, 0x00,
+        ];
+        data.extend_from_slice(b"RH850");
+
+        let options = ClassifierOptions {
+            min_confidence: 0.1,
+            ..ClassifierOptions::thorough()
+        };
+        let result = analyze(&data, &options).unwrap();
+        assert_eq!(result.isa, Isa::Rh850);
     }
 }

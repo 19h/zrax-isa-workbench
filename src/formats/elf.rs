@@ -99,8 +99,8 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // IBM SPU/SPC
         0x17 => (Isa::Unknown(0x17), 32),
 
-        // NEC V800
-        0x24 => (Isa::Unknown(0x24), 32),
+        // NEC V800 / Renesas RH850 toolchains
+        0x24 => (Isa::Rh850, 32),
 
         // Fujitsu FR20
         0x25 => (Isa::Unknown(0x25), 32),
@@ -244,7 +244,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x53 => (Isa::Avr, 8),
 
         // Fujitsu FR30
-        0x54 => (Isa::Unknown(0x54), 32),
+        0x54 => (Isa::Fr30, 32),
 
         // Mitsubishi D10V
         0x55 => (Isa::Unknown(0x55), 16),
@@ -385,7 +385,8 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x8C => (Isa::TiC6000, 32),
 
         // TI TMS320C2000
-        0x8D => (Isa::TiC2000, 16),
+        // Map 0x8D to C28x (the modern and dominant C2000 variant)
+        0x8D => (Isa::TiC28x, 32),
 
         // TI TMS320C55x
         0x8E => (Isa::TiC5500, 16),
@@ -507,8 +508,8 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // Broadcom VideoCore V
         0xC6 => (Isa::VideoCore5, 32),
 
-        // Renesas 78KOR (mapped to RL78 — the 78K successor)
-        0xC7 => (Isa::Rl78, 16),
+        // Renesas 78KOR (legacy 78K family)
+        0xC7 => (Isa::K78k0r, 16),
 
         // Freescale 56800EX
         0xC8 => (Isa::Unknown(0xC8), 16),
@@ -648,7 +649,7 @@ pub fn parse_e_flags(isa: Isa, e_flags: u32, data: &[u8]) -> (Variant, Vec<Exten
         Isa::AArch64 => parse_aarch64_flags(e_flags),
         Isa::RiscV32 | Isa::RiscV64 | Isa::RiscV128 => parse_riscv_flags(e_flags),
         Isa::Mips | Isa::Mips64 => parse_mips_flags(e_flags),
-        Isa::Ppc64 => parse_ppc64_flags(e_flags),
+        Isa::Ppc | Isa::Ppc64 | Isa::PpcVle => parse_ppc_flags(e_flags),
         Isa::Sh | Isa::Sh4 => parse_sh_flags(e_flags),
         Isa::Hexagon => parse_hexagon_flags(e_flags),
         Isa::LoongArch32 | Isa::LoongArch64 => parse_loongarch_flags(e_flags),
@@ -946,8 +947,8 @@ fn parse_mips_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
     (Variant::new(arch_name), extensions)
 }
 
-/// Parse PowerPC64 ELF flags.
-fn parse_ppc64_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
+/// Parse PowerPC ELF flags.
+fn parse_ppc_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
     let abi = e_flags & 0x3;
     let abi_name = match abi {
         1 => "ELFv1",
@@ -955,7 +956,7 @@ fn parse_ppc64_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
         _ => "",
     };
 
-    (Variant::with_abi("PowerPC64", abi_name), Vec::new())
+    (Variant::with_abi("PowerPC", abi_name), Vec::new())
 }
 
 /// Parse SuperH ELF flags.
@@ -1042,10 +1043,22 @@ pub fn parse(data: &[u8], ei_class: u8, ei_data: u8) -> Result<ClassificationRes
     };
 
     // Map e_machine to ISA
-    let (isa, bitwidth) = e_machine_to_isa(e_machine, ei_class);
+    let (mut isa, mut bitwidth) = e_machine_to_isa(e_machine, ei_class);
+
+    // PPC VLE is encoded as a profile within PPC ELF files rather than a distinct
+    // e_machine value. Toolchains commonly emit section/attribute names that
+    // include explicit VLE markers.
+    if matches!(isa, Isa::Ppc | Isa::Ppc64) && has_ppc_vle_marker(data) {
+        isa = Isa::PpcVle;
+        bitwidth = 32;
+    }
 
     // Parse architecture-specific flags
     let (variant, mut extensions) = parse_e_flags(isa, e_flags, data);
+
+    if isa == Isa::PpcVle {
+        extensions.push(Extension::new("VLE", ExtensionCategory::Compressed));
+    }
 
     // For AArch64, also parse GNU property notes for BTI/PAC/GCS info
     if isa == Isa::AArch64 {
@@ -1074,6 +1087,14 @@ pub fn parse(data: &[u8], ei_class: u8, ei_data: u8) -> Result<ClassificationRes
     result.metadata = metadata;
 
     Ok(result)
+}
+
+fn has_ppc_vle_marker(data: &[u8]) -> bool {
+    const MARKERS: [&[u8]; 3] = [b".vletext", b".PPC.EMB.vle", b"vle_off"]; // binutils/GCC conventions
+
+    MARKERS
+        .iter()
+        .any(|marker| data.windows(marker.len()).any(|window| window == *marker))
 }
 
 #[cfg(test)]
@@ -1133,6 +1154,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_ppc_vle_marker() {
+        let mut data = make_elf_header(0x14, 1, 2);
+        data.extend_from_slice(b"\0.vletext\0");
+
+        let result = parse(&data, 1, 2).unwrap();
+        assert_eq!(result.isa, Isa::PpcVle);
+        assert!(result.extensions.iter().any(|e| e.name == "VLE"));
+    }
+
+    #[test]
     fn test_e_machine_coverage() {
         // Test a sampling of e_machine values
         assert_eq!(e_machine_to_isa(0x03, 1).0, Isa::X86);
@@ -1145,6 +1176,9 @@ mod tests {
         assert_eq!(e_machine_to_isa(0x15, 2).0, Isa::Ppc64);
         assert_eq!(e_machine_to_isa(0x16, 2).0, Isa::S390x);
         assert_eq!(e_machine_to_isa(0x2B, 2).0, Isa::Sparc64);
+        assert_eq!(e_machine_to_isa(0x24, 1).0, Isa::Rh850);
+        assert_eq!(e_machine_to_isa(0x54, 1).0, Isa::Fr30);
+        assert_eq!(e_machine_to_isa(0xC7, 1).0, Isa::K78k0r);
         assert_eq!(e_machine_to_isa(0xA4, 1).0, Isa::Hexagon);
         assert_eq!(e_machine_to_isa(0xF4, 1).0, Isa::Lanai);
         assert_eq!(e_machine_to_isa(0x102, 2).0, Isa::LoongArch64);

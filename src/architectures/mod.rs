@@ -13,6 +13,7 @@ pub mod blackfin;
 pub mod c166;
 pub mod cellspu;
 pub mod dalvik;
+pub mod fr30;
 pub mod hc11;
 pub mod hcs12;
 pub mod hexagon;
@@ -29,8 +30,10 @@ pub mod nios2;
 pub mod openrisc;
 pub mod parisc;
 pub mod ppc;
+pub mod ppcvle;
 pub mod riscv;
 pub mod rl78;
+pub mod s12z;
 pub mod s390x;
 pub mod sparc;
 pub mod superh;
@@ -54,11 +57,13 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::LoongArch32 | Isa::LoongArch64 => Endianness::Little,
         Isa::Hexagon => Endianness::Little,
         Isa::Tricore => Endianness::Little,
-        Isa::Hcs12 => Endianness::Big,  // Motorola architecture — big-endian
-        Isa::Hc11 => Endianness::Big,   // Motorola 68HC11 — big-endian
+        Isa::Hcs12 => Endianness::Big, // Motorola architecture — big-endian
+        Isa::Hc11 => Endianness::Big,  // Motorola 68HC11 — big-endian
         Isa::C166 => Endianness::Little, // Infineon/Siemens C166 — little-endian
         Isa::Rl78 => Endianness::Little, // Renesas RL78 — little-endian
         Isa::V850 => Endianness::Little, // Renesas/NEC V850 — little-endian
+        Isa::Rh850 => Endianness::Little, // Renesas RH850 — little-endian
+        Isa::K78k0r => Endianness::Little, // NEC 78K0R — little-endian
         Isa::Bpf => Endianness::Little,
         Isa::Cuda => Endianness::Little,
         Isa::AmdGpu => Endianness::Little,
@@ -66,6 +71,7 @@ pub fn default_endianness(isa: Isa) -> Endianness {
 
         // Big-endian by default
         Isa::Ppc | Isa::Ppc64 => Endianness::Big,
+        Isa::PpcVle => Endianness::Big,
         Isa::Sparc | Isa::Sparc64 => Endianness::Big,
         Isa::S390 | Isa::S390x => Endianness::Big,
         Isa::M68k | Isa::ColdFire => Endianness::Big,
@@ -93,6 +99,7 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::W65816 => Endianness::Little,
         Isa::Pic => Endianness::Little,
         Isa::Stm8 => Endianness::Big,
+        Isa::S12z => Endianness::Big,
 
         // Other/Unknown
         _ => Endianness::Little,
@@ -136,10 +143,13 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Avr => 2,
         Isa::Msp430 => 2,
         Isa::Tricore => 2, // TriCore has 16/32-bit instructions (16-bit aligned)
-        Isa::Hcs12 => 1, // HC12/HCS12X has variable-length instructions (1-8 bytes), byte-aligned
-        Isa::Hc11 => 1, // 68HC11 has variable-length instructions (1-5 bytes), byte-aligned
-        Isa::Rl78 => 1, // RL78 has variable-length instructions (1-4 bytes), byte-aligned
-        Isa::V850 => 2, // V850 has 16-bit and 32-bit instructions, 2-byte aligned
+        Isa::Hcs12 => 1,   // HC12/HCS12X has variable-length instructions (1-8 bytes), byte-aligned
+        Isa::S12z => 1,    // S12Z has variable-length instructions, byte-aligned
+        Isa::Hc11 => 1,    // 68HC11 has variable-length instructions (1-5 bytes), byte-aligned
+        Isa::Rl78 => 1,    // RL78 has variable-length instructions (1-4 bytes), byte-aligned
+        Isa::V850 => 2,    // V850 has 16-bit and 32-bit instructions, 2-byte aligned
+        Isa::Rh850 => 2,   // RH850 inherits V850-style 16/32-bit alignment
+        Isa::PpcVle => 2,  // VLE supports 16-bit and 32-bit encodings
 
         _ => 4,
     }
@@ -169,9 +179,13 @@ pub fn supports_compressed(isa: Isa) -> bool {
             | Isa::Vax     // VAX has variable-length CISC (1-37 bytes)
             | Isa::Blackfin // Blackfin has variable-length (16/32/64-bit)
             | Isa::Hcs12 // HC12/HCS12X has variable-length instructions (1-8 bytes)
+            | Isa::S12z  // S12Z has variable-length instructions
             | Isa::Hc11  // 68HC11 has variable-length instructions (1-5 bytes)
             | Isa::Rl78  // RL78 has variable-length instructions (1-4 bytes)
             | Isa::V850  // V850 has 16/32-bit instructions
+            | Isa::Rh850 // RH850 has 16/32-bit instructions
+            | Isa::K78k0r // 78K0R has variable-length instructions
+            | Isa::PpcVle // PowerPC VLE has 16/32-bit instructions
     )
 }
 
