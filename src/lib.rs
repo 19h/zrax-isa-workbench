@@ -198,6 +198,7 @@ pub fn classify_bytes_with_options(
         formats::DetectedFormat::LlvmBc { variant } => formats::llvm_bc::parse(data, variant)?,
         formats::DetectedFormat::FatElf => formats::fatelf::parse(data)?,
         formats::DetectedFormat::Ols => formats::ols::parse(data)?,
+        formats::DetectedFormat::Epr => formats::epr::parse(data)?,
         formats::DetectedFormat::Raw => {
             // Fall back to heuristic analysis
             heuristics::analyze(data, options)?
@@ -475,6 +476,124 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
                 extract_metadata(&result),
             )
         }
+        formats::DetectedFormat::Epr => {
+            // EPR is a container — parse it, then run heuristics on extracted payload
+            let (result, extracted_payload) = formats::epr::parse_with_payload(data)?;
+
+            let format_detection = detected_to_format(&detected);
+
+            // If the EPR parser identified the ISA from ECU strings, use that
+            if result.isa != Isa::Unknown(0) {
+                let primary = IsaClassification {
+                    isa: result.isa,
+                    bitwidth: result.bitwidth,
+                    endianness: result.endianness,
+                    confidence: result.confidence,
+                    source: result.source,
+                    variant: None,
+                };
+
+                let mut payload = DetectionPayload::new(format_detection, primary);
+                payload.metadata = extract_metadata(&result);
+
+                // Add notes from the EPR parser
+                for note in &result.metadata.notes {
+                    payload.notes.push(Note::info(note.clone()));
+                }
+
+                // If we have extracted payload, also run heuristics for candidates
+                if !extracted_payload.is_empty() {
+                    let candidates =
+                        heuristics::score_all_architectures(&extracted_payload, options);
+                    let mut sorted_candidates: Vec<_> =
+                        candidates.iter().filter(|c| c.raw_score > 0).collect();
+                    sorted_candidates.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+                    payload.candidates = sorted_candidates
+                        .into_iter()
+                        .take(10)
+                        .map(|c| {
+                            IsaCandidate::new(
+                                c.isa,
+                                c.bitwidth,
+                                c.endianness,
+                                c.raw_score,
+                                c.confidence,
+                            )
+                        })
+                        .collect();
+                }
+
+                return Ok(payload);
+            }
+
+            // No ECU string match — run heuristic analysis on extracted payload
+            if !extracted_payload.is_empty() {
+                let candidates = heuristics::score_all_architectures(&extracted_payload, options);
+                let best = candidates
+                    .iter()
+                    .max_by(|a, b| a.raw_score.cmp(&b.raw_score));
+
+                match best {
+                    Some(b) if b.confidence >= options.min_confidence => {
+                        let primary = IsaClassification::from_heuristics(
+                            b.isa,
+                            b.bitwidth,
+                            b.endianness,
+                            b.confidence,
+                        );
+
+                        let mut sorted_candidates: Vec<_> =
+                            candidates.iter().filter(|c| c.raw_score > 0).collect();
+                        sorted_candidates.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+                        let candidate_list: Vec<IsaCandidate> = sorted_candidates
+                            .into_iter()
+                            .take(10)
+                            .map(|c| {
+                                IsaCandidate::new(
+                                    c.isa,
+                                    c.bitwidth,
+                                    c.endianness,
+                                    c.raw_score,
+                                    c.confidence,
+                                )
+                            })
+                            .collect();
+
+                        let mut payload = DetectionPayload::new(format_detection, primary)
+                            .with_candidates(candidate_list);
+
+                        // Add EPR metadata notes
+                        for note in &result.metadata.notes {
+                            payload.notes.push(Note::info(note.clone()));
+                        }
+
+                        return Ok(payload);
+                    }
+                    _ => {
+                        // Inconclusive heuristics on EPR payload
+                        let primary =
+                            IsaClassification::from_format(Isa::Unknown(0), 0, Endianness::Little);
+                        let mut payload = DetectionPayload::new(format_detection, primary);
+                        for note in &result.metadata.notes {
+                            payload.notes.push(Note::info(note.clone()));
+                        }
+                        payload.notes.push(Note::warning(
+                            "EPR payload ISA could not be determined with sufficient confidence"
+                                .to_string(),
+                        ));
+                        return Ok(payload);
+                    }
+                }
+            }
+
+            // No payload extracted at all
+            let primary = IsaClassification::from_format(Isa::Unknown(0), 0, Endianness::Little);
+            let mut payload = DetectionPayload::new(format_detection, primary);
+            for note in &result.metadata.notes {
+                payload.notes.push(Note::info(note.clone()));
+            }
+            return Ok(payload);
+        }
         formats::DetectedFormat::Raw => {
             // Heuristic analysis - get all candidates
             let candidates = heuristics::score_all_architectures(data, options);
@@ -604,6 +723,7 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::LlvmBc { .. } => FormatDetection::new(FileFormat::LlvmBc),
         DetectedFormat::FatElf => FormatDetection::new(FileFormat::FatElf),
         DetectedFormat::Ols => FormatDetection::new(FileFormat::Ols),
+        DetectedFormat::Epr => FormatDetection::new(FileFormat::Epr),
         DetectedFormat::Raw => FormatDetection::raw(),
     }
 }

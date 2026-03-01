@@ -27,6 +27,7 @@ pub mod console;
 pub mod dex;
 pub mod ecoff;
 pub mod elf;
+pub mod epr;
 pub mod fatelf;
 pub mod goff;
 pub mod hex;
@@ -182,6 +183,8 @@ pub enum DetectedFormat {
     FatElf,
     /// WinOLS Project File container
     Ols,
+    /// ECU EEPROM/Flash dump container (EPR)
+    Epr,
     /// Unknown/raw format
     Raw,
 }
@@ -367,6 +370,12 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Ols;
     }
 
+    // ECU EEPROM/Flash dump (EPR container)
+    // Checked late because it uses structural heuristics (no magic bytes)
+    if epr::detect(data) {
+        return DetectedFormat::Epr;
+    }
+
     DetectedFormat::Raw
 }
 
@@ -397,6 +406,7 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::LlvmBc { variant } => llvm_bc::parse(data, variant),
         DetectedFormat::FatElf => fatelf::parse(data),
         DetectedFormat::Ols => ols::parse(data),
+        DetectedFormat::Epr => epr::parse(data),
         DetectedFormat::Raw => raw::analyze(data),
     }
 }

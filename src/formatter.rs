@@ -620,6 +620,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Fit => "FIT",
         FileFormat::Dtb => "DTB",
         FileFormat::Ols => "WinOLS",
+        FileFormat::Epr => "ECU EPR",
     }
 }
 

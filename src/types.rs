@@ -470,6 +470,8 @@ pub enum FileFormat {
     Ecoff,
     /// WinOLS Project File container
     Ols,
+    /// ECU EEPROM/Flash dump container (EPR format)
+    Epr,
     /// Raw binary (no recognized format)
     Raw,
 
@@ -595,6 +597,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Xcoff => write!(f, "XCOFF"),
             FileFormat::Ecoff => write!(f, "ECOFF"),
             FileFormat::Ols => write!(f, "WinOLS"),
+            FileFormat::Epr => write!(f, "ECU EPR"),
             FileFormat::Raw => write!(f, "Raw"),
             // Unix/POSIX Legacy
             FileFormat::Aout => write!(f, "a.out"),
