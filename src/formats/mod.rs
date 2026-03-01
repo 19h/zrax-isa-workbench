@@ -35,6 +35,7 @@ pub mod kernel;
 pub mod llvm_bc;
 pub mod macho;
 pub mod mz;
+pub mod ols;
 pub mod pe;
 pub mod pef;
 pub mod raw;
@@ -179,6 +180,8 @@ pub enum DetectedFormat {
     LlvmBc { variant: llvm_bc::LlvmVariant },
     /// FatELF multi-architecture
     FatElf,
+    /// WinOLS Project File container
+    Ols,
     /// Unknown/raw format
     Raw,
 }
@@ -359,6 +362,11 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Coff { machine };
     }
 
+    // WinOLS Project File
+    if ols::detect(data) {
+        return DetectedFormat::Ols;
+    }
+
     DetectedFormat::Raw
 }
 
@@ -388,6 +396,7 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::Goff => goff::parse(data),
         DetectedFormat::LlvmBc { variant } => llvm_bc::parse(data, variant),
         DetectedFormat::FatElf => fatelf::parse(data),
+        DetectedFormat::Ols => ols::parse(data),
         DetectedFormat::Raw => raw::analyze(data),
     }
 }

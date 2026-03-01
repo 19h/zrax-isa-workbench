@@ -619,6 +619,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::UImage => "uImage",
         FileFormat::Fit => "FIT",
         FileFormat::Dtb => "DTB",
+        FileFormat::Ols => "WinOLS",
     }
 }
 

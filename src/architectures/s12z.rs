@@ -105,7 +105,9 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
-    if data.len() > 4096 && rts_count == 0 { return 0; }
+    if data.len() > 4096 && rts_count == 0 {
+        return 0;
+    }
     cmp::max(0, score)
 }
 

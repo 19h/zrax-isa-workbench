@@ -468,6 +468,8 @@ pub enum FileFormat {
     Xcoff,
     /// ECOFF (older MIPS/Alpha)
     Ecoff,
+    /// WinOLS Project File container
+    Ols,
     /// Raw binary (no recognized format)
     Raw,
 
@@ -592,6 +594,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Coff => write!(f, "COFF"),
             FileFormat::Xcoff => write!(f, "XCOFF"),
             FileFormat::Ecoff => write!(f, "ECOFF"),
+            FileFormat::Ols => write!(f, "WinOLS"),
             FileFormat::Raw => write!(f, "Raw"),
             // Unix/POSIX Legacy
             FileFormat::Aout => write!(f, "a.out"),

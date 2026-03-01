@@ -197,6 +197,7 @@ pub fn classify_bytes_with_options(
         formats::DetectedFormat::Goff => formats::goff::parse(data)?,
         formats::DetectedFormat::LlvmBc { variant } => formats::llvm_bc::parse(data, variant)?,
         formats::DetectedFormat::FatElf => formats::fatelf::parse(data)?,
+        formats::DetectedFormat::Ols => formats::ols::parse(data)?,
         formats::DetectedFormat::Raw => {
             // Fall back to heuristic analysis
             heuristics::analyze(data, options)?
@@ -466,6 +467,14 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
                 extract_metadata(&result),
             )
         }
+        formats::DetectedFormat::Ols => {
+            let result = formats::ols::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
         formats::DetectedFormat::Raw => {
             // Heuristic analysis - get all candidates
             let candidates = heuristics::score_all_architectures(data, options);
@@ -594,6 +603,7 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::Goff => FormatDetection::new(FileFormat::Goff),
         DetectedFormat::LlvmBc { .. } => FormatDetection::new(FileFormat::LlvmBc),
         DetectedFormat::FatElf => FormatDetection::new(FileFormat::FatElf),
+        DetectedFormat::Ols => FormatDetection::new(FileFormat::Ols),
         DetectedFormat::Raw => FormatDetection::raw(),
     }
 }

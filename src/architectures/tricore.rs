@@ -79,7 +79,9 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
-    {  cmp::max(0, score) }
+    {
+        cmp::max(0, score)
+    }
 }
 
 fn score_16bit(insn: u16) -> i64 {
@@ -116,7 +118,6 @@ fn score_16bit(insn: u16) -> i64 {
 
     score
 }
-
 
 fn score_32bit(insn: u32) -> i64 {
     let mut score = 0;
