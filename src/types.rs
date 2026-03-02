@@ -474,6 +474,14 @@ pub enum FileFormat {
     Epr,
     /// VW/Audi ODIS firmware container (SGO/SGML Object File)
     Sgo,
+    /// Volvo/Ford Binary Format (VBF) firmware container
+    Vbf,
+    /// VW/Audi encrypted flash container (FRF)
+    Frf,
+    /// SMS-Soft CombiLoader container (BCF)
+    Bcf,
+    /// VAG/Simos encrypted container (SOX)
+    Sox,
     /// Raw binary (no recognized format)
     Raw,
 
@@ -601,6 +609,10 @@ impl fmt::Display for FileFormat {
             FileFormat::Ols => write!(f, "WinOLS"),
             FileFormat::Epr => write!(f, "ECU EPR"),
             FileFormat::Sgo => write!(f, "VW ODIS SGO"),
+            FileFormat::Vbf => write!(f, "Volvo/Ford VBF"),
+            FileFormat::Frf => write!(f, "VW/Audi FRF"),
+            FileFormat::Bcf => write!(f, "SMS-Soft BCF"),
+            FileFormat::Sox => write!(f, "VAG SOX"),
             FileFormat::Raw => write!(f, "Raw"),
             // Unix/POSIX Legacy
             FileFormat::Aout => write!(f, "a.out"),

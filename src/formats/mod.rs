@@ -21,6 +21,7 @@
 
 pub mod aout;
 pub mod ar;
+pub mod bcf;
 pub mod bflt;
 pub mod coff;
 pub mod console;
@@ -29,6 +30,7 @@ pub mod ecoff;
 pub mod elf;
 pub mod epr;
 pub mod fatelf;
+pub mod frf;
 pub mod goff;
 pub mod hex;
 pub mod java;
@@ -41,6 +43,8 @@ pub mod pe;
 pub mod pef;
 pub mod raw;
 pub mod sgo;
+pub mod sox;
+pub mod vbf;
 pub mod wasm;
 pub mod xcoff;
 
@@ -188,6 +192,14 @@ pub enum DetectedFormat {
     Epr,
     /// VW ODIS SGO firmware container
     Sgo,
+    /// Volvo/Ford VBF firmware container
+    Vbf,
+    /// VW/Audi FRF encrypted flash container
+    Frf,
+    /// SMS-Soft CombiLoader BCF container
+    Bcf,
+    /// VAG/Simos SOX encrypted container
+    Sox,
     /// Unknown/raw format
     Raw,
 }
@@ -322,6 +334,26 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Sgo;
     }
 
+    // Volvo/Ford VBF firmware container (ASCII magic "vbf_version")
+    if vbf::detect(data) {
+        return DetectedFormat::Vbf;
+    }
+
+    // VW/Audi FRF encrypted flash container (8-byte magic)
+    if frf::detect(data) {
+        return DetectedFormat::Frf;
+    }
+
+    // SMS-Soft CombiLoader BCF container (16-byte ASCII magic)
+    if bcf::detect(data) {
+        return DetectedFormat::Bcf;
+    }
+
+    // VAG/Simos SOX encrypted container (structural header check)
+    if sox::detect(data) {
+        return DetectedFormat::Sox;
+    }
+
     // ar archive
     if let Some(variant) = ar::detect(data) {
         return DetectedFormat::Ar { variant };
@@ -416,6 +448,10 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::Ols => ols::parse(data),
         DetectedFormat::Epr => epr::parse(data),
         DetectedFormat::Sgo => sgo::parse(data),
+        DetectedFormat::Vbf => vbf::parse(data),
+        DetectedFormat::Frf => frf::parse(data),
+        DetectedFormat::Bcf => bcf::parse(data),
+        DetectedFormat::Sox => sox::parse(data),
         DetectedFormat::Raw => raw::analyze(data),
     }
 }

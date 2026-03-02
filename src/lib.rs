@@ -200,6 +200,10 @@ pub fn classify_bytes_with_options(
         formats::DetectedFormat::Ols => formats::ols::parse(data)?,
         formats::DetectedFormat::Epr => formats::epr::parse(data)?,
         formats::DetectedFormat::Sgo => formats::sgo::parse(data)?,
+        formats::DetectedFormat::Vbf => formats::vbf::parse(data)?,
+        formats::DetectedFormat::Frf => formats::frf::parse(data)?,
+        formats::DetectedFormat::Bcf => formats::bcf::parse(data)?,
+        formats::DetectedFormat::Sox => formats::sox::parse(data)?,
         formats::DetectedFormat::Raw => {
             // Fall back to heuristic analysis
             heuristics::analyze(data, options)?
@@ -501,6 +505,174 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
 
             return Ok(payload);
         }
+        formats::DetectedFormat::Vbf => {
+            // VBF is a container with unencrypted firmware blocks — parse header
+            // for metadata-based ISA, then extract payload for heuristic candidates.
+            let (result, extracted_payload) = formats::vbf::parse_with_payload(data)?;
+            let format_detection = detected_to_format(&detected);
+
+            if result.isa != Isa::Unknown(0) {
+                let primary = IsaClassification {
+                    isa: result.isa,
+                    bitwidth: result.bitwidth,
+                    endianness: result.endianness,
+                    confidence: result.confidence,
+                    source: result.source,
+                    variant: None,
+                };
+
+                let mut payload = DetectionPayload::new(format_detection, primary);
+                payload.metadata = extract_metadata(&result);
+
+                for note in &result.metadata.notes {
+                    payload.notes.push(Note::info(note.clone()));
+                }
+
+                // Run heuristics on extracted payload for candidates
+                if !extracted_payload.is_empty() {
+                    let candidates =
+                        heuristics::score_all_architectures(&extracted_payload, options);
+                    let mut sorted_candidates: Vec<_> =
+                        candidates.iter().filter(|c| c.raw_score > 0).collect();
+                    sorted_candidates.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+                    payload.candidates = sorted_candidates
+                        .into_iter()
+                        .take(10)
+                        .map(|c| {
+                            IsaCandidate::new(
+                                c.isa,
+                                c.bitwidth,
+                                c.endianness,
+                                c.raw_score,
+                                c.confidence,
+                            )
+                        })
+                        .collect();
+                }
+
+                return Ok(payload);
+            }
+
+            // No address/CHIPID match — try heuristic analysis on extracted payload
+            if !extracted_payload.is_empty() {
+                let candidates = heuristics::score_all_architectures(&extracted_payload, options);
+                let best = candidates
+                    .iter()
+                    .max_by(|a, b| a.raw_score.cmp(&b.raw_score));
+
+                match best {
+                    Some(b) if b.confidence >= options.min_confidence => {
+                        let primary = IsaClassification::from_heuristics(
+                            b.isa,
+                            b.bitwidth,
+                            b.endianness,
+                            b.confidence,
+                        );
+
+                        let mut sorted_candidates: Vec<_> =
+                            candidates.iter().filter(|c| c.raw_score > 0).collect();
+                        sorted_candidates.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+                        let candidate_list: Vec<IsaCandidate> = sorted_candidates
+                            .into_iter()
+                            .take(10)
+                            .map(|c| {
+                                IsaCandidate::new(
+                                    c.isa,
+                                    c.bitwidth,
+                                    c.endianness,
+                                    c.raw_score,
+                                    c.confidence,
+                                )
+                            })
+                            .collect();
+
+                        let mut payload = DetectionPayload::new(format_detection, primary)
+                            .with_candidates(candidate_list);
+
+                        for note in &result.metadata.notes {
+                            payload.notes.push(Note::info(note.clone()));
+                        }
+
+                        return Ok(payload);
+                    }
+                    _ => {
+                        let primary =
+                            IsaClassification::from_format(Isa::Unknown(0), 0, Endianness::Little);
+                        let mut payload = DetectionPayload::new(format_detection, primary);
+                        for note in &result.metadata.notes {
+                            payload.notes.push(Note::info(note.clone()));
+                        }
+                        payload.notes.push(Note::warning(
+                            "VBF payload ISA could not be determined with sufficient confidence"
+                                .to_string(),
+                        ));
+                        return Ok(payload);
+                    }
+                }
+            }
+
+            // No payload extracted
+            let primary = IsaClassification::from_format(Isa::Unknown(0), 0, Endianness::Little);
+            let mut payload = DetectionPayload::new(format_detection, primary);
+            for note in &result.metadata.notes {
+                payload.notes.push(Note::info(note.clone()));
+            }
+            return Ok(payload);
+        }
+        formats::DetectedFormat::Frf => {
+            // FRF is fully encrypted — metadata only
+            let result = formats::frf::parse(data)?;
+            let format_detection = detected_to_format(&detected);
+            let primary = IsaClassification {
+                isa: result.isa,
+                bitwidth: result.bitwidth,
+                endianness: result.endianness,
+                confidence: result.confidence,
+                source: result.source,
+                variant: None,
+            };
+            let mut payload = DetectionPayload::new(format_detection, primary);
+            for note in &result.metadata.notes {
+                payload.notes.push(Note::info(note.clone()));
+            }
+            return Ok(payload);
+        }
+        formats::DetectedFormat::Bcf => {
+            // BCF is password-encrypted — metadata only
+            let result = formats::bcf::parse(data)?;
+            let format_detection = detected_to_format(&detected);
+            let primary = IsaClassification {
+                isa: result.isa,
+                bitwidth: result.bitwidth,
+                endianness: result.endianness,
+                confidence: result.confidence,
+                source: result.source,
+                variant: None,
+            };
+            let mut payload = DetectionPayload::new(format_detection, primary);
+            for note in &result.metadata.notes {
+                payload.notes.push(Note::info(note.clone()));
+            }
+            return Ok(payload);
+        }
+        formats::DetectedFormat::Sox => {
+            // SOX is encrypted — metadata only
+            let result = formats::sox::parse(data)?;
+            let format_detection = detected_to_format(&detected);
+            let primary = IsaClassification {
+                isa: result.isa,
+                bitwidth: result.bitwidth,
+                endianness: result.endianness,
+                confidence: result.confidence,
+                source: result.source,
+                variant: None,
+            };
+            let mut payload = DetectionPayload::new(format_detection, primary);
+            for note in &result.metadata.notes {
+                payload.notes.push(Note::info(note.clone()));
+            }
+            return Ok(payload);
+        }
         formats::DetectedFormat::Epr => {
             // EPR is a container — parse it, then run heuristics on extracted payload
             let (result, extracted_payload) = formats::epr::parse_with_payload(data)?;
@@ -750,6 +922,10 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::Ols => FormatDetection::new(FileFormat::Ols),
         DetectedFormat::Epr => FormatDetection::new(FileFormat::Epr),
         DetectedFormat::Sgo => FormatDetection::new(FileFormat::Sgo),
+        DetectedFormat::Vbf => FormatDetection::new(FileFormat::Vbf),
+        DetectedFormat::Frf => FormatDetection::new(FileFormat::Frf),
+        DetectedFormat::Bcf => FormatDetection::new(FileFormat::Bcf),
+        DetectedFormat::Sox => FormatDetection::new(FileFormat::Sox),
         DetectedFormat::Raw => FormatDetection::raw(),
     }
 }

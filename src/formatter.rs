@@ -622,6 +622,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Ols => "WinOLS",
         FileFormat::Epr => "ECU EPR",
         FileFormat::Sgo => "VW ODIS SGO",
+        FileFormat::Vbf => "Volvo/Ford VBF",
+        FileFormat::Frf => "VW/Audi FRF",
+        FileFormat::Bcf => "SMS-Soft BCF",
+        FileFormat::Sox => "VAG SOX",
     }
 }
 
