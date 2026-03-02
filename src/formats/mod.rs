@@ -40,6 +40,7 @@ pub mod ols;
 pub mod pe;
 pub mod pef;
 pub mod raw;
+pub mod sgo;
 pub mod wasm;
 pub mod xcoff;
 
@@ -185,6 +186,8 @@ pub enum DetectedFormat {
     Ols,
     /// ECU EEPROM/Flash dump container (EPR)
     Epr,
+    /// VW ODIS SGO firmware container
+    Sgo,
     /// Unknown/raw format
     Raw,
 }
@@ -314,6 +317,11 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::LlvmBc { variant };
     }
 
+    // VW ODIS SGO firmware container (strong 16-byte magic)
+    if sgo::detect(data) {
+        return DetectedFormat::Sgo;
+    }
+
     // ar archive
     if let Some(variant) = ar::detect(data) {
         return DetectedFormat::Ar { variant };
@@ -407,6 +415,7 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::FatElf => fatelf::parse(data),
         DetectedFormat::Ols => ols::parse(data),
         DetectedFormat::Epr => epr::parse(data),
+        DetectedFormat::Sgo => sgo::parse(data),
         DetectedFormat::Raw => raw::analyze(data),
     }
 }

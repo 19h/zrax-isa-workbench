@@ -472,6 +472,8 @@ pub enum FileFormat {
     Ols,
     /// ECU EEPROM/Flash dump container (EPR format)
     Epr,
+    /// VW/Audi ODIS firmware container (SGO/SGML Object File)
+    Sgo,
     /// Raw binary (no recognized format)
     Raw,
 
@@ -598,6 +600,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Ecoff => write!(f, "ECOFF"),
             FileFormat::Ols => write!(f, "WinOLS"),
             FileFormat::Epr => write!(f, "ECU EPR"),
+            FileFormat::Sgo => write!(f, "VW ODIS SGO"),
             FileFormat::Raw => write!(f, "Raw"),
             // Unix/POSIX Legacy
             FileFormat::Aout => write!(f, "a.out"),

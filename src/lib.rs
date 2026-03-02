@@ -199,6 +199,7 @@ pub fn classify_bytes_with_options(
         formats::DetectedFormat::FatElf => formats::fatelf::parse(data)?,
         formats::DetectedFormat::Ols => formats::ols::parse(data)?,
         formats::DetectedFormat::Epr => formats::epr::parse(data)?,
+        formats::DetectedFormat::Sgo => formats::sgo::parse(data)?,
         formats::DetectedFormat::Raw => {
             // Fall back to heuristic analysis
             heuristics::analyze(data, options)?
@@ -476,6 +477,30 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
                 extract_metadata(&result),
             )
         }
+        formats::DetectedFormat::Sgo => {
+            // SGO is a container with compressed/encrypted payload — classification
+            // relies entirely on part number → ECU platform mapping from metadata.
+            let result = formats::sgo::parse(data)?;
+            let format_detection = detected_to_format(&detected);
+
+            let primary = IsaClassification {
+                isa: result.isa,
+                bitwidth: result.bitwidth,
+                endianness: result.endianness,
+                confidence: result.confidence,
+                source: result.source,
+                variant: None,
+            };
+
+            let mut payload = DetectionPayload::new(format_detection, primary);
+            payload.metadata = extract_metadata(&result);
+
+            for note in &result.metadata.notes {
+                payload.notes.push(Note::info(note.clone()));
+            }
+
+            return Ok(payload);
+        }
         formats::DetectedFormat::Epr => {
             // EPR is a container — parse it, then run heuristics on extracted payload
             let (result, extracted_payload) = formats::epr::parse_with_payload(data)?;
@@ -724,6 +749,7 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::FatElf => FormatDetection::new(FileFormat::FatElf),
         DetectedFormat::Ols => FormatDetection::new(FileFormat::Ols),
         DetectedFormat::Epr => FormatDetection::new(FileFormat::Epr),
+        DetectedFormat::Sgo => FormatDetection::new(FileFormat::Sgo),
         DetectedFormat::Raw => FormatDetection::raw(),
     }
 }
