@@ -233,9 +233,6 @@ fn try_variant_family_confidence_boost(
     sorted_scores: &[&ArchitectureScore],
     options: &ClassifierOptions,
 ) -> Option<f64> {
-    const MIN_RAW_SCORE: i64 = 600;
-    const MIN_FAMILY_RATIO: f64 = 1.20;
-
     let best = *sorted_scores.first()?;
     let second = *sorted_scores.get(1)?;
 
@@ -245,11 +242,6 @@ fn try_variant_family_confidence_boost(
     // Only handle the variant-splitting case where the top two candidates are
     // from the same ISA family.
     if best_family != second_family {
-        return None;
-    }
-
-    // Ignore tiny/noisy wins that are prone to false positives.
-    if best.raw_score < MIN_RAW_SCORE {
         return None;
     }
 
@@ -266,7 +258,22 @@ fn try_variant_family_confidence_boost(
         10.0
     };
 
-    if family_ratio < MIN_FAMILY_RATIO {
+    // Family-specific gates:
+    // - x86/x86-64 often appears as a strong confuser on non-x86 tiny samples,
+    //   so we require either:
+    //   (a) very strong separation, or
+    //   (b) high absolute score plus moderate separation.
+    // - Other variant-split families can use a looser ratio once score is
+    //   non-trivial.
+    let passes_family_gate = match best_family {
+        ConfidenceFamily::X86 => {
+            (best.raw_score >= 250 && family_ratio >= 1.50)
+                || (best.raw_score >= 900 && family_ratio >= 1.20)
+        }
+        _ => best.raw_score >= 250 && family_ratio >= 1.05,
+    };
+
+    if !passes_family_gate {
         return None;
     }
 
