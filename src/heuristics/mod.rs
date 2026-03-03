@@ -136,17 +136,23 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
 
     // Combined confidence: use the higher of share or margin-based confidence
     // This helps when many architectures score but one clearly dominates
-    let confidence = share_confidence.max(margin_confidence * 0.8);
+    let mut confidence = share_confidence.max(margin_confidence * 0.8);
 
     if confidence < options.min_confidence {
         if let Some(fallback) = try_anchor_window_fallback(data, options) {
             return Ok(fallback);
         }
 
-        return Err(ClassifierError::HeuristicInconclusive {
-            confidence: confidence * 100.0,
-            threshold: options.min_confidence * 100.0,
-        });
+        if let Some(boosted_confidence) =
+            try_variant_family_confidence_boost(&sorted_scores, options)
+        {
+            confidence = boosted_confidence;
+        } else {
+            return Err(ClassifierError::HeuristicInconclusive {
+                confidence: confidence * 100.0,
+                threshold: options.min_confidence * 100.0,
+            });
+        }
     }
 
     // Build result
@@ -178,6 +184,127 @@ fn has_marker(data: &[u8], marker: &[u8]) -> bool {
         return false;
     }
     data.windows(marker.len()).any(|w| w == marker)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum ConfidenceFamily {
+    X86,
+    Arm,
+    AArch64,
+    RiscV,
+    Mips,
+    Ppc,
+    S390,
+    Sparc,
+    M68k,
+    Sh,
+    LoongArch,
+    Arc,
+    V850,
+    Other(Isa),
+}
+
+#[inline]
+fn confidence_family(isa: Isa) -> ConfidenceFamily {
+    match isa {
+        Isa::X86 | Isa::X86_64 => ConfidenceFamily::X86,
+        Isa::Arm => ConfidenceFamily::Arm,
+        Isa::AArch64 => ConfidenceFamily::AArch64,
+        Isa::RiscV32 | Isa::RiscV64 | Isa::RiscV128 => ConfidenceFamily::RiscV,
+        Isa::Mips | Isa::Mips64 => ConfidenceFamily::Mips,
+        Isa::Ppc | Isa::Ppc64 | Isa::PpcVle => ConfidenceFamily::Ppc,
+        Isa::S390 | Isa::S390x => ConfidenceFamily::S390,
+        Isa::Sparc | Isa::Sparc64 => ConfidenceFamily::Sparc,
+        Isa::M68k | Isa::ColdFire => ConfidenceFamily::M68k,
+        Isa::Sh | Isa::Sh4 => ConfidenceFamily::Sh,
+        Isa::LoongArch32 | Isa::LoongArch64 => ConfidenceFamily::LoongArch,
+        Isa::Arc | Isa::ArcCompact | Isa::ArcCompact2 => ConfidenceFamily::Arc,
+        Isa::V850 | Isa::Rh850 => ConfidenceFamily::V850,
+        _ => ConfidenceFamily::Other(isa),
+    }
+}
+
+/// Raise confidence for variant-split winners when one ISA family clearly dominates.
+///
+/// This addresses a common calibration issue: families with multiple variants
+/// (e.g., x86/x86-64, MIPS32/64, SPARC32/64) can split confidence internally,
+/// pushing otherwise-correct results below threshold.
+fn try_variant_family_confidence_boost(
+    sorted_scores: &[&ArchitectureScore],
+    options: &ClassifierOptions,
+) -> Option<f64> {
+    const MIN_RAW_SCORE: i64 = 600;
+    const MIN_FAMILY_RATIO: f64 = 1.20;
+
+    let best = *sorted_scores.first()?;
+    let second = *sorted_scores.get(1)?;
+
+    let best_family = confidence_family(best.isa);
+    let second_family = confidence_family(second.isa);
+
+    // Only handle the variant-splitting case where the top two candidates are
+    // from the same ISA family.
+    if best_family != second_family {
+        return None;
+    }
+
+    // Ignore tiny/noisy wins that are prone to false positives.
+    if best.raw_score < MIN_RAW_SCORE {
+        return None;
+    }
+
+    // Compare against the strongest *different-family* competitor.
+    let strongest_other = sorted_scores
+        .iter()
+        .copied()
+        .find(|score| confidence_family(score.isa) != best_family);
+
+    let other_score = strongest_other.map_or(0i64, |s| s.raw_score.max(0));
+    let family_ratio = if other_score > 0 {
+        best.raw_score as f64 / other_score as f64
+    } else {
+        10.0
+    };
+
+    if family_ratio < MIN_FAMILY_RATIO {
+        return None;
+    }
+
+    // Family-collapsed share: keep only the strongest score per family.
+    let mut family_max: HashMap<ConfidenceFamily, i64> = HashMap::new();
+    for score in sorted_scores {
+        let raw = score.raw_score.max(0);
+        if raw <= 0 {
+            continue;
+        }
+        let family = confidence_family(score.isa);
+        let entry = family_max.entry(family).or_insert(0);
+        if raw > *entry {
+            *entry = raw;
+        }
+    }
+
+    let total_family_positive: i64 = family_max.values().sum();
+    let share_confidence = if total_family_positive > 0 {
+        best.raw_score.max(0) as f64 / total_family_positive as f64
+    } else {
+        0.0
+    };
+
+    let margin_confidence = if other_score > 0 {
+        let margin = (best.raw_score - other_score) as f64 / other_score as f64;
+        (margin / (margin + 0.25)).min(0.95)
+    } else {
+        0.95
+    };
+
+    let boosted_confidence = share_confidence.max(margin_confidence * 0.8);
+
+    if boosted_confidence >= options.min_confidence {
+        Some(boosted_confidence)
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -1647,6 +1774,119 @@ mod tests {
         let spans = collect_informative_spans(&data, 6, 8192);
 
         assert_eq!(spans, vec![(9000, 9006)]);
+    }
+
+    #[test]
+    fn test_variant_family_confidence_boost_promotes_split_family_winner() {
+        let scores = vec![
+            ArchitectureScore {
+                isa: Isa::X86_64,
+                raw_score: 2200,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 64,
+            },
+            ArchitectureScore {
+                isa: Isa::X86,
+                raw_score: 2100,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 32,
+            },
+            ArchitectureScore {
+                isa: Isa::RiscV64,
+                raw_score: 700,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 64,
+            },
+        ];
+
+        let mut sorted: Vec<_> = scores.iter().collect();
+        sorted.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+
+        let options = ClassifierOptions {
+            min_confidence: 0.30,
+            ..ClassifierOptions::new()
+        };
+
+        let boosted = try_variant_family_confidence_boost(&sorted, &options)
+            .expect("family split should produce a confidence boost");
+        assert!(boosted >= options.min_confidence);
+    }
+
+    #[test]
+    fn test_variant_family_confidence_boost_rejects_low_raw_noise() {
+        let scores = vec![
+            ArchitectureScore {
+                isa: Isa::X86_64,
+                raw_score: 20,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 64,
+            },
+            ArchitectureScore {
+                isa: Isa::X86,
+                raw_score: 20,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 32,
+            },
+            ArchitectureScore {
+                isa: Isa::Ppc,
+                raw_score: 14,
+                confidence: 0.0,
+                endianness: Endianness::Big,
+                bitwidth: 32,
+            },
+        ];
+
+        let mut sorted: Vec<_> = scores.iter().collect();
+        sorted.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+
+        let options = ClassifierOptions {
+            min_confidence: 0.30,
+            ..ClassifierOptions::new()
+        };
+
+        assert!(try_variant_family_confidence_boost(&sorted, &options).is_none());
+    }
+
+    #[test]
+    fn test_variant_family_confidence_boost_rejects_weak_family_ratio() {
+        let scores = vec![
+            ArchitectureScore {
+                isa: Isa::X86_64,
+                raw_score: 8083,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 64,
+            },
+            ArchitectureScore {
+                isa: Isa::X86,
+                raw_score: 7961,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 32,
+            },
+            ArchitectureScore {
+                isa: Isa::LoongArch64,
+                raw_score: 6969,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 64,
+            },
+        ];
+
+        let mut sorted: Vec<_> = scores.iter().collect();
+        sorted.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+
+        let options = ClassifierOptions {
+            min_confidence: 0.30,
+            ..ClassifierOptions::new()
+        };
+
+        assert!(try_variant_family_confidence_boost(&sorted, &options).is_none());
     }
 
     #[test]
