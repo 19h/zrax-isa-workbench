@@ -1011,17 +1011,36 @@ pub fn score(data: &[u8]) -> i64 {
     // For larger files, require actual function structure (returns + calls).
     if data.len() > 2048 {
         if ret_count < 2 || call_count < 2 {
-            return 0;
+            // Mixed firmware chunks can contain substantial V850 code with sparse
+            // function boundaries (few local returns/calls). Allow these only when
+            // we have strong non-control-flow structural evidence, and heavily
+            // penalize to avoid broad false positives.
+            let mem_ops = load_count + store_count;
+            if valid_insn_count >= 300 && branch_count >= 12 && mem_ops >= 12 {
+                total_score = (total_score as f64 * 0.10) as i64;
+            } else {
+                return 0;
+            }
         }
     } else if data.len() > 512 {
         if ret_count == 0 || call_count == 0 {
-            return 0;
+            let mem_ops = load_count + store_count;
+            if valid_insn_count >= 120 && branch_count >= 6 && mem_ops >= 6 {
+                total_score = (total_score as f64 * 0.15) as i64;
+            } else {
+                return 0;
+            }
         }
     }
 
     // If too many invalid instructions, V850 should score 0.
     if data.len() > 4096 && invalid_count > valid_insn_count {
-        return 0;
+        let mem_ops = load_count + store_count;
+        if valid_insn_count >= 300 && branch_count >= 12 && mem_ops >= 12 {
+            total_score = (total_score as f64 * 0.08) as i64;
+        } else {
+            return 0;
+        }
     }
 
     // ─── JMP [r31] + NOP pattern detection ───

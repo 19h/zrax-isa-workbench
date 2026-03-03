@@ -876,64 +876,51 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
             return Ok(payload);
         }
         formats::DetectedFormat::Raw => {
-            // Heuristic analysis - get all candidates
+            // Heuristic analysis: use the same decision path as classify_bytes*
+            // (including any fallback logic in heuristics::analyze), and still
+            // provide top candidates for UI output.
+            let primary_result = heuristics::analyze(data, options)?;
+
+            let primary = IsaClassification::from_heuristics(
+                primary_result.isa,
+                primary_result.bitwidth,
+                primary_result.endianness,
+                primary_result.confidence,
+            );
+
             let candidates = heuristics::score_all_architectures(data, options);
-            let best = candidates
-                .iter()
-                .max_by(|a, b| a.raw_score.cmp(&b.raw_score));
+            let mut sorted_candidates: Vec<_> =
+                candidates.iter().filter(|c| c.raw_score > 0).collect();
+            sorted_candidates.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+            let candidate_list: Vec<IsaCandidate> = sorted_candidates
+                .into_iter()
+                .take(10)
+                .map(|c| {
+                    IsaCandidate::new(c.isa, c.bitwidth, c.endianness, c.raw_score, c.confidence)
+                })
+                .collect();
 
-            match best {
-                Some(b) if b.confidence >= options.min_confidence => {
-                    let primary = IsaClassification::from_heuristics(
-                        b.isa,
-                        b.bitwidth,
-                        b.endianness,
-                        b.confidence,
-                    );
-                    // Sort by raw_score descending to get top candidates
-                    let mut sorted_candidates: Vec<_> =
-                        candidates.iter().filter(|c| c.raw_score > 0).collect();
-                    sorted_candidates.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-                    let candidate_list: Vec<IsaCandidate> = sorted_candidates
-                        .into_iter()
-                        .take(10)
-                        .map(|c| {
-                            IsaCandidate::new(
-                                c.isa,
-                                c.bitwidth,
-                                c.endianness,
-                                c.raw_score,
-                                c.confidence,
-                            )
-                        })
-                        .collect();
+            let mut payload =
+                DetectionPayload::new(format_detection, primary).with_candidates(candidate_list);
 
-                    let mut payload = DetectionPayload::new(format_detection, primary)
-                        .with_candidates(candidate_list);
-
-                    // Add code-detected extensions
-                    if options.detect_extensions {
-                        let code_exts = extensions::detect_from_code(data, b.isa, b.endianness);
-                        payload.extensions = code_exts
-                            .into_iter()
-                            .map(|e| ExtensionDetection {
-                                name: e.name,
-                                category: e.category,
-                                confidence: e.confidence,
-                                source: ExtensionSource::CodePattern,
-                            })
-                            .collect();
-                    }
-
-                    return Ok(payload);
-                }
-                _ => {
-                    return Err(error::ClassifierError::HeuristicInconclusive {
-                        confidence: best.map(|b| b.confidence * 100.0).unwrap_or(0.0),
-                        threshold: options.min_confidence * 100.0,
-                    });
-                }
+            if options.detect_extensions {
+                let code_exts = extensions::detect_from_code(
+                    data,
+                    primary_result.isa,
+                    primary_result.endianness,
+                );
+                payload.extensions = code_exts
+                    .into_iter()
+                    .map(|e| ExtensionDetection {
+                        name: e.name,
+                        category: e.category,
+                        confidence: e.confidence,
+                        source: ExtensionSource::CodePattern,
+                    })
+                    .collect();
             }
+
+            return Ok(payload);
         }
     };
 

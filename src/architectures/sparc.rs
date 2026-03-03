@@ -413,6 +413,8 @@ pub fn score(data: &[u8]) -> i64 {
     let mut valid_count = 0u32;
     let mut save_count = 0u32;
     let mut restore_count = 0u32;
+    let mut save_sp_count = 0u32;
+    let mut restore_sp_count = 0u32;
     let mut ret_count = 0u32;
     let mut call_count = 0u32;
 
@@ -580,6 +582,7 @@ pub fn score(data: &[u8]) -> i64 {
         if word == patterns::RESTORE {
             total_score += 20;
             restore_count += 1;
+            restore_sp_count += 1;
             valid_count += 1;
             continue;
         }
@@ -596,7 +599,7 @@ pub fn score(data: &[u8]) -> i64 {
         if fmt == format::CALL {
             call_count += 1;
             valid_count += 1;
-            total_score += 1;
+            total_score += 0;
             continue;
         }
 
@@ -663,14 +666,35 @@ pub fn score(data: &[u8]) -> i64 {
 
             // SAVE/RESTORE are very distinctive
             if op3 == op3_arith::SAVE {
-                total_score += 15;
-                save_count += 1;
+                // Strong anchor only for canonical frame setup:
+                // save %sp, -imm, %sp
+                let rs1 = get_rs1(word);
+                let rd = get_rd(word);
+                let i_bit = get_i_bit(word);
+                let simm13 = get_simm13(word);
+                if rs1 == 14 && rd == 14 && i_bit && simm13 < 0 {
+                    total_score += 20;
+                    save_count += 1;
+                    save_sp_count += 1;
+                } else if rs1 == 14 && rd == 14 {
+                    total_score += 4;
+                } else {
+                    total_score += 1;
+                }
                 valid_count += 1;
                 continue;
             }
             if op3 == op3_arith::RESTORE {
-                total_score += 15;
-                restore_count += 1;
+                // Treat RESTORE as structural anchor only when it touches SP.
+                let rs1 = get_rs1(word);
+                let rd = get_rd(word);
+                if rs1 == 14 || rd == 14 {
+                    total_score += 10;
+                    restore_count += 1;
+                    restore_sp_count += 1;
+                } else {
+                    total_score += 2;
+                }
                 valid_count += 1;
                 continue;
             }
@@ -757,12 +781,12 @@ pub fn score(data: &[u8]) -> i64 {
     }
 
     // SAVE/RESTORE pairing is a very strong SPARC indicator
-    if save_count > 0 && restore_count > 0 {
-        total_score += (save_count.min(restore_count) * 10) as i64;
+    if save_sp_count > 0 && restore_sp_count > 0 {
+        total_score += (save_sp_count.min(restore_sp_count) * 10) as i64;
     }
 
     // Structural bonus: SPARC code with calls + returns is very reliable
-    if ret_count > 0 && call_count > 0 {
+    if ret_count > 0 && call_count >= 3 {
         total_score += 10;
     }
 
@@ -771,15 +795,15 @@ pub fn score(data: &[u8]) -> i64 {
     // SAVE/RESTORE format matches ~1/128 of random words, so a single match is
     // insufficient evidence. Require multiple distinctive patterns.
     if num_words > 20 {
-        let distinctive = save_count + restore_count + ret_count;
-        if distinctive == 0 {
+        let anchored = save_sp_count + restore_sp_count + ret_count;
+        if anchored == 0 {
             total_score = (total_score as f64 * 0.10) as i64;
-        } else if distinctive == 1 {
-            // Single SAVE or RESTORE could be a random format match (1/128 per word)
+        } else if anchored == 1 {
+            // Single anchor is weak evidence in large buffers.
             total_score = (total_score as f64 * 0.25) as i64;
-        } else if ret_count == 0 && save_count > 0 && restore_count > 0 {
-            // SAVE+RESTORE but no returns - mild penalty
-            total_score = (total_score as f64 * 0.60) as i64;
+        } else if ret_count == 0 && save_sp_count == 0 {
+            // Anchors without returns and without canonical SAVE %sp pattern are weak.
+            total_score = (total_score as f64 * 0.35) as i64;
         }
     }
 

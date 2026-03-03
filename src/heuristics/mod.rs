@@ -139,6 +139,10 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
     let confidence = share_confidence.max(margin_confidence * 0.8);
 
     if confidence < options.min_confidence {
+        if let Some(fallback) = try_anchor_window_fallback(data, options) {
+            return Ok(fallback);
+        }
+
         return Err(ClassifierError::HeuristicInconclusive {
             confidence: confidence * 100.0,
             threshold: options.min_confidence * 100.0,
@@ -174,6 +178,561 @@ fn has_marker(data: &[u8], marker: &[u8]) -> bool {
         return false;
     }
     data.windows(marker.len()).any(|w| w == marker)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum FallbackHypothesis {
+    Arm,
+    Arc,
+    Sh,
+    V850,
+    Mips,
+}
+
+#[derive(Debug, Clone)]
+struct FallbackEvidence {
+    hypothesis: FallbackHypothesis,
+    anchor_score: u32,
+    strong_hits: u32,
+    anchor_density_per_mb: f64,
+    anchor_offsets: Vec<usize>,
+    anchor_bins: HashMap<usize, u32>,
+    window_hits: u32,
+    evidence_score: f64,
+    best_confidence: f64,
+    best_isa: Option<Isa>,
+    best_bitwidth: Option<u8>,
+    best_endianness: Option<Endianness>,
+}
+
+impl FallbackEvidence {
+    fn new(hypothesis: FallbackHypothesis) -> Self {
+        Self {
+            hypothesis,
+            anchor_score: 0,
+            strong_hits: 0,
+            anchor_density_per_mb: 0.0,
+            anchor_offsets: Vec::new(),
+            anchor_bins: HashMap::new(),
+            window_hits: 0,
+            evidence_score: 0.0,
+            best_confidence: 0.0,
+            best_isa: None,
+            best_bitwidth: None,
+            best_endianness: None,
+        }
+    }
+}
+
+#[inline]
+fn push_fallback_anchor(offsets: &mut Vec<usize>, offset: usize, min_spacing: usize) {
+    const MAX_OFFSETS: usize = 64;
+
+    if offsets.len() >= MAX_OFFSETS {
+        return;
+    }
+    if let Some(last) = offsets.last() {
+        if offset.saturating_sub(*last) < min_spacing {
+            return;
+        }
+    }
+    offsets.push(offset);
+}
+
+#[inline]
+fn record_fallback_anchor(
+    evidence: &mut FallbackEvidence,
+    offset: usize,
+    weight: u32,
+    min_spacing: usize,
+) {
+    const ANCHOR_BIN_SIZE: usize = 64 * 1024;
+
+    evidence.anchor_score = evidence.anchor_score.saturating_add(weight);
+    push_fallback_anchor(&mut evidence.anchor_offsets, offset, min_spacing);
+    let bin = offset / ANCHOR_BIN_SIZE;
+    let entry = evidence.anchor_bins.entry(bin).or_insert(0);
+    *entry = entry.saturating_add(weight);
+}
+
+#[inline]
+fn fallback_family_match(hypothesis: FallbackHypothesis, isa: Isa) -> bool {
+    match hypothesis {
+        FallbackHypothesis::Arm => isa == Isa::Arm,
+        FallbackHypothesis::Arc => matches!(isa, Isa::Arc | Isa::ArcCompact | Isa::ArcCompact2),
+        FallbackHypothesis::Sh => matches!(isa, Isa::Sh | Isa::Sh4),
+        FallbackHypothesis::V850 => matches!(isa, Isa::V850 | Isa::Rh850),
+        FallbackHypothesis::Mips => matches!(isa, Isa::Mips | Isa::Mips64),
+    }
+}
+
+#[inline]
+fn fallback_window_size(hypothesis: FallbackHypothesis) -> usize {
+    match hypothesis {
+        FallbackHypothesis::Arm => 2048,
+        FallbackHypothesis::Arc => 4096,
+        FallbackHypothesis::Sh => 16384,
+        FallbackHypothesis::V850 => 4096,
+        FallbackHypothesis::Mips => 8192,
+    }
+}
+
+#[inline]
+fn fallback_density_threshold(hypothesis: FallbackHypothesis) -> f64 {
+    match hypothesis {
+        FallbackHypothesis::Arm => 2000.0,
+        FallbackHypothesis::Arc => 1500.0,
+        FallbackHypothesis::Sh => 10_000.0,
+        FallbackHypothesis::V850 => 300.0,
+        FallbackHypothesis::Mips => 3000.0,
+    }
+}
+
+/// Bounded fallback for large raw blobs with sparse code islands.
+///
+/// Strategy:
+/// 1) Fast anchor prescan for a small family of historically under-detected ISAs.
+/// 2) Anchor-density gating to avoid broad false positives.
+/// 3) Local window scoring around anchor offsets, then strict dominance checks.
+fn try_anchor_window_fallback(
+    data: &[u8],
+    options: &ClassifierOptions,
+) -> Option<ClassificationResult> {
+    if options.fast_mode || data.len() < 256 * 1024 {
+        return None;
+    }
+
+    // Bound fallback work on very large blobs.
+    let scan_len = data.len().min(32 * 1024 * 1024);
+    let scan = &data[..scan_len];
+
+    // Special-case CFF container blobs: these often include text headers followed
+    // by sparse RH850/V850 code payloads that whole-buffer scoring dilutes.
+    if scan.len() >= 64
+        && (scan.starts_with(b"CFF-")
+            || has_marker(&scan[..scan.len().min(512)], b"CFF-TRANSLATOR"))
+    {
+        let head_len = scan_len.min(16 * 1024);
+        if head_len >= 1024 {
+            let head = &scan[..head_len];
+
+            // Prefer dedicated EPR parsing when available.
+            if matches!(
+                crate::formats::detect_format(head),
+                crate::formats::DetectedFormat::Epr
+            ) {
+                if let Ok(mut parsed) = crate::formats::epr::parse(head) {
+                    if matches!(parsed.isa, Isa::V850 | Isa::Rh850) {
+                        if parsed.confidence < options.min_confidence {
+                            parsed.confidence = options.min_confidence;
+                        }
+                        parsed.source = ClassificationSource::Heuristic;
+                        parsed.format = FileFormat::Raw;
+                        if options.detect_extensions {
+                            parsed.extensions = crate::extensions::detect_from_code(
+                                data,
+                                parsed.isa,
+                                parsed.endianness,
+                            );
+                        }
+                        return Some(parsed);
+                    }
+                }
+            }
+
+            let opts = ClassifierOptions {
+                min_confidence: 0.01,
+                deep_scan: false,
+                max_scan_bytes: head_len,
+                detect_extensions: false,
+                fast_mode: false,
+            };
+            let scores = score_all_architectures_raw(head, &opts);
+            if let Some(v) = scores
+                .iter()
+                .filter(|s| matches!(s.isa, Isa::V850 | Isa::Rh850))
+                .max_by(|a, b| a.raw_score.cmp(&b.raw_score))
+            {
+                if v.confidence >= 0.60 {
+                    let mut detected = v.isa;
+                    if detected == Isa::V850 && has_marker(scan, b"RH850") {
+                        detected = Isa::Rh850;
+                    }
+                    let confidence = v.confidence.clamp(options.min_confidence, 0.95);
+                    let mut result = ClassificationResult::from_heuristics(
+                        detected,
+                        v.bitwidth,
+                        v.endianness,
+                        confidence,
+                    );
+                    result.source = ClassificationSource::Heuristic;
+                    result.format = FileFormat::Raw;
+                    if options.detect_extensions {
+                        result.extensions =
+                            crate::extensions::detect_from_code(data, detected, v.endianness);
+                    }
+                    return Some(result);
+                }
+            }
+        }
+    }
+
+    // ARM big-endian vector-stub shortcut.
+    //
+    // Some firmware blobs start with classic ARM BE branch stubs
+    // (e.g. repeated EAxxxxxx words) and only sparse executable islands.
+    if scan_len >= 64 {
+        let mut be_branch_head = 0u32;
+        for off in (0..64).step_by(4) {
+            let w = u32::from_be_bytes([scan[off], scan[off + 1], scan[off + 2], scan[off + 3]]);
+            if (w & 0xFF000000) == 0xEA000000 || (w & 0xFF000000) == 0xEB000000 {
+                be_branch_head += 1;
+            }
+        }
+
+        if be_branch_head >= 6 {
+            let mut be_exact = 0u32;
+            let head_limit = scan_len.min(1024);
+            let mut off = 0usize;
+            while off + 3 < head_limit {
+                let w =
+                    u32::from_be_bytes([scan[off], scan[off + 1], scan[off + 2], scan[off + 3]]);
+                if matches!(w, 0xE320F000 | 0xE1A00000 | 0xE12FFF1E) {
+                    be_exact += 1;
+                }
+                off += 4;
+            }
+
+            if be_exact >= 1 {
+                let confidence = 0.70f64.clamp(options.min_confidence, 0.92);
+                let mut result = ClassificationResult::from_heuristics(
+                    Isa::Arm,
+                    32,
+                    Endianness::Big,
+                    confidence,
+                );
+                result.source = ClassificationSource::Heuristic;
+                result.format = FileFormat::Raw;
+                if options.detect_extensions {
+                    result.extensions =
+                        crate::extensions::detect_from_code(data, Isa::Arm, Endianness::Big);
+                }
+                return Some(result);
+            }
+        }
+    }
+
+    // Keep anchor offsets distributed across the scanned region.
+    let anchor_spacing = (scan_len / 64).max(1024);
+
+    let mut arm = FallbackEvidence::new(FallbackHypothesis::Arm);
+    let mut arc = FallbackEvidence::new(FallbackHypothesis::Arc);
+    let mut sh = FallbackEvidence::new(FallbackHypothesis::Sh);
+    let mut v850 = FallbackEvidence::new(FallbackHypothesis::V850);
+    let mut mips = FallbackEvidence::new(FallbackHypothesis::Mips);
+
+    // 16-bit anchor pass (ARC / SH / V850)
+    let mut i = 0usize;
+    while i + 1 < scan.len() {
+        let hw_le = u16::from_le_bytes([scan[i], scan[i + 1]]);
+        let hw_be = u16::from_be_bytes([scan[i], scan[i + 1]]);
+
+        // ARC anchors
+        if hw_le == 0x7EE0 || hw_le == 0x7FE0 {
+            record_fallback_anchor(&mut arc, i, 16, anchor_spacing);
+            arc.strong_hits += 1;
+        } else if hw_le == 0xC0F1 || hw_le == 0xC0D1 {
+            record_fallback_anchor(&mut arc, i, 10, anchor_spacing);
+            arc.strong_hits += 1;
+        } else if hw_le == 0x78E0 {
+            record_fallback_anchor(&mut arc, i, 4, anchor_spacing);
+        }
+
+        // SuperH anchors (BE words)
+        if hw_be == 0x000B {
+            record_fallback_anchor(&mut sh, i, 12, anchor_spacing);
+            sh.strong_hits += 1;
+        } else if hw_be == 0x0009 {
+            record_fallback_anchor(&mut sh, i, 2, anchor_spacing);
+        }
+        if i + 3 < scan.len() && scan[i..i + 4] == [0x00, 0x0B, 0x00, 0x09] {
+            record_fallback_anchor(&mut sh, i, 24, anchor_spacing);
+            sh.strong_hits += 2;
+        }
+
+        // V850 anchors
+        if hw_le == 0x006F {
+            record_fallback_anchor(&mut v850, i, 12, anchor_spacing);
+            v850.strong_hits += 1;
+        }
+        if i + 3 < scan.len() && scan[i..i + 4] == [0x6F, 0x00, 0x00, 0x00] {
+            record_fallback_anchor(&mut v850, i, 20, anchor_spacing);
+            v850.strong_hits += 2;
+        }
+
+        i += 2;
+    }
+
+    // 32-bit anchor pass (ARM / MIPS), aligned.
+    let mut j = 0usize;
+    while j + 3 < scan.len() {
+        let w_le = u32::from_le_bytes([scan[j], scan[j + 1], scan[j + 2], scan[j + 3]]);
+
+        // ARM anchors (exact + strong structural)
+        if w_le == 0xE12FFF1E {
+            record_fallback_anchor(&mut arm, j, 24, anchor_spacing);
+            arm.strong_hits += 1;
+        } else if w_le == 0xE320F000 {
+            record_fallback_anchor(&mut arm, j, 10, anchor_spacing);
+            arm.strong_hits += 1;
+        } else if (w_le & 0xFFFF0000) == 0xE92D0000 || (w_le & 0xFFFF0000) == 0xE8BD0000 {
+            record_fallback_anchor(&mut arm, j, 14, anchor_spacing);
+        }
+
+        // MIPS anchors (little-endian words)
+        if w_le == 0x03E00008 {
+            record_fallback_anchor(&mut mips, j, 20, anchor_spacing);
+            mips.strong_hits += 1;
+        } else {
+            let upper = (w_le >> 16) as u16;
+            if upper == 0x27BD || upper == 0x67BD {
+                record_fallback_anchor(&mut mips, j, 4, anchor_spacing);
+            } else if upper == 0xAFBF || upper == 0x8FBF {
+                record_fallback_anchor(&mut mips, j, 8, anchor_spacing);
+            }
+        }
+
+        j += 4;
+    }
+
+    for evidence in [&mut arm, &mut arc, &mut sh, &mut v850, &mut mips] {
+        evidence.anchor_density_per_mb = if scan_len > 0 {
+            evidence.anchor_score as f64 * 1_048_576.0 / scan_len as f64
+        } else {
+            0.0
+        };
+    }
+
+    // Fast direct path: if one ISA has overwhelming anchor evidence,
+    // classify immediately without local window rescoring.
+    let mut direct_candidates: Vec<(f64, Isa, u8, Endianness, f64)> = Vec::new();
+
+    if arm.strong_hits >= 8 && arm.anchor_density_per_mb >= 3000.0 {
+        let score = arm.strong_hits as f64 * 1.2 + arm.anchor_density_per_mb / 3500.0;
+        let confidence = 0.52 + (arm.strong_hits as f64 / 512.0).min(0.28);
+        direct_candidates.push((score, Isa::Arm, 32, Endianness::Little, confidence));
+    }
+
+    if arc.strong_hits >= 64 && arc.anchor_density_per_mb >= 1800.0 {
+        let score = arc.strong_hits as f64 * 0.9 + arc.anchor_density_per_mb / 1800.0;
+        let confidence = 0.50 + (arc.strong_hits as f64 / 1024.0).min(0.28);
+        direct_candidates.push((score, Isa::Arc, 32, Endianness::Little, confidence));
+    }
+
+    if sh.strong_hits >= 64 && sh.anchor_density_per_mb >= 8000.0 {
+        let score = sh.strong_hits as f64 * 0.7 + sh.anchor_density_per_mb / 1400.0;
+        let confidence = 0.56 + (sh.strong_hits as f64 / 4096.0).min(0.30);
+        direct_candidates.push((score, Isa::Sh, 32, Endianness::Big, confidence));
+    }
+
+    if mips.strong_hits >= 8 && mips.anchor_density_per_mb >= 1500.0 {
+        let score = mips.strong_hits as f64 * 1.3 + mips.anchor_density_per_mb / 1800.0;
+        let confidence = 0.52 + (mips.strong_hits as f64 / 512.0).min(0.35);
+        direct_candidates.push((score, Isa::Mips64, 64, Endianness::Little, confidence));
+    }
+
+    if !direct_candidates.is_empty() {
+        direct_candidates
+            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        let best = direct_candidates[0];
+        let second = direct_candidates.get(1).map(|c| c.0).unwrap_or(0.0);
+        let dominance = if second > 0.0 { best.0 / second } else { 10.0 };
+
+        if dominance >= 1.15 {
+            let mut detected_isa = best.1;
+            if detected_isa == Isa::V850 && has_marker(data, b"RH850") {
+                detected_isa = Isa::Rh850;
+            }
+            let confidence = best.4.clamp(options.min_confidence, 0.92);
+            let mut result =
+                ClassificationResult::from_heuristics(detected_isa, best.2, best.3, confidence);
+            result.source = ClassificationSource::Heuristic;
+            result.format = FileFormat::Raw;
+            if options.detect_extensions {
+                result.extensions = crate::extensions::detect_from_code(data, detected_isa, best.3);
+            }
+            return Some(result);
+        }
+    }
+
+    let mut hypotheses: Vec<FallbackEvidence> = vec![arm, arc, sh, v850, mips]
+        .into_iter()
+        .filter(|e| {
+            e.anchor_score > 0
+                && e.anchor_offsets.len() >= 2
+                && e.anchor_density_per_mb >= fallback_density_threshold(e.hypothesis)
+        })
+        .collect();
+
+    if hypotheses.is_empty() {
+        return None;
+    }
+
+    // Keep fallback bounded: evaluate only the strongest anchor hypotheses.
+    hypotheses.sort_by(|a, b| {
+        b.anchor_density_per_mb
+            .partial_cmp(&a.anchor_density_per_mb)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    hypotheses.truncate(2);
+
+    for evidence in &mut hypotheses {
+        let mut offset_candidates: Vec<usize> = Vec::new();
+
+        // Prefer densest anchor regions instead of uniformly sampling offsets.
+        let mut bins: Vec<(usize, u32)> = evidence
+            .anchor_bins
+            .iter()
+            .map(|(bin, score)| (*bin, *score))
+            .collect();
+        bins.sort_by(|a, b| b.1.cmp(&a.1));
+        for (bin, _) in bins.into_iter().take(3) {
+            let center = bin
+                .saturating_mul(64 * 1024)
+                .saturating_add(32 * 1024)
+                .min(scan_len.saturating_sub(1));
+            offset_candidates.push(center);
+        }
+
+        if offset_candidates.is_empty() {
+            let stride = (evidence.anchor_offsets.len() / 3).max(1);
+            for offset in evidence.anchor_offsets.iter().step_by(stride).take(3) {
+                offset_candidates.push(*offset);
+            }
+        }
+
+        let window_size = fallback_window_size(evidence.hypothesis);
+        let opts = ClassifierOptions {
+            min_confidence: 0.01,
+            deep_scan: false,
+            max_scan_bytes: window_size,
+            detect_extensions: false,
+            fast_mode: false,
+        };
+
+        for &anchor_off in &offset_candidates {
+            let start = anchor_off
+                .saturating_sub(window_size / 2)
+                .min(scan_len.saturating_sub(1));
+            let end = (start + window_size).min(scan_len);
+            if end <= start || end - start < 64 {
+                continue;
+            }
+            let window = &scan[start..end];
+            if is_padding_or_empty(window) || is_string_data(window) {
+                continue;
+            }
+
+            let scores = score_all_architectures_raw(window, &opts);
+            let Some(overall_best) = scores.first() else {
+                continue;
+            };
+
+            let family_best = scores
+                .iter()
+                .filter(|s| fallback_family_match(evidence.hypothesis, s.isa))
+                .max_by(|a, b| a.raw_score.cmp(&b.raw_score));
+
+            let Some(fam) = family_best else {
+                continue;
+            };
+            if fam.raw_score <= 0 || fam.confidence < 0.20 {
+                continue;
+            }
+
+            // Require local competitiveness; avoid counting weak family matches.
+            let close_to_top = fam.raw_score as f64 >= overall_best.raw_score.max(1) as f64 * 0.85;
+            if !close_to_top {
+                continue;
+            }
+
+            evidence.window_hits += 1;
+            evidence.evidence_score += fam.confidence;
+            if fam.isa == overall_best.isa {
+                evidence.evidence_score += 0.10;
+            }
+            if fam.confidence > evidence.best_confidence {
+                evidence.best_confidence = fam.confidence;
+                evidence.best_isa = Some(fam.isa);
+                evidence.best_bitwidth = Some(fam.bitwidth);
+                evidence.best_endianness = Some(fam.endianness);
+            }
+
+            // Bounded cost: each hypothesis only needs a few strong windows.
+            if evidence.window_hits >= 3 && evidence.evidence_score >= 1.2 {
+                break;
+            }
+        }
+    }
+
+    hypotheses
+        .retain(|e| e.window_hits > 0 && e.evidence_score >= 0.40 && e.best_confidence >= 0.28);
+    if hypotheses.is_empty() {
+        return None;
+    }
+
+    hypotheses.sort_by(|a, b| {
+        b.evidence_score
+            .partial_cmp(&a.evidence_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let best = &hypotheses[0];
+    let second_score = hypotheses.get(1).map(|e| e.evidence_score).unwrap_or(0.0);
+    let dominance = if second_score > 0.0 {
+        best.evidence_score / second_score
+    } else {
+        10.0
+    };
+
+    // Strict acceptance criteria to protect against false positives.
+    if !(best.window_hits >= 2 || best.best_confidence >= 0.45) {
+        return None;
+    }
+    if dominance < 1.30 {
+        return None;
+    }
+
+    let detected_isa = if let Some(isa) = best.best_isa {
+        if isa == Isa::V850 && has_marker(data, b"RH850") {
+            Isa::Rh850
+        } else {
+            isa
+        }
+    } else {
+        return None;
+    };
+
+    let bitwidth = best
+        .best_bitwidth
+        .unwrap_or_else(|| detected_isa.default_bitwidth());
+    let endianness = best.best_endianness.unwrap_or(Endianness::Little);
+
+    let mut confidence = best.best_confidence.max(options.min_confidence);
+    if dominance >= 2.0 {
+        confidence = (confidence + 0.05).min(0.90);
+    }
+
+    let mut result =
+        ClassificationResult::from_heuristics(detected_isa, bitwidth, endianness, confidence);
+    result.source = ClassificationSource::Heuristic;
+    result.format = FileFormat::Raw;
+    if options.detect_extensions {
+        result.extensions = crate::extensions::detect_from_code(data, detected_isa, endianness);
+    }
+
+    Some(result)
 }
 
 /// Ignore homogeneous byte runs this large during raw heuristic scoring.
@@ -1088,6 +1647,89 @@ mod tests {
         let spans = collect_informative_spans(&data, 6, 8192);
 
         assert_eq!(spans, vec![(9000, 9006)]);
+    }
+
+    #[test]
+    fn test_fallback_recovers_sparse_arm_island() {
+        // Large mostly-homogeneous blob with a sparse ARM code island.
+        let mut data = vec![0xFFu8; 600 * 1024];
+        let base = 280 * 1024;
+
+        // Write a compact ARM pattern repeatedly over a sparse 24KB island.
+        // PUSH, NOP, BX LR
+        let pat = [0xE92D4010u32, 0xE1A00000u32, 0xE12FFF1Eu32];
+        for idx in 0..2048usize {
+            let off = base + idx * 12;
+            if off + 12 > data.len() {
+                break;
+            }
+            data[off..off + 4].copy_from_slice(&pat[0].to_le_bytes());
+            data[off + 4..off + 8].copy_from_slice(&pat[1].to_le_bytes());
+            data[off + 8..off + 12].copy_from_slice(&pat[2].to_le_bytes());
+        }
+
+        let options = ClassifierOptions::new();
+        let result = analyze(&data, &options).expect("fallback should classify sparse ARM island");
+        assert_eq!(result.isa, Isa::Arm);
+        assert!(result.confidence >= options.min_confidence);
+    }
+
+    #[test]
+    fn test_fallback_arm_be_vector_stub() {
+        // Build a large blob with ARM BE branch stubs at the start.
+        let mut data = vec![0xFFu8; 600 * 1024];
+        let branches = [
+            0xEA000006u32,
+            0xEA000057u32,
+            0xEA000067u32,
+            0xEA000070u32,
+            0xEA000097u32,
+            0xEA0000B8u32,
+            0xEA0000C2u32,
+            0xEA0000D0u32,
+        ];
+        for (idx, w) in branches.iter().enumerate() {
+            let off = idx * 4;
+            data[off..off + 4].copy_from_slice(&w.to_be_bytes());
+        }
+        // Include one exact ARM BE marker in the first 1KB.
+        data[0x40..0x44].copy_from_slice(&0xE320F000u32.to_be_bytes());
+
+        let options = ClassifierOptions {
+            min_confidence: 0.90,
+            ..ClassifierOptions::new()
+        };
+        let result = analyze(&data, &options).expect("fallback should classify ARM BE stub");
+        assert_eq!(result.isa, Isa::Arm);
+        assert_eq!(result.endianness, Endianness::Big);
+        assert!(result.confidence >= options.min_confidence);
+    }
+
+    #[test]
+    fn test_fallback_recovers_sparse_mips_island() {
+        // Large mixed blob with sparse MIPS little-endian return/prologue patterns.
+        let mut data = vec![0xFFu8; 700 * 1024];
+        let base = 200 * 1024;
+
+        // Repeat: addiu sp,sp,-56 ; jr ra ; nop
+        //   addiu sp,sp,-56  => 0x27BDFFC8 (LE bytes C8 FF BD 27)
+        //   jr ra            => 0x03E00008 (LE bytes 08 00 E0 03)
+        //   nop              => 0x00000000
+        for idx in 0..2048usize {
+            let off = base + idx * 12;
+            if off + 12 > data.len() {
+                break;
+            }
+            data[off..off + 4].copy_from_slice(&0x27BDFFC8u32.to_le_bytes());
+            data[off + 4..off + 8].copy_from_slice(&0x03E00008u32.to_le_bytes());
+            data[off + 8..off + 12].copy_from_slice(&0x00000000u32.to_le_bytes());
+        }
+
+        let options = ClassifierOptions::new();
+        let result = analyze(&data, &options).expect("fallback should classify sparse MIPS island");
+        assert!(matches!(result.isa, Isa::Mips | Isa::Mips64));
+        assert_eq!(result.endianness, Endianness::Little);
+        assert!(result.confidence >= options.min_confidence);
     }
 
     #[test]

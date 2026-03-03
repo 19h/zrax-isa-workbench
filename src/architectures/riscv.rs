@@ -158,6 +158,7 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
     let mut ret_count = 0u32;
     let mut jal_jalr_count = 0u32;
     let mut branch_count = 0u32;
+    let mut anchor_count = 0u32;
 
     // Cross-architecture penalties for 16-bit LE patterns
     // Applied up-front to penalize data from 16-bit ISAs that would otherwise
@@ -316,11 +317,13 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             if half == patterns::C_RET {
                 score += 25;
                 ret_count += 1;
+                anchor_count += 1;
                 i += 2;
                 continue;
             }
             if half == patterns::C_EBREAK {
                 score += 15;
+                anchor_count += 1;
                 i += 2;
                 continue;
             }
@@ -452,16 +455,19 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             if word == patterns::RET {
                 score += 30;
                 ret_count += 1;
+                anchor_count += 1;
                 i += 4;
                 continue;
             }
             if word == patterns::ECALL {
                 score += 20;
+                anchor_count += 1;
                 i += 4;
                 continue;
             }
             if word == patterns::EBREAK {
                 score += 15;
+                anchor_count += 1;
                 i += 4;
                 continue;
             }
@@ -496,6 +502,10 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
                     // funct7: 0x00=base, 0x01=M extension, 0x20=SUB/SRA
                     if matches!(f7, 0x00 | 0x01 | 0x20) {
                         score += 5;
+                        if f7 == 0x01 {
+                            // M-extension opcodes are a strong RISC-V anchor.
+                            anchor_count += 1;
+                        }
                     } else {
                         score -= 1;
                     }
@@ -560,6 +570,15 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
             score = (score as f64 * 0.15) as i64;
         } else if distinctive == 0 {
             // Has branches but no returns or calls
+            score = (score as f64 * 0.35) as i64;
+        }
+
+        // Anchor-gating: broad compressed-opcode matching can inflate RISC-V on
+        // non-RISC-V binaries. Require at least one strong anchor (RET/C.RET,
+        // ECALL/EBREAK, or M-extension op) on non-trivial windows.
+        if anchor_count == 0 {
+            score = (score as f64 * 0.12) as i64;
+        } else if anchor_count < 2 && ret_count == 0 {
             score = (score as f64 * 0.35) as i64;
         }
     }
