@@ -497,17 +497,17 @@ pub fn score(data: &[u8]) -> i64 {
             }
             // DEALLOC_RETURN (very distinctive)
             else if word == patterns::DEALLOC_RETURN {
-                packet_score += 20;
+                packet_score += 25;
                 distinctive_count += 1;
             }
             // ALLOCFRAME (function prologue)
             else if is_allocframe(word) {
-                packet_score += 20;
+                packet_score += 25;
                 distinctive_count += 1;
             }
             // Return patterns
             else if is_return(word) {
-                packet_score += 15;
+                packet_score += 20;
                 distinctive_count += 1;
             }
             // Loop setup (don't count as distinctive — the LOOP0 mask 0xFFE00000
@@ -515,37 +515,39 @@ pub fn score(data: &[u8]) -> i64 {
             else if is_loop_setup(word) {
                 packet_score += 10;
             } else {
-                // Score based on instruction class with sub-encoding validation
+                // Score based on instruction class with sub-encoding validation.
+                // Hexagon instructions have a well-defined class encoding in bits
+                // 31:28. Each class has sub-encoding rules. We give higher scores
+                // for classes/sub-encodings that are more distinctive to Hexagon.
                 let iclass = get_iclass(word);
-                let bits_27_24 = ((word >> 24) & 0x0F) as u8;
 
                 match iclass {
                     // ALU32: validate sub-encoding makes sense
                     0x0..=0x3 => {
                         // Predicated ALU32 instructions have bit 27 set
                         if is_predicated(word) {
-                            packet_score += 3; // Predication is distinctive
+                            packet_score += 5; // Predication is distinctive
                         } else {
-                            packet_score += 1;
+                            packet_score += 2;
                         }
                     }
                     // XTYPE (load/store/complex ALU)
                     0x4..=0x7 => {
                         if is_load(word) || is_store(word) {
-                            packet_score += 2;
+                            packet_score += 3;
                         } else {
-                            packet_score += 1;
+                            packet_score += 2;
                         }
                     }
                     // ALU64/Multiply
-                    0x8..=0xB => packet_score += 1,
+                    0x8..=0xB => packet_score += 2,
                     // Extended (constant extender, etc.)
                     0xC..=0xF => {
                         // Constant extenders are distinctive
                         if is_extender(word) {
-                            packet_score += 3;
+                            packet_score += 5;
                         } else {
-                            packet_score += 1;
+                            packet_score += 2;
                         }
                     }
                     _ => {}
@@ -566,14 +568,19 @@ pub fn score(data: &[u8]) -> i64 {
             packet_count += 1;
             if found_end {
                 valid_packets += 1;
-                // Bonus for valid packet structure
+                // Bonus for valid packet structure — this is the most distinctive
+                // Hexagon feature (parse bits 15:14 = 11 marking packet end).
                 packet_score += 5;
-                // Multi-instruction packets are more distinctive
+                // Multi-instruction packets are more distinctive — random data
+                // rarely produces consecutive non-EOP words followed by an EOP.
                 if packet_instrs >= 2 {
-                    packet_score += 3;
+                    packet_score += 5;
                 }
                 if packet_instrs >= 3 {
-                    packet_score += 3;
+                    packet_score += 8;
+                }
+                if packet_instrs == 4 {
+                    packet_score += 5;
                 }
             } else {
                 // No end-of-packet found - penalty
@@ -619,6 +626,255 @@ pub fn score(data: &[u8]) -> i64 {
 
     // Apply cross-architecture penalty
     total_score -= cross_arch_penalty;
+
+    // Statistical PPC LE penalty: PPC64 LE instructions are byte-swapped but
+    // when read as LE u32, they decode as standard PPC opcodes (bits 31:26).
+    // IMPORTANT: Hexagon instruction classes 0x8-0xB naturally map to PPC opcode
+    // space 32-47 (load/store), producing ~50-70% PPC-looking instructions from
+    // real Hexagon code. Therefore we require BOTH high PPC fraction AND specific
+    // PPC anchor patterns (MFLR, MTLR, BLR, STWU SP) to avoid self-penalizing.
+    {
+        let mut ppc_valid = 0u32;
+        let mut ppc_total = 0u32;
+        let mut ppc_anchors = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            ppc_total += 1;
+            let opcode = w >> 26;
+            match opcode {
+                14 | 15 => {
+                    ppc_valid += 1;
+                } // ADDI, ADDIS
+                32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47 => {
+                    ppc_valid += 1; // Load/Store word/byte/half
+                }
+                16 => {
+                    ppc_valid += 1;
+                } // BC (branch conditional)
+                18 => {
+                    ppc_valid += 1;
+                } // B (branch)
+                11 => {
+                    ppc_valid += 1;
+                } // CMPI
+                31 => {
+                    // Extended opcodes (X-form)
+                    let xo = (w >> 1) & 0x3FF;
+                    if matches!(
+                        xo,
+                        0 | 4
+                            | 8
+                            | 10
+                            | 19
+                            | 20
+                            | 21
+                            | 23
+                            | 24
+                            | 26
+                            | 28
+                            | 32
+                            | 40
+                            | 266
+                            | 339
+                            | 444
+                            | 467
+                    ) {
+                        ppc_valid += 1;
+                    }
+                }
+                19 => {
+                    ppc_valid += 1;
+                } // CR ops, BLR, BCLR
+                48 | 49 | 50 | 51 | 52 | 53 | 54 | 55 => {
+                    ppc_valid += 1; // FP load/store (LFS, LFSU, LFD, LFDU, STFS, STFSU, STFD, STFDU)
+                }
+                59 | 63 => {
+                    ppc_valid += 1; // FP arithmetic (single=59, double=63)
+                }
+                _ => {}
+            }
+            // Check for PPC-specific anchor patterns that are very unlikely in Hexagon:
+            // MFLR r0 = 0x7C0802A6, MTLR r0 = 0x7C0803A6, BLR = 0x4E800020,
+            // STWU r1, -N(r1) = 0x9421xxxx, PPC NOP = 0x60000000
+            if w == 0x7C0802A6
+                || w == 0x7C0803A6
+                || w == 0x4E800020
+                || (w & 0xFFFF0000) == 0x94210000
+                || w == 0x60000000
+            {
+                ppc_anchors += 1;
+            }
+            j += 4;
+        }
+        // Apply penalty based on PPC fraction AND anchor evidence.
+        // Real PPC64 LE code has ~95%+ fraction with anchors (BLR, MFLR, etc.).
+        // Hexagon code has ~50-70% fraction but zero PPC anchors.
+        // Strategy: require very high fraction (>0.85) OR anchors+moderate fraction.
+        if ppc_total > 8 {
+            let ppc_fraction = ppc_valid as f64 / ppc_total as f64;
+            if ppc_fraction > 0.85 {
+                // Very high fraction — almost certainly PPC regardless of anchors
+                total_score = (total_score as f64 * 0.10) as i64;
+            } else if ppc_anchors >= 1 && ppc_fraction > 0.5 {
+                // Moderate fraction with at least one PPC-specific pattern
+                total_score = (total_score as f64 * 0.10) as i64;
+            } else if ppc_anchors >= 1 && ppc_fraction > 0.3 {
+                total_score = (total_score as f64 * 0.25) as i64;
+            }
+        }
+    }
+
+    // Statistical MIPS BE penalty: MIPS BE instructions, when read byte-by-byte
+    // or at 4-byte BE alignment, can produce Hexagon-looking LE u32s.
+    // Detect high fraction of valid MIPS BE instructions.
+    if data.len() >= 32 {
+        let mut mips_valid = 0u32;
+        let mut mips_total = 0u32;
+        let mut mips_anchors = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let be32 = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            mips_total += 1;
+            let opcode = be32 >> 26;
+            let is_valid = match opcode {
+                0 => {
+                    // SPECIAL (R-type): check function field
+                    let funct = be32 & 0x3F;
+                    matches!(
+                        funct,
+                        0x00 | 0x02
+                            | 0x03
+                            | 0x04
+                            | 0x06
+                            | 0x07
+                            | 0x08
+                            | 0x09
+                            | 0x0C
+                            | 0x0D
+                            | 0x10
+                            | 0x11
+                            | 0x12
+                            | 0x18
+                            | 0x19
+                            | 0x1A
+                            | 0x1B
+                            | 0x20
+                            | 0x21
+                            | 0x22
+                            | 0x23
+                            | 0x24
+                            | 0x25
+                            | 0x26
+                            | 0x27
+                            | 0x2A
+                            | 0x2B
+                    )
+                }
+                2 | 3 => true,   // J, JAL
+                4..=7 => true,   // BEQ, BNE, BLEZ, BGTZ
+                8..=15 => true,  // immediate ALU (ADDI..LUI)
+                32..=43 => true, // loads/stores
+                _ => false,
+            };
+            if is_valid {
+                mips_valid += 1;
+            }
+            // MIPS-specific anchors
+            if be32 == 0x03E00008 {
+                mips_anchors += 1;
+            } // JR $ra
+            if (be32 & 0xFFFF0000) == 0x27BD0000 {
+                mips_anchors += 1;
+            } // ADDIU $sp
+            if (be32 & 0xFFFF0000) == 0xAFBF0000 {
+                mips_anchors += 1;
+            } // SW $ra
+            j += 4;
+        }
+        if mips_total > 8 {
+            let mips_fraction = mips_valid as f64 / mips_total as f64;
+            if mips_fraction > 0.7 && mips_anchors >= 1 {
+                total_score = (total_score as f64 * 0.10) as i64;
+            } else if mips_fraction > 0.85 {
+                // Very high fraction even without anchors
+                total_score = (total_score as f64 * 0.15) as i64;
+            }
+        }
+    }
+
+    // Statistical x86 penalty: x86 has distinctive multi-byte patterns.
+    // Anchor-gated: only apply if we find strong x86 prologue/epilogue anchors.
+    // Single-byte patterns (0xC3, 0xE8) are too common in Hexagon data.
+    {
+        let mut x86_anchors = 0u32;
+        let mut j = 0;
+        while j < data.len() {
+            let b = data[j];
+            // x86-32 prologue: PUSH EBP; MOV EBP, ESP (55 89 E5)
+            if b == 0x55 && j + 2 < data.len() && data[j + 1] == 0x89 && data[j + 2] == 0xE5 {
+                x86_anchors += 1;
+                j += 3;
+                continue;
+            }
+            // x86-64 prologue: PUSH RBP; MOV RBP, RSP (55 48 89 E5)
+            if b == 0x55
+                && j + 3 < data.len()
+                && data[j + 1] == 0x48
+                && data[j + 2] == 0x89
+                && data[j + 3] == 0xE5
+            {
+                x86_anchors += 1;
+                j += 4;
+                continue;
+            }
+            // ENDBR64 (F3 0F 1E FA) / ENDBR32 (F3 0F 1E FB)
+            if b == 0xF3
+                && j + 3 < data.len()
+                && data[j + 1] == 0x0F
+                && data[j + 2] == 0x1E
+                && (data[j + 3] == 0xFA || data[j + 3] == 0xFB)
+            {
+                x86_anchors += 1;
+                j += 4;
+                continue;
+            }
+            // x86 epilogue: POP EBP; RET (5D C3)
+            if b == 0x5D && j + 1 < data.len() && data[j + 1] == 0xC3 {
+                x86_anchors += 1;
+                j += 2;
+                continue;
+            }
+            // LEAVE; RET (C9 C3)
+            if b == 0xC9 && j + 1 < data.len() && data[j + 1] == 0xC3 {
+                x86_anchors += 1;
+                j += 2;
+                continue;
+            }
+            j += 1;
+        }
+        // Require at least 1 strong x86 anchor to apply penalty.
+        // Then check for supportive evidence (MOV r/m patterns with ModR/M).
+        if x86_anchors >= 1 && data.len() >= 32 {
+            // Count high-confidence x86 MOV patterns: 89 xx and 8B xx where
+            // xx has a valid ModR/M byte with mod=01 or mod=10 (register+disp)
+            let mut mov_count = 0u32;
+            for k in 0..data.len() - 1 {
+                if (data[k] == 0x89 || data[k] == 0x8B) {
+                    let modrm = data[k + 1];
+                    let modv = modrm >> 6;
+                    if modv == 1 || modv == 2 {
+                        mov_count += 1;
+                    }
+                }
+            }
+            // x86 code typically has many MOV instructions with displacement
+            let mov_density = mov_count as f64 / (data.len() as f64 / 8.0);
+            if x86_anchors >= 2 || (x86_anchors >= 1 && mov_density > 0.5) {
+                total_score = (total_score as f64 * 0.15) as i64;
+            }
+        }
+    }
 
     total_score.max(0)
 }

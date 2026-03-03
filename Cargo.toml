@@ -10,13 +10,18 @@ keywords = ["binary", "isa", "architecture", "elf", "mach-o"]
 categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.70"
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [lib]
 name = "isa_classifier"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
 name = "isa-classify"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [dependencies]
 # Error handling
@@ -27,12 +32,12 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# CLI
-clap = { version = "4.4", features = ["derive", "env"] }
+# CLI (only when building the binary)
+clap = { version = "4.4", features = ["derive", "env"], optional = true }
 
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Logging (only when building the binary)
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # Binary parsing utilities
 byteorder = "1.5"
@@ -44,6 +49,20 @@ bitflags = "2.4"
 # Hex display
 hex = "0.4"
 
+# WASM support
+wasm-bindgen = { version = "0.2", optional = true }
+
+# Batch processing (optional, behind "batch" feature)
+sha2 = { version = "0.10", optional = true }
+rayon = { version = "1.10", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+walkdir = { version = "2.5", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
+zstd = { version = "0.13", optional = true }
+ratatui = { version = "0.29", optional = true }
+crossterm = { version = "0.28", optional = true }
+num_cpus = { version = "1.16", optional = true }
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 tempfile = "3.10"
@@ -51,7 +70,20 @@ criterion = "0.5"
 
 [features]
 default = ["cli"]
-cli = []
+cli = ["dep:clap", "dep:tracing", "dep:tracing-subscriber"]
+batch = [
+    "cli",
+    "dep:sha2",
+    "dep:rayon",
+    "dep:crossbeam-channel",
+    "dep:walkdir",
+    "dep:chrono",
+    "dep:zstd",
+    "dep:ratatui",
+    "dep:crossterm",
+    "dep:num_cpus",
+]
+wasm = ["dep:wasm-bindgen"]
 full-heuristics = []
 
 [profile.release]

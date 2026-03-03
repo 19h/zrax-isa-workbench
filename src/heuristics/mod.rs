@@ -176,21 +176,92 @@ fn has_marker(data: &[u8], marker: &[u8]) -> bool {
     data.windows(marker.len()).any(|w| w == marker)
 }
 
+/// Ignore homogeneous byte runs this large during raw heuristic scoring.
+///
+/// Very long contiguous single-byte regions are usually padding/erased flash,
+/// not executable code. Skipping them prevents low-information data from
+/// dominating ISA scoring.
+const HOMOGENEOUS_RUN_SKIP_BYTES: usize = 8 * 1024;
+
+/// Chunk size used when feeding data to architecture scorers.
+const SCORE_CHUNK_SIZE: usize = 64 * 1024;
+
+/// Collect contiguous informative spans, skipping long homogeneous byte runs.
+///
+/// Returns ranges as `(start, end)` offsets into `data`.
+fn collect_informative_spans(
+    data: &[u8],
+    target_bytes: usize,
+    min_homogeneous_run: usize,
+) -> Vec<(usize, usize)> {
+    if data.is_empty() || target_bytes == 0 {
+        return Vec::new();
+    }
+
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut kept = 0usize;
+    let mut i = 0usize;
+
+    while i < data.len() && kept < target_bytes {
+        let value = data[i];
+        let mut j = i + 1;
+        while j < data.len() && data[j] == value {
+            j += 1;
+        }
+
+        let run_len = j - i;
+        let is_homogeneous = min_homogeneous_run > 0 && run_len >= min_homogeneous_run;
+
+        if !is_homogeneous {
+            let remaining = target_bytes - kept;
+            let take_len = run_len.min(remaining);
+            let take_end = i + take_len;
+
+            if let Some(last) = spans.last_mut() {
+                if last.1 == i {
+                    last.1 = take_end;
+                } else {
+                    spans.push((i, take_end));
+                }
+            } else {
+                spans.push((i, take_end));
+            }
+
+            kept += take_len;
+
+            if take_len < run_len {
+                break;
+            }
+        }
+
+        i = j;
+    }
+
+    spans
+}
+
 /// Score all supported architectures.
 pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<ArchitectureScore> {
-    let max_bytes = options.max_scan_bytes.min(data.len());
-    let scan_data = &data[..max_bytes];
-    let chunk_size = 64 * 1024; // 64KB chunks
+    let target_informative_bytes = options.max_scan_bytes.min(data.len());
+    let informative_spans =
+        collect_informative_spans(data, target_informative_bytes, HOMOGENEOUS_RUN_SKIP_BYTES);
+
+    if informative_spans.is_empty() {
+        return Vec::new();
+    }
 
     let mut accumulated = std::collections::HashMap::new();
 
-    for chunk in scan_data.chunks(chunk_size) {
-        let chunk_scores = score_all_architectures_raw(chunk, options);
-        for score in chunk_scores {
-            let entry = accumulated
-                .entry((score.isa.clone(), score.bitwidth, score.endianness))
-                .or_insert(0i64);
-            *entry += score.raw_score;
+    for (start, end) in informative_spans {
+        let span = &data[start..end];
+        for chunk in span.chunks(SCORE_CHUNK_SIZE) {
+            let chunk_scores = score_all_architectures_raw(chunk, options);
+            for score in chunk_scores {
+                let entry = accumulated
+                    .entry((score.isa.clone(), score.bitwidth, score.endianness))
+                    .or_insert(0i64);
+                *entry += score.raw_score;
+            }
         }
     }
 
@@ -995,5 +1066,39 @@ mod tests {
         };
         let result = analyze(&data, &options).unwrap();
         assert_eq!(result.isa, Isa::Rh850);
+    }
+
+    #[test]
+    fn test_collect_informative_spans_skips_long_homogeneous_runs() {
+        let mut data = vec![0xAA; 12];
+        data.extend_from_slice(&[0x10, 0x11, 0x12, 0x13]);
+        data.extend_from_slice(&vec![0x3C; 11]);
+        data.extend_from_slice(&[0x20, 0x21, 0x22]);
+
+        let spans = collect_informative_spans(&data, data.len(), 10);
+
+        assert_eq!(spans, vec![(12, 16), (27, 30)]);
+    }
+
+    #[test]
+    fn test_collect_informative_spans_reads_past_long_prefix_padding() {
+        let mut data = vec![0xFF; 9000];
+        data.extend_from_slice(&[0x55, 0x48, 0x89, 0xE5, 0x5D, 0xC3]);
+
+        let spans = collect_informative_spans(&data, 6, 8192);
+
+        assert_eq!(spans, vec![(9000, 9006)]);
+    }
+
+    #[test]
+    fn test_analyze_inconclusive_for_large_uniform_data() {
+        let data = vec![0xFF; 12 * 1024];
+        let options = ClassifierOptions::new();
+
+        let result = analyze(&data, &options);
+        assert!(matches!(
+            result,
+            Err(ClassifierError::HeuristicInconclusive { .. })
+        ));
     }
 }

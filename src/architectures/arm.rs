@@ -332,6 +332,21 @@ fn score_arm32(data: &[u8]) -> i64 {
             continue;
         }
 
+        // VFP/NEON load/store (VLDR/VSTR): bits [27:24] = 1101, cp = 10 or 11
+        // Encoding: cond 1101 U D0 L Rn Vd 101x imm8
+        if (word & 0x0E000E00) == 0x0C000A00 {
+            // Coprocessor 10 or 11 load/store — very ARM-VFP specific
+            score += 8;
+            continue;
+        }
+
+        // VFP data processing: bits [27:24] = 1110, cp = 10 or 11
+        // Covers VADD, VSUB, VMUL, VDIV, VMOV, VCMP, VCVT, etc.
+        if (word & 0x0F000E00) == 0x0E000A00 {
+            score += 8;
+            continue;
+        }
+
         // Coprocessor instructions (MRC, MCR, etc.) - bits [27:24] = 1110
         if (word & 0x0F000000) == 0x0E000000 {
             score += 3;
@@ -1107,6 +1122,113 @@ pub fn score(data: &[u8]) -> i64 {
             // Standard SH packed vector table (SH7052-style) detected.
             // Apply a moderate penalty.
             final_score = (final_score as f64 * 0.25) as i64;
+        }
+    }
+
+    // ─── Cross-architecture penalty: x86/x86-64 detection ───
+    //
+    // x86 code byte sequences can score well in the ARM Thumb scorer because
+    // many x86 byte pairs happen to match Thumb 16-bit instruction patterns.
+    // Detect x86 prologue/epilogue patterns and apply a penalty.
+    if data.len() >= 32 {
+        let mut x86_evidence = 0u32;
+        let mut j = 0;
+        while j < data.len() {
+            let b = data[j];
+            // x86-32 prologue: PUSH EBP; MOV EBP, ESP (55 89 E5)
+            if b == 0x55 && j + 2 < data.len() && data[j + 1] == 0x89 && data[j + 2] == 0xE5 {
+                x86_evidence += 5;
+                j += 3;
+                continue;
+            }
+            // x86-64 prologue: PUSH RBP; MOV RBP, RSP (55 48 89 E5)
+            if b == 0x55
+                && j + 3 < data.len()
+                && data[j + 1] == 0x48
+                && data[j + 2] == 0x89
+                && data[j + 3] == 0xE5
+            {
+                x86_evidence += 6;
+                j += 4;
+                continue;
+            }
+            // ENDBR64/32 (F3 0F 1E FA/FB)
+            if b == 0xF3
+                && j + 3 < data.len()
+                && data[j + 1] == 0x0F
+                && data[j + 2] == 0x1E
+                && (data[j + 3] == 0xFA || data[j + 3] == 0xFB)
+            {
+                x86_evidence += 5;
+                j += 4;
+                continue;
+            }
+            // REX.W + common x86-64 opcode
+            if b == 0x48 && j + 1 < data.len() {
+                match data[j + 1] {
+                    0x89 | 0x8B | 0x83 | 0x8D | 0x85 | 0xC7 | 0x63 => {
+                        x86_evidence += 2;
+                    }
+                    _ => {}
+                }
+            }
+            j += 1;
+        }
+        if x86_evidence >= 12 {
+            final_score = (final_score as f64 * 0.10) as i64;
+        } else if x86_evidence >= 6 {
+            final_score = (final_score as f64 * 0.30) as i64;
+        }
+    }
+
+    // ─── Cross-architecture penalty: AArch64 FP/SIMD instruction density ───
+    //
+    // AArch64 floating-point code has distinctive instruction patterns that
+    // accidentally match Thumb-2 patterns (bytes 0xBD, 0xFD trigger POP/LDR).
+    // The existing per-instruction AArch64 penalty (BL, ADRP, RET etc.) is
+    // insufficient for FP-heavy code since most instructions are FP load/store
+    // and FP arithmetic rather than branch/system instructions.
+    //
+    // Detect AArch64 FP/SIMD instruction density: if a large fraction of 32-bit
+    // LE words are AArch64 FP patterns, apply a multiplicative penalty.
+    if data.len() >= 64 {
+        let mut a64_fp_count = 0u32;
+        let mut a64_total = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            a64_total += 1;
+            // AArch64 FP/SIMD load/store with unsigned offset: V=1 (bit 26)
+            // Encoding: size[31:30] 111 V=1 01 opc imm12 Rn Rt
+            // Masked: bits[29:27]=111, bit[26]=1, bits[25:24]=01
+            if (w & 0x3F000000) == 0x3D000000 {
+                a64_fp_count += 1;
+            }
+            // AArch64 FADD/FSUB/FMUL/FDIV (scalar, single/double)
+            // 1E2x xxxx (single) or 1E6x xxxx (double)
+            else if (w & 0xFF200000) == 0x1E200000 {
+                a64_fp_count += 1;
+            }
+            // AArch64 FMOV, FCMP, FCVT (scalar FP ops: 1E2x xxxx range)
+            else if (w & 0xFF000000) == 0x1E000000 {
+                a64_fp_count += 1;
+            }
+            // AArch64 SUB/ADD (extended register) used with SP: x1xxxxxx
+            // Already covered by existing penalty for 0x91/0xD1
+            // AArch64 MOV (wide immediate): 52xxxxxx, 72xxxxxx, D2xxxxxx
+            else if (w & 0x1F800000) == 0x12800000 {
+                a64_fp_count += 1;
+            }
+            j += 4;
+        }
+        if a64_total > 10 {
+            let a64_fp_frac = a64_fp_count as f64 / a64_total as f64;
+            if a64_fp_frac > 0.5 {
+                // >50% AArch64 FP instructions — very likely AArch64, not ARM
+                final_score = (final_score as f64 * 0.10) as i64;
+            } else if a64_fp_frac > 0.3 {
+                final_score = (final_score as f64 * 0.25) as i64;
+            }
         }
     }
 

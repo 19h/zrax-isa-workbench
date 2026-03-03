@@ -564,6 +564,35 @@ pub fn score(data: &[u8], bits: u8) -> i64 {
         }
     }
 
+    // Cross-architecture penalty: ARM32 (32-bit LE instructions).
+    // Only count words where cond=0xE AND the word does NOT have bits[1:0]=0b11
+    // (RISC-V 32-bit instructions always have bits[1:0]=0b11, ARM32 does not).
+    // Also require the word to NOT match valid RISC-V opcode patterns.
+    {
+        let mut arm32_only = 0u32; // cond=0xE AND bits[1:0]!=11
+        let mut total_words = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            total_words += 1;
+            let cond = w >> 28;
+            let low2 = w & 0x3;
+            // Only count as ARM32 if cond=0xE and NOT a RISC-V 32-bit instruction
+            if cond == 0xE && low2 != 0x3 {
+                arm32_only += 1;
+            }
+            j += 4;
+        }
+        if total_words > 8 {
+            let arm32_fraction = arm32_only as f64 / total_words as f64;
+            if arm32_fraction > 0.5 {
+                score = (score as f64 * 0.10) as i64;
+            } else if arm32_fraction > 0.3 {
+                score = (score as f64 * 0.25) as i64;
+            }
+        }
+    }
+
     score.max(0)
 }
 

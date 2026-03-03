@@ -962,6 +962,55 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
+    // Statistical SPARC penalty: SPARC instructions are 32-bit BE with a
+    // 2-bit op field (bits 31:30). Real SPARC code has a high fraction of
+    // valid instructions (op 0-3 with valid sub-fields). The per-instruction
+    // penalties above catch individual patterns but don't multiply down the
+    // total score when the data is predominantly SPARC.
+    {
+        let mut sparc_valid = 0u32;
+        let mut sparc_total = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let be_word = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            sparc_total += 1;
+            let op = be_word >> 30;
+            match op {
+                1 => {
+                    sparc_valid += 1;
+                } // CALL
+                0 => {
+                    let op2 = (be_word >> 22) & 0x7;
+                    if matches!(op2, 2 | 4 | 6) {
+                        sparc_valid += 1;
+                    }
+                }
+                2 => {
+                    let op3 = (be_word >> 19) & 0x3F;
+                    if matches!(op3, 0..=7 | 0x10..=0x14 | 0x25..=0x27 | 0x38 | 0x3C | 0x3D) {
+                        sparc_valid += 1;
+                    }
+                }
+                3 => {
+                    let op3 = (be_word >> 19) & 0x3F;
+                    if op3 <= 15 || (op3 >= 32 && op3 <= 39) {
+                        sparc_valid += 1;
+                    }
+                }
+                _ => {}
+            }
+            j += 4;
+        }
+        if sparc_total > 8 {
+            let sparc_fraction = sparc_valid as f64 / sparc_total as f64;
+            if sparc_fraction > 0.5 {
+                total_score = (total_score as f64 * 0.10) as i64;
+            } else if sparc_fraction > 0.3 {
+                total_score = (total_score as f64 * 0.25) as i64;
+            }
+        }
+    }
+
     // Note: No validity ratio bonus. Since i860 opcodes cover ALL 64 possible
     // 6-bit values, the validity ratio is always ~100% and would give false bonuses.
 

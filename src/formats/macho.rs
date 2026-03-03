@@ -599,9 +599,9 @@ pub struct FatArchEntry {
     /// CPU subtype
     pub cpu_subtype: u32,
     /// Offset in file
-    pub offset: u32,
+    pub offset: u64,
     /// Size in bytes
-    pub size: u32,
+    pub size: u64,
     /// Alignment
     pub align: u32,
     /// Classification result for this architecture
@@ -609,7 +609,11 @@ pub struct FatArchEntry {
 }
 
 /// Parse all architectures in a fat binary.
-pub fn parse_fat_all(data: &[u8]) -> Result<Vec<FatArchEntry>> {
+///
+/// When `fat64` is true, each entry is a 32-byte `fat_arch_64` struct
+/// (with 64-bit offset, size, and an extra reserved field).
+/// When false, each entry is the standard 20-byte `fat_arch`.
+pub fn parse_fat_all(data: &[u8], fat64: bool) -> Result<Vec<FatArchEntry>> {
     if data.len() < 8 {
         return Err(ClassifierError::TruncatedData {
             offset: 0,
@@ -619,13 +623,14 @@ pub fn parse_fat_all(data: &[u8]) -> Result<Vec<FatArchEntry>> {
     }
 
     let nfat_arch = read_u32(data, 4, false)? as usize;
+    let entry_size: usize = if fat64 { 32 } else { 20 };
 
     // Validate header size
-    let header_size = 8 + nfat_arch * 20;
+    let header_size = 8 + nfat_arch * entry_size;
     if data.len() < header_size {
         return Err(ClassifierError::TruncatedData {
             offset: 8,
-            expected: nfat_arch * 20,
+            expected: nfat_arch * entry_size,
             actual: data.len().saturating_sub(8),
         });
     }
@@ -633,13 +638,27 @@ pub fn parse_fat_all(data: &[u8]) -> Result<Vec<FatArchEntry>> {
     let mut entries = Vec::with_capacity(nfat_arch);
 
     for i in 0..nfat_arch {
-        let entry_off = 8 + i * 20;
+        let entry_off = 8 + i * entry_size;
 
         let cpu_type = read_u32(data, entry_off, false)?;
         let cpu_subtype = read_u32(data, entry_off + 4, false)?;
-        let offset = read_u32(data, entry_off + 8, false)?;
-        let size = read_u32(data, entry_off + 12, false)?;
-        let align = read_u32(data, entry_off + 16, false)?;
+
+        let (offset, size, align) = if fat64 {
+            // fat_arch_64: cpu_type(4) cpu_subtype(4) offset(8) size(8) align(4) reserved(4)
+            let off_hi = read_u32(data, entry_off + 8, false)? as u64;
+            let off_lo = read_u32(data, entry_off + 12, false)? as u64;
+            let offset = (off_hi << 32) | off_lo;
+            let sz_hi = read_u32(data, entry_off + 16, false)? as u64;
+            let sz_lo = read_u32(data, entry_off + 20, false)? as u64;
+            let size = (sz_hi << 32) | sz_lo;
+            let align = read_u32(data, entry_off + 24, false)?;
+            (offset, size, align)
+        } else {
+            let offset = read_u32(data, entry_off + 8, false)? as u64;
+            let size = read_u32(data, entry_off + 12, false)? as u64;
+            let align = read_u32(data, entry_off + 16, false)?;
+            (offset, size, align)
+        };
 
         // Map to ISA
         let (isa, bits, variant_note) = cpu_type_to_isa(cpu_type, cpu_subtype);

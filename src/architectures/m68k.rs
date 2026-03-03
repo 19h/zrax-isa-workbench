@@ -580,6 +580,138 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
+    // Statistical PPC LE penalty: PPC64 LE instructions read as BE halfwords
+    // produce values that coincidentally map to m68k opcode groups.
+    // Detect PPC instructions by reading 32-bit LE words.
+    {
+        let mut ppc_valid = 0u32;
+        let mut ppc_total = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            ppc_total += 1;
+            let opcode = w >> 26;
+            match opcode {
+                14 | 15 => {
+                    ppc_valid += 1;
+                } // ADDI, ADDIS
+                32..=47 => {
+                    ppc_valid += 1;
+                } // Load/Store
+                16 => {
+                    ppc_valid += 1;
+                } // BC
+                18 => {
+                    ppc_valid += 1;
+                } // B
+                11 | 10 => {
+                    ppc_valid += 1;
+                } // CMPI, CMPLI
+                31 => {
+                    ppc_valid += 1;
+                } // X-form extended
+                19 => {
+                    ppc_valid += 1;
+                } // CR ops, BLR
+                _ => {}
+            }
+            j += 4;
+        }
+        if ppc_total > 8 {
+            let ppc_fraction = ppc_valid as f64 / ppc_total as f64;
+            if ppc_fraction > 0.5 {
+                score = (score as f64 * 0.10) as i64;
+            } else if ppc_fraction > 0.3 {
+                score = (score as f64 * 0.25) as i64;
+            }
+        }
+    }
+
+    // Statistical AVR penalty: AVR 16-bit LE instructions read as BE halfwords
+    // map to m68k opcode groups. Detect AVR instruction patterns.
+    {
+        let mut avr_valid = 0u32;
+        let mut avr_total = 0u32;
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let w = u16::from_le_bytes([data[j], data[j + 1]]);
+            avr_total += 1;
+            // AVR instruction categories
+            if w == 0x9508 || w == 0x9518 {
+                avr_valid += 1;
+            }
+            // RET/RETI
+            else if (w & 0xFE0F) == 0x920F {
+                avr_valid += 1;
+            }
+            // PUSH
+            else if (w & 0xFE0F) == 0x900F {
+                avr_valid += 1;
+            }
+            // POP
+            else if (w & 0xF800) == 0xB000 {
+                avr_valid += 1;
+            }
+            // IN
+            else if (w & 0xF800) == 0xB800 {
+                avr_valid += 1;
+            }
+            // OUT
+            else if (w & 0xF000) == 0xE000 {
+                avr_valid += 1;
+            }
+            // LDI
+            else if (w & 0xFF00) == 0x0100 {
+                avr_valid += 1;
+            }
+            // MOVW
+            else if (w & 0xF000) == 0xD000 {
+                avr_valid += 1;
+            }
+            // RCALL
+            else if (w & 0xF000) == 0xC000 {
+                avr_valid += 1;
+            }
+            // RJMP
+            else if (w & 0xFC00) == 0x1400 || (w & 0xFC00) == 0x0400 {
+                avr_valid += 1;
+            }
+            // CP/CPC
+            else if (w & 0xFC00) == 0x0C00 || (w & 0xFC00) == 0x1C00 {
+                avr_valid += 1;
+            }
+            // ADD/ADC
+            else if (w & 0xFC00) == 0x1800 || (w & 0xFC00) == 0x0800 {
+                avr_valid += 1;
+            }
+            // SUB/SBC
+            else if (w & 0xFC00) == 0x2000 || (w & 0xFC00) == 0x2800 || (w & 0xFC00) == 0x2400 {
+                avr_valid += 1;
+            }
+            // AND/OR/EOR
+            else if (w & 0xFC00) == 0x2C00 {
+                avr_valid += 1;
+            }
+            // MOV
+            else if (w & 0xD208) == 0x8208 || (w & 0xD208) == 0x8008 {
+                avr_valid += 1;
+            }
+            // STD/LDD Y+q
+            else if (w & 0xFC00) == 0xF000 || (w & 0xFC00) == 0xF400 {
+                avr_valid += 1;
+            } // BRBS/BRBC
+            j += 2;
+        }
+        if avr_total > 16 {
+            let avr_fraction = avr_valid as f64 / avr_total as f64;
+            if avr_fraction > 0.5 {
+                score = (score as f64 * 0.10) as i64;
+            } else if avr_fraction > 0.3 {
+                score = (score as f64 * 0.25) as i64;
+            }
+        }
+    }
+
     score.max(0)
 }
 

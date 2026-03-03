@@ -1012,6 +1012,27 @@ impl ClassifierOptions {
 // Detection Payload Types - Structured output for formatters
 // =============================================================================
 
+/// An architecture slice within a multi-architecture container (e.g., fat Mach-O).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainedArch {
+    /// ISA classification for this slice
+    pub isa: Isa,
+    /// Register width in bits
+    pub bitwidth: u8,
+    /// Byte ordering
+    pub endianness: Endianness,
+    /// Architecture variant/profile
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<Variant>,
+    /// Offset of this slice within the container
+    pub offset: u64,
+    /// Size of this slice in bytes
+    pub size: u64,
+    /// Detected extensions for this slice
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extensions: Vec<ExtensionDetection>,
+}
+
 /// Complete detection payload containing all analysis results.
 ///
 /// This is the primary structured output from detection/parsing operations.
@@ -1024,6 +1045,9 @@ pub struct DetectionPayload {
     pub primary: IsaClassification,
     /// Alternative ISA candidates (populated for heuristic analysis)
     pub candidates: Vec<IsaCandidate>,
+    /// Contained architecture slices (populated for multi-arch containers like fat Mach-O)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub slices: Vec<ContainedArch>,
     /// Detected ISA extensions
     pub extensions: Vec<ExtensionDetection>,
     /// Extracted metadata items
@@ -1039,6 +1063,7 @@ impl DetectionPayload {
             format,
             primary,
             candidates: Vec::new(),
+            slices: Vec::new(),
             extensions: Vec::new(),
             metadata: Vec::new(),
             notes: Vec::new(),

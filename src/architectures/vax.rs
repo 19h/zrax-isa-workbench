@@ -513,6 +513,7 @@ pub fn score(data: &[u8]) -> i64 {
     let mut ret_count = 0u32;
     let mut branch_count = 0u32;
     let mut vax_specific_count = 0u32; // truly VAX-unique patterns
+    let mut arm32_frac: f64 = 0.0; // set by ARM32 cross-arch detection pre-scan
 
     // Cross-architecture penalties for 16-bit LE ISA patterns
     {
@@ -544,8 +545,69 @@ pub fn score(data: &[u8]) -> i64 {
             if hw == 0x4770 {
                 total_score -= 10;
             } // Thumb BX LR
+              // Thumb PUSH {reglist, LR}
+            if (hw & 0xFF00) == 0xB500 {
+                total_score -= 8;
+            }
+            // Thumb POP {reglist, PC}
+            if (hw & 0xFF00) == 0xBD00 {
+                total_score -= 8;
+            }
+            // Thumb LDR Rd, [Rn, #imm] (0x6800-0x6FFF)
+            if (hw & 0xF800) == 0x6800 {
+                total_score -= 2;
+            }
+            // Thumb STR Rd, [Rn, #imm] (0x6000-0x67FF)
+            if (hw & 0xF800) == 0x6000 {
+                total_score -= 2;
+            }
             j += 2;
         }
+    }
+    // Cross-architecture penalties for ARM32 (32-bit LE) patterns.
+    // ARM32 floating-point (VFP) instructions produce many 0xED/0xEE/0xEB bytes
+    // that score positively in VAX (where 0xED is an FP opcode prefix, 0xEE is
+    // CMPF/CMPD, etc.). Detect ARM32 instruction structure to penalize.
+    {
+        let mut arm32_evidence = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            let cond = w >> 28;
+            // ARM32 condition code: 0xE (always) is by far most common
+            if cond == 0xE || cond == 0x0 || cond == 0x1 || cond == 0xA || cond == 0xB {
+                let bits27_24 = (w >> 24) & 0xF;
+                match bits27_24 {
+                    // Data processing: 0x0, 0x1, 0x2, 0x3
+                    0x0 | 0x1 | 0x2 | 0x3 => {
+                        arm32_evidence += 1;
+                    }
+                    // Load/Store: 0x4, 0x5, 0x6, 0x7
+                    0x4 | 0x5 | 0x6 | 0x7 => {
+                        arm32_evidence += 1;
+                    }
+                    // Block data transfer (LDM/STM): 0x8, 0x9
+                    0x8 | 0x9 => {
+                        arm32_evidence += 1;
+                    }
+                    // Branch: 0xA, 0xB
+                    0xA | 0xB => {
+                        arm32_evidence += 1;
+                    }
+                    // Coprocessor (VFP/NEON): 0xC, 0xD, 0xE
+                    0xC | 0xD | 0xE => {
+                        arm32_evidence += 1;
+                    }
+                    _ => {}
+                }
+            }
+            j += 4;
+        }
+        let total_words = (data.len() / 4).max(1) as f64;
+        let arm32_fraction = arm32_evidence as f64 / total_words;
+        // Store the fraction for post-loop penalty application
+        // (can't apply multiplier here since total_score is still 0)
+        arm32_frac = arm32_fraction;
     }
     // Cross-architecture penalties for x86/x86-64 byte patterns
     {
@@ -891,6 +953,18 @@ pub fn score(data: &[u8]) -> i64 {
         // Bonus only with strong structural evidence
         if validity_ratio > 0.80 && valid_count > 10 && ret_count > 0 && branch_count > 2 {
             total_score += 10;
+        }
+    }
+
+    // Apply ARM32 cross-architecture penalty (computed in pre-scan).
+    // ARM VFP floating-point instructions produce many 0xED/0xEE bytes that
+    // score positively in the VAX opcode matcher.
+    // Only apply for files with enough data to be meaningful (>32 bytes = >8 words).
+    if data.len() > 32 {
+        if arm32_frac > 0.6 {
+            total_score = (total_score as f64 * 0.10) as i64;
+        } else if arm32_frac > 0.4 {
+            total_score = (total_score as f64 * 0.25) as i64;
         }
     }
 

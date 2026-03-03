@@ -456,6 +456,119 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
+    // Statistical MIPS BE penalty: MIPS BE uses fixed 32-bit instructions.
+    // Detect high fraction of valid MIPS opcodes read as big-endian.
+    {
+        let mut mips_valid = 0u32;
+        let mut mips_total = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let w = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            mips_total += 1;
+            let opcode = w >> 26;
+            match opcode {
+                0x00 => {
+                    // SPECIAL (R-type: ADD, SUB, AND, OR, SLL, SRL, JR, etc.)
+                    let funct = w & 0x3F;
+                    if matches!(
+                        funct,
+                        0x00 | 0x02
+                            | 0x03
+                            | 0x08
+                            | 0x09
+                            | 0x0C
+                            | 0x20
+                            | 0x21
+                            | 0x22
+                            | 0x23
+                            | 0x24
+                            | 0x25
+                            | 0x26
+                            | 0x27
+                            | 0x2A
+                            | 0x2B
+                            | 0x18
+                            | 0x19
+                            | 0x1A
+                            | 0x1B
+                            | 0x10
+                            | 0x11
+                            | 0x12
+                    ) {
+                        mips_valid += 1;
+                    }
+                }
+                0x02 | 0x03 => {
+                    mips_valid += 1;
+                } // J, JAL
+                0x04 | 0x05 | 0x06 | 0x07 => {
+                    mips_valid += 1;
+                } // BEQ, BNE, BLEZ, BGTZ
+                0x08 | 0x09 | 0x0A | 0x0B | 0x0C | 0x0D | 0x0E | 0x0F => {
+                    mips_valid += 1; // ADDI, ADDIU, SLTI, SLTIU, ANDI, ORI, XORI, LUI
+                }
+                0x20..=0x2B => {
+                    mips_valid += 1;
+                } // Load/Store
+                _ => {}
+            }
+            j += 4;
+        }
+        if mips_total > 8 {
+            let mips_fraction = mips_valid as f64 / mips_total as f64;
+            if mips_fraction > 0.5 {
+                total_score = (total_score as f64 * 0.10) as i64;
+            } else if mips_fraction > 0.3 {
+                total_score = (total_score as f64 * 0.25) as i64;
+            }
+        }
+    }
+
+    // Statistical SPARC penalty
+    {
+        let mut sparc_valid = 0u32;
+        let mut sparc_total = 0u32;
+        let mut j = 0;
+        while j + 3 < data.len() {
+            let w = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            sparc_total += 1;
+            let op = w >> 30;
+            match op {
+                1 => {
+                    sparc_valid += 1;
+                }
+                0 => {
+                    let op2 = (w >> 22) & 0x7;
+                    if matches!(op2, 2 | 4 | 6) {
+                        sparc_valid += 1;
+                    }
+                }
+                2 => {
+                    let op3 = (w >> 19) & 0x3F;
+                    if matches!(op3, 0..=7 | 0x10..=0x14 | 0x25..=0x27 | 0x38 | 0x3C | 0x3D) {
+                        sparc_valid += 1;
+                    }
+                }
+                3 => {
+                    let op3 = (w >> 19) & 0x3F;
+                    if op3 <= 15 || (op3 >= 32 && op3 <= 39) {
+                        sparc_valid += 1;
+                    }
+                }
+                _ => {}
+            }
+            j += 4;
+        }
+        if sparc_total > 8 {
+            let sparc_fraction = sparc_valid as f64 / sparc_total as f64;
+            if sparc_fraction > 0.5 {
+                total_score = (total_score as f64 * 0.10) as i64;
+            } else if sparc_fraction > 0.3 {
+                total_score = (total_score as f64 * 0.25) as i64;
+            }
+        }
+    }
+
     total_score.max(0)
 }
 

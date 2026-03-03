@@ -52,7 +52,8 @@
 //! - Raw binary (heuristic analysis)
 
 #![warn(missing_docs)]
-#![deny(unsafe_code)]
+#![cfg_attr(not(feature = "wasm"), deny(unsafe_code))]
+#![cfg_attr(feature = "wasm", warn(unsafe_code))]
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
@@ -68,6 +69,12 @@ pub mod formatter;
 pub mod heuristics;
 pub mod types;
 
+#[cfg(feature = "batch")]
+pub mod batch;
+
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 pub use error::{ClassifierError, Result};
 pub use formatter::{
     CandidatesFormatter, HumanFormatter, JsonFormatter, PayloadFormatter, ShortFormatter,
@@ -75,7 +82,7 @@ pub use formatter::{
 pub use heuristics::DetectedIsa;
 pub use types::{
     ClassificationMetadata, ClassificationResult, ClassificationSource, ClassifierOptions,
-    DetectionPayload, Endianness, Extension, ExtensionCategory, ExtensionDetection,
+    ContainedArch, DetectionPayload, Endianness, Extension, ExtensionCategory, ExtensionDetection,
     ExtensionSource, FileFormat, FormatDetection, Isa, IsaCandidate, IsaClassification,
     MetadataEntry, MetadataKey, MetadataValue, Note, NoteLevel, Variant,
 };
@@ -177,9 +184,10 @@ pub fn classify_bytes_with_options(
         formats::DetectedFormat::MachO { bits, big_endian } => {
             formats::macho::parse(data, bits, big_endian)?
         }
-        formats::DetectedFormat::MachOFat { big_endian } => {
-            formats::macho::parse_fat(data, big_endian)?
-        }
+        formats::DetectedFormat::MachOFat {
+            big_endian,
+            fat64: _,
+        } => formats::macho::parse_fat(data, big_endian)?,
         formats::DetectedFormat::Coff { machine: _ } => formats::coff::parse(data)?,
         formats::DetectedFormat::Xcoff { bits } => formats::xcoff::parse(data, bits)?,
         formats::DetectedFormat::Ecoff { variant } => formats::ecoff::parse(data, variant)?,
@@ -329,13 +337,89 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
                 extract_metadata(&result),
             )
         }
-        formats::DetectedFormat::MachOFat { big_endian } => {
-            let result = formats::macho::parse_fat(data, big_endian)?;
-            (
-                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
-                vec![],
-                extract_metadata(&result),
-            )
+        formats::DetectedFormat::MachOFat {
+            big_endian: _,
+            fat64,
+        } => {
+            let entries = formats::macho::parse_fat_all(data, fat64)?;
+            // Use the first slice as the primary classification
+            let first = entries
+                .first()
+                .ok_or_else(|| error::ClassifierError::MachOParseError {
+                    message: "Fat binary has no architectures".to_string(),
+                })?;
+            let primary = IsaClassification::from_format(
+                first.classification.isa,
+                first.classification.bitwidth,
+                first.classification.endianness,
+            );
+            let initial_extensions = first
+                .classification
+                .extensions
+                .iter()
+                .map(|e| ExtensionDetection::from_code(&e.name, e.category, e.confidence))
+                .collect::<Vec<_>>();
+            let metadata = extract_metadata(&first.classification);
+
+            // Build contained architecture slices
+            let slices: Vec<types::ContainedArch> = entries
+                .iter()
+                .map(|entry| {
+                    let variant = if entry.classification.variant == Variant::default() {
+                        None
+                    } else {
+                        Some(entry.classification.variant.clone())
+                    };
+                    let extensions = entry
+                        .classification
+                        .extensions
+                        .iter()
+                        .map(|e| ExtensionDetection::from_code(&e.name, e.category, e.confidence))
+                        .collect();
+                    types::ContainedArch {
+                        isa: entry.classification.isa,
+                        bitwidth: entry.classification.bitwidth,
+                        endianness: entry.classification.endianness,
+                        variant,
+                        offset: entry.offset,
+                        size: entry.size,
+                        extensions,
+                    }
+                })
+                .collect();
+
+            // Build payload with slices, then skip the normal tail
+            let mut payload = DetectionPayload::new(format_detection, primary);
+            payload.extensions = initial_extensions;
+            payload.metadata = metadata;
+            payload.slices = slices;
+            payload.notes.push(types::Note::info(format!(
+                "Universal binary containing {} architectures",
+                entries.len()
+            )));
+
+            // Add code-detected extensions if requested
+            if options.detect_extensions {
+                let code_exts = extensions::detect_from_code(
+                    data,
+                    payload.primary.isa,
+                    payload.primary.endianness,
+                );
+                let existing: std::collections::HashSet<String> =
+                    payload.extensions.iter().map(|e| e.name.clone()).collect();
+                for ext in code_exts {
+                    if !existing.contains(&ext.name) {
+                        payload.extensions.push(ExtensionDetection {
+                            name: ext.name,
+                            category: ext.category,
+                            confidence: ext.confidence,
+                            source: ExtensionSource::CodePattern,
+                        });
+                    }
+                }
+            }
+
+            return Ok(payload);
         }
         formats::DetectedFormat::Coff { machine: _ } => {
             let result = formats::coff::parse(data)?;
@@ -1139,5 +1223,71 @@ mod tests {
         assert!(thorough.deep_scan);
         assert!(!fast.deep_scan);
         assert!(fast.min_confidence > default.min_confidence);
+    }
+
+    #[test]
+    fn test_fat_macho_slices() {
+        // Build a minimal fat Mach-O with two slices: x86_64 and arm64
+        // Fat header: magic(4) + nfat_arch(4) = 8 bytes
+        // Each fat_arch: cputype(4) + cpusubtype(4) + offset(4) + size(4) + align(4) = 20 bytes
+        // Two entries = 48 bytes total header
+        // Then two minimal Mach-O slice stubs
+
+        let mut data = vec![0u8; 256];
+
+        // Fat magic (big-endian)
+        data[0..4].copy_from_slice(&[0xCA, 0xFE, 0xBA, 0xBE]);
+        // nfat_arch = 2 (big-endian)
+        data[4..8].copy_from_slice(&[0x00, 0x00, 0x00, 0x02]);
+
+        // Entry 0: x86_64 at offset 64
+        let off0 = 8;
+        // CPU_TYPE_X86_64 = 0x01000007
+        data[off0..off0 + 4].copy_from_slice(&[0x01, 0x00, 0x00, 0x07]);
+        // CPU_SUBTYPE_ALL = 3
+        data[off0 + 4..off0 + 8].copy_from_slice(&[0x00, 0x00, 0x00, 0x03]);
+        // offset = 64
+        data[off0 + 8..off0 + 12].copy_from_slice(&[0x00, 0x00, 0x00, 0x40]);
+        // size = 64
+        data[off0 + 12..off0 + 16].copy_from_slice(&[0x00, 0x00, 0x00, 0x40]);
+        // align = 14
+        data[off0 + 16..off0 + 20].copy_from_slice(&[0x00, 0x00, 0x00, 0x0E]);
+
+        // Entry 1: arm64 at offset 128
+        let off1 = 28;
+        // CPU_TYPE_ARM64 = 0x0100000c
+        data[off1..off1 + 4].copy_from_slice(&[0x01, 0x00, 0x00, 0x0C]);
+        // CPU_SUBTYPE_ALL = 0
+        data[off1 + 4..off1 + 8].copy_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        // offset = 128
+        data[off1 + 8..off1 + 12].copy_from_slice(&[0x00, 0x00, 0x00, 0x80]);
+        // size = 64
+        data[off1 + 12..off1 + 16].copy_from_slice(&[0x00, 0x00, 0x00, 0x40]);
+        // align = 14
+        data[off1 + 16..off1 + 20].copy_from_slice(&[0x00, 0x00, 0x00, 0x0E]);
+
+        // Place Mach-O 64-bit LE magic at offset 64 (for x86_64 slice)
+        data[64..68].copy_from_slice(&[0xCF, 0xFA, 0xED, 0xFE]);
+        // Place Mach-O 64-bit LE magic at offset 128 (for arm64 slice)
+        data[128..132].copy_from_slice(&[0xCF, 0xFA, 0xED, 0xFE]);
+
+        let opts = ClassifierOptions::new();
+        let payload = detect_payload(&data, &opts).unwrap();
+
+        assert_eq!(payload.format.format, FileFormat::MachOFat);
+        assert_eq!(payload.slices.len(), 2);
+        assert_eq!(payload.slices[0].isa, Isa::X86_64);
+        assert_eq!(payload.slices[0].bitwidth, 64);
+        assert_eq!(payload.slices[1].isa, Isa::AArch64);
+        assert_eq!(payload.slices[1].bitwidth, 64);
+        assert_eq!(payload.slices[0].offset, 64);
+        assert_eq!(payload.slices[1].offset, 128);
+
+        // Verify JSON serialization includes slices
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("slices"));
+        assert!(json.contains("x86_64"));
+        // AArch64 serializes as "a_arch64" with serde rename_all = "snake_case"
+        assert!(json.contains("a_arch64"));
     }
 }

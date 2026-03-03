@@ -80,6 +80,12 @@ pub mod magic {
     /// Mach-O fat/universal little-endian
     pub const MACHO_FAT_LE: [u8; 4] = [0xBE, 0xBA, 0xFE, 0xCA];
 
+    /// Mach-O fat/universal 64-bit big-endian (FAT_MAGIC_64)
+    pub const MACHO_FAT64_BE: [u8; 4] = [0xCA, 0xFE, 0xBA, 0xBF];
+
+    /// Mach-O fat/universal 64-bit little-endian
+    pub const MACHO_FAT64_LE: [u8; 4] = [0xBF, 0xBA, 0xFE, 0xCA];
+
     /// XCOFF 32-bit (AIX)
     pub const XCOFF_32: [u8; 2] = [0x01, 0xDF];
 
@@ -151,7 +157,7 @@ pub enum DetectedFormat {
     /// Mach-O with bitwidth and endianness
     MachO { bits: u8, big_endian: bool },
     /// Mach-O fat/universal binary
-    MachOFat { big_endian: bool },
+    MachOFat { big_endian: bool, fat64: bool },
     /// Standalone COFF (Windows object files)
     Coff { machine: u16 },
     /// XCOFF (AIX)
@@ -271,7 +277,20 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
             big_endian: false,
         };
     }
-    // Mach-O fat uses 0xCAFEBABE which conflicts with Java class files
+    // Mach-O fat 64-bit (0xCAFEBABF / 0xBFBAFECA) — check before 32-bit since no Java conflict
+    if magic4 == magic::MACHO_FAT64_BE {
+        return DetectedFormat::MachOFat {
+            big_endian: true,
+            fat64: true,
+        };
+    }
+    if magic4 == magic::MACHO_FAT64_LE {
+        return DetectedFormat::MachOFat {
+            big_endian: false,
+            fat64: true,
+        };
+    }
+    // Mach-O fat 32-bit uses 0xCAFEBABE which conflicts with Java class files
     // Differentiate by checking if it looks like valid fat header
     if magic4 == magic::MACHO_FAT_BE {
         // Check if it's a valid Mach-O fat binary vs Java class
@@ -288,7 +307,10 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
                     let cputype = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
                     // Valid cputypes are typically 7, 12, 18, 0x01000007, 0x0100000c, etc.
                     if cputype > 0 && (cputype < 100 || cputype > 0x01000000) {
-                        return DetectedFormat::MachOFat { big_endian: true };
+                        return DetectedFormat::MachOFat {
+                            big_endian: true,
+                            fat64: false,
+                        };
                     }
                 }
             }
@@ -296,7 +318,10 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         // Fall through to check for Java class
     }
     if magic4 == magic::MACHO_FAT_LE {
-        return DetectedFormat::MachOFat { big_endian: false };
+        return DetectedFormat::MachOFat {
+            big_endian: false,
+            fat64: false,
+        };
     }
 
     // Java class (after Mach-O fat check since 0xCAFEBABE conflicts)
@@ -427,7 +452,10 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::Elf { class, endian } => elf::parse(data, class, endian),
         DetectedFormat::Pe { pe_offset } => pe::parse(data, pe_offset),
         DetectedFormat::MachO { bits, big_endian } => macho::parse(data, bits, big_endian),
-        DetectedFormat::MachOFat { big_endian } => macho::parse_fat(data, big_endian),
+        DetectedFormat::MachOFat {
+            big_endian,
+            fat64: _,
+        } => macho::parse_fat(data, big_endian),
         DetectedFormat::Coff { machine: _ } => coff::parse(data),
         DetectedFormat::Xcoff { bits } => xcoff::parse(data, bits),
         DetectedFormat::Ecoff { variant } => ecoff::parse(data, variant),

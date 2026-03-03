@@ -6,6 +6,15 @@
 //! - LSB == 1: 32-bit instruction
 //!
 //! Instructions are little-endian.
+//!
+//! IMPORTANT: TriCore's variable-length encoding means almost any byte stream
+//! can be parsed as a sequence of TriCore instructions (since LSB determines
+//! width, and many major opcodes are valid). To avoid massive false positives
+//! against other ISAs, we:
+//! 1. Only award points for high-confidence, distinctive instruction patterns
+//! 2. Require structural evidence (RETs, CALLs, function patterns)
+//! 3. Penalize patterns characteristic of other architectures
+//! 4. Apply NO multipliers — raw score only
 
 use std::cmp;
 
@@ -18,13 +27,36 @@ pub fn score(data: &[u8]) -> i64 {
     }
 
     let mut i = 0;
-    let mut ret_count = 0;
-    let mut call_count = 0;
-    let mut valid_insn = 0;
+    let mut ret_count: u32 = 0;
+    let mut call_count: u32 = 0;
+    let mut valid_insn: u32 = 0;
+    let mut invalid_insn: u32 = 0;
+    let mut zero_run: u32 = 0;
+    let mut sys_insn_count: u32 = 0; // SVLCX, RSLCX, RFE, FRET - very distinctive
+    let mut loop_count: u32 = 0; // LOOP/LOOPU instructions
 
     while i < data.len() - 1 {
-        // Read the first 16-bit word
         let insn_lo = u16::from_le_bytes([data[i], data[i + 1]]);
+
+        // Handle zero-word runs
+        if insn_lo == 0x0000 {
+            zero_run += 1;
+            if zero_run <= 2 {
+                score += 1; // Possible NOP
+            } else {
+                score -= 3; // Padding, not code
+            }
+            i += 2;
+            continue;
+        }
+        zero_run = 0;
+
+        // Handle 0xFFFF (erased flash)
+        if insn_lo == 0xFFFF {
+            score -= 2;
+            i += 2;
+            continue;
+        }
 
         let is_32bit = (insn_lo & 1) == 1;
         let major_op = (insn_lo & 0xFF) as u8;
@@ -36,30 +68,28 @@ pub fn score(data: &[u8]) -> i64 {
             let insn_hi = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             let insn = ((insn_hi as u32) << 16) | (insn_lo as u32);
 
-            if major_op == 0x0d && ((insn >> 22) & 0x3F) == 0x06 {
-                ret_count += 1;
-            } else if major_op == 0x6d || major_op == 0xed {
-                call_count += 1;
-            }
-
-            let s = score_32bit(insn);
-            if s > 0 && insn != 0 {
+            let s = score_32bit(
+                insn,
+                &mut ret_count,
+                &mut call_count,
+                &mut sys_insn_count,
+                &mut loop_count,
+            );
+            if s > 0 {
                 valid_insn += 1;
+            } else if s < 0 {
+                invalid_insn += 1;
             }
             score += s;
 
             i += 4;
         } else {
-            if (insn_lo & 0xFF00) == 0x9000 && (insn_lo & 0x00FF) == 0x00 {
-                ret_count += 1;
-            }
-            if major_op == 0x5c {
-                call_count += 1;
-            }
-
-            let s = score_16bit(insn_lo);
-            if s > 0 && insn_lo != 0 {
+            // 16-bit instruction
+            let s = score_16bit(insn_lo, &mut ret_count, &mut call_count);
+            if s > 0 {
                 valid_insn += 1;
+            } else if s < 0 {
+                invalid_insn += 1;
             }
             score += s;
 
@@ -67,102 +97,383 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
+    // For large inputs (>4KB), require distinctive TriCore patterns
     if data.len() >= 4096 && ret_count == 0 && call_count == 0 {
         return 0;
     }
 
-    if valid_insn > 50 {
-        score += ret_count * 50;
-        score += call_count * 20;
-        if ret_count > 5 {
-            score *= 2;
+    // Additional requirement: for large inputs, require more than just
+    // ret/call — the invalid ratio should be reasonable
+    if data.len() >= 4096 && valid_insn > 0 {
+        let total = valid_insn + invalid_insn;
+        if total > 50 && (invalid_insn as f64 / total as f64) > 0.7 {
+            // More than 70% of instructions are unrecognized — not TriCore
+            return 0;
         }
     }
 
-    {
-        cmp::max(0, score)
+    // Structural bonuses — modest, no multipliers
+    if valid_insn > 20 {
+        // RET bonus
+        if ret_count >= 3 {
+            score += (ret_count as i64) * 8;
+        }
+        // CALL bonus
+        if call_count >= 3 {
+            score += (call_count as i64) * 5;
+        }
+        // System instruction bonus — SVLCX/RSLCX/RFE are VERY distinctive
+        if sys_insn_count > 0 {
+            score += (sys_insn_count as i64) * 15;
+        }
+        // LOOP instructions — distinctive
+        if loop_count > 0 {
+            score += (loop_count as i64) * 10;
+        }
     }
+
+    // Cross-architecture penalty: detect ARM patterns
+    let arm_penalty = detect_arm_cross_penalty(data);
+    if arm_penalty < 1.0 {
+        score = (score as f64 * arm_penalty) as i64;
+    }
+
+    // Cross-architecture penalty: detect MIPS/PPC/SPARC patterns
+    // These are 4-byte-aligned big-endian ISAs that TriCore will parse as
+    // alternating 16-bit and 32-bit instructions due to random LSB values
+    let be_penalty = detect_big_endian_cross_penalty(data);
+    if be_penalty < 1.0 {
+        score = (score as f64 * be_penalty) as i64;
+    }
+
+    cmp::max(0, score)
 }
 
-fn score_16bit(insn: u16) -> i64 {
-    let mut score = 0;
+fn score_16bit(insn: u16, ret_count: &mut u32, call_count: &mut u32) -> i64 {
+    // 16-bit instructions: LSB == 0
+    // Major opcode is the low byte
     let major_op = (insn & 0xFF) as u8;
+    let upper = (insn >> 8) as u8;
 
-    // NOP (16-bit): 0x0000
-    if insn == 0x0000 {
-        return 5;
-    }
-
-    // RET (16-bit): 0x9000
+    // TriCore 16-bit RET: 0x9000 exactly (RET from call, no operands)
     if insn == 0x9000 {
-        return 20; // High confidence for 16-bit RET
+        *ret_count += 1;
+        return 15;
     }
 
-    // RFE (16-bit): 0x8000
+    // TriCore 16-bit RFE: 0x8000 exactly
     if insn == 0x8000 {
-        return 10;
+        return 8;
     }
 
-    // Typical 16-bit instruction scoring based on valid major opcodes
+    // CALL (16-bit SB format): major_op = 0x5C
+    // Encoding: 0x5C + 8-bit signed displacement in upper byte
+    if major_op == 0x5C {
+        *call_count += 1;
+        return 12;
+    }
+
+    // J (16-bit SB format): major_op = 0x3C
+    if major_op == 0x3C {
+        return 4;
+    }
+
+    // Only score a few very distinctive 16-bit patterns.
+    // Most 16-bit TriCore instructions are compact forms that look similar
+    // to instructions in many other ISAs, so we keep scores LOW.
     match major_op {
-        0x00 => score += 40, // OPCM_16_SR_SYSTEM
-        0x32 => score += 40, // OPCM_16_SR_ACCU
-        0x5c => score += 80, // OPC1_16_SB_CALL
-        0x3c => score += 40, // OPC1_16_SB_J
-        0x16 | 0x26 | 0xe0 | 0x8a | 0xca | 0xaa | 0x2a | 0xea | 0x6a | 0xba | 0x3a => score += 40,
-        0xc2 | 0x92 | 0x9a | 0x42 | 0x12 | 0x1a | 0xb0 | 0x30 | 0x22 | 0x10 => score += 40, // ADD variations
-        0x6e | 0xee | 0x76 | 0xf6 => score += 40, // JZ/JNZ variations
-        0xd8 | 0xd4 => score += 40,               // LD.A variations
-        _ => {}                                   // Unknown major opcode
+        // SC format (stack cache): used for ADD.A SP, #const4 etc.
+        // 0x10: ADD.A A10, #const4 — very common in TriCore (stack adjust)
+        0x10 => 2,
+        // SR format system: 0x00 with specific upper byte patterns
+        0x00 => {
+            match upper {
+                0x00 => 0,  // NOP — don't reward
+                0x90 => 15, // RET (caught above but just in case)
+                0x80 => 8,  // RFE
+                _ => 0,     // Other SR system — too ambiguous
+            }
+        }
+        // SRR format: register-register operations
+        0x32 => 2, // SR ACCU (ADD, SUB, MOV etc with A[15] or D[15])
+        // JNZA, JZA (16-bit conditional jumps on address registers) — fairly distinctive
+        0x6E => 3, // JNZ.A
+        0xEE => 3, // JZ.A
+        // JNZ, JZ on data register (16-bit)
+        0x76 => 3, // JNZ.T
+        0xF6 => 3, // JZ.T
+        // LD.A / ST.A (16-bit short forms)
+        0xD8 => 2, // LD.A short
+        0xD4 => 2, // LD.A another form
+        // Don't score other major opcodes — too many collisions with other ISAs
+        _ => 0,
     }
-
-    score
 }
 
-fn score_32bit(insn: u32) -> i64 {
-    let mut score = 0;
+fn score_32bit(
+    insn: u32,
+    ret_count: &mut u32,
+    call_count: &mut u32,
+    sys_count: &mut u32,
+    loop_count: &mut u32,
+) -> i64 {
     let major_op = (insn & 0xFF) as u8;
 
-    // SYS format: OPCM_32_SYS_INTERRUPTS = 0x0d
-    if major_op == 0x0d {
-        score += 3;
-        let op2 = (insn >> 22) & 0x3F; // bits 22..27
+    // SYS format: major_op = 0x0D
+    if major_op == 0x0D {
+        let op2 = (insn >> 22) & 0x3F;
         match op2 {
-            0x00 => score += 40, // NOP
-            0x06 => score += 40, // RET (32-bit)
-            0x07 => score += 80, // RFE
-            0x08 => score += 30, // SVLCX (Context save)
-            0x09 => score += 30, // RSLCX (Context restore)
-            0x03 => score += 80, // FRET
-            0x0c | 0x0d | 0x0e | 0x0f | 0x12 | 0x13 | 0x14 | 0x15 => score += 40,
-            _ => {}
-        }
-    } else {
-        // Valid 32-bit major opcodes
-        match major_op {
-            0x6d => score += 40, // CALL
-            0xed => score += 40, // CALLA
-            0x61 => score += 4,  // FCALL
-            0xe1 => score += 4,  // FCALLA
-            0x1d => score += 4,  // J
-            0x9d => score += 4,  // JA
-            0x5d => score += 4,  // JL
-            0xdd => score += 4,  // JLA
-            // Load/Store variations
-            0x85 | 0x05 | 0xe5 | 0x15 | 0xa5 | 0x25 | 0x65 | 0x45 | 0xc5 | 0xd5 => score += 4,
-            0x89 | 0xa9 | 0x09 | 0x29 | 0x49 | 0x69 => score += 4,
-            0x99 | 0x19 | 0xd9 | 0x59 | 0xb5 | 0x79 | 0x39 | 0xc9 | 0xb9 | 0xe9 | 0xf9 => {
-                score += 4
+            0x00 => return 3, // NOP (32-bit) — modest
+            0x06 => {
+                // RET (32-bit)
+                *ret_count += 1;
+                return 15;
             }
-            // ALU variations
-            0x47 | 0x87 | 0x67 | 0x07 | 0xc7 | 0x27 | 0xa7 => score += 4,
-            0xdf => score += 4,
-            0x0b => score += 4,
-            _ => {} // Unrecognized major opcode
+            0x07 => {
+                // RFE — return from exception, VERY distinctive
+                *sys_count += 1;
+                return 20;
+            }
+            0x08 => {
+                // SVLCX — save lower context, UNIQUE to TriCore
+                *sys_count += 1;
+                return 25;
+            }
+            0x09 => {
+                // RSLCX — restore lower context, UNIQUE to TriCore
+                *sys_count += 1;
+                return 25;
+            }
+            0x03 => {
+                // FRET — fast return
+                *ret_count += 1;
+                return 20;
+            }
+            0x04 => {
+                // DEBUG
+                return 5;
+            }
+            0x0C | 0x0D | 0x0E | 0x0F => return 3, // DISABLE/ENABLE/etc
+            _ => return 0,                         // Unknown op2 in SYS — don't score
         }
     }
 
-    score
+    // CALL (32-bit absolute/relative)
+    match major_op {
+        0x6D => {
+            *call_count += 1;
+            return 12; // CALL disp24
+        }
+        0xED => {
+            *call_count += 1;
+            return 12; // CALLA disp24
+        }
+        _ => {}
+    }
+
+    // LOOP instruction — very distinctive TriCore pattern (hardware loop)
+    if major_op == 0xFD {
+        *loop_count += 1;
+        return 15; // LOOP
+    }
+    if major_op == 0xFC {
+        *loop_count += 1;
+        return 15; // LOOPU
+    }
+
+    // Jumps: only award modest scores
+    match major_op {
+        0x1D => return 3, // J
+        0x9D => return 3, // JA
+        0x5D => return 3, // JL
+        0xDD => return 3, // JLA
+        0x61 => return 3, // FCALL
+        0xE1 => return 3, // FCALLA
+        _ => {}
+    }
+
+    // Conditional branches (BRC, BRN, BRR forms)
+    match major_op {
+        // These are distinctive TriCore conditional branch forms
+        0xDF => return 2, // JNE
+        0xFF => return 2, // JNZ.T
+        0xBF => return 2, // JZ.T
+        0x6F => return 2, // JNZ
+        0xEF => return 2, // JZ
+        0x5F => return 2, // JEQ
+        _ => {}
+    }
+
+    // Load/Store: be very conservative — these major opcodes overlap heavily
+    // with other ISAs. Only award 1 point each.
+    match major_op {
+        0x85 | 0x05 | 0x15 | 0x25 | 0x45 | 0x65 | 0xA5 | 0xC5 | 0xE5 => return 1, // LD variants
+        0x89 | 0xA9 | 0x09 | 0x29 | 0x49 | 0x69 => return 1,                      // ST variants
+        0xB5 => return 1,                                                         // LD.A/ST.A
+        _ => {}
+    }
+
+    // ALU operations: very conservative
+    match major_op {
+        0x0B | 0x8B => return 1, // ADD/SUB register forms
+        0x8F => return 1,        // Immediate ALU
+        0x0F => return 1,        // ABSDIF etc.
+        _ => {}
+    }
+
+    // Everything else: no score (not penalized either, since TriCore has
+    // odd-numbered major ops for 32-bit instructions and even for 16-bit,
+    // so many values are legitimately possible)
+    0
+}
+
+/// Detect ARM instruction patterns that TriCore falsely matches.
+fn detect_arm_cross_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+
+    // Check for ARM32 condition-code pattern: in ARM32, bits [31:28] are
+    // the condition code. Most instructions use 0xE (AL=always).
+    // When read as little-endian, the condition byte is at offset +3.
+    // Check if most 4-byte-aligned words have 0xE in the high nibble.
+    let mut al_count = 0u32;
+    let mut check_count = 0u32;
+    let check_len = data.len().min(1024);
+    let mut j = 0;
+    while j + 3 < check_len {
+        let top_nibble = data[j + 3] >> 4;
+        if top_nibble == 0xE {
+            al_count += 1;
+        }
+        check_count += 1;
+        j += 4;
+    }
+    if check_count > 10 && (al_count as f64 / check_count as f64) > 0.40 {
+        return 0.2; // Strong ARM32 evidence
+    }
+
+    // Check for AArch64 patterns: MRS/MSR (0xD53/0xD51 in top 12 bits)
+    let mut aarch64_sysreg = 0u32;
+    j = 0;
+    while j + 3 < check_len {
+        let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+        let top12 = w >> 20;
+        if top12 == 0xD53 || top12 == 0xD51 || top12 == 0xD50 {
+            aarch64_sysreg += 1;
+        }
+        j += 4;
+    }
+    if aarch64_sysreg >= 3 {
+        return 0.15;
+    }
+
+    // Check for Thumb-2 patterns: BL instruction = 0xF000xxxx + 0xF8xx
+    // Thumb PUSH with LR: 0xB5xx (upper byte B5)
+    let mut thumb_count = 0u32;
+    j = 0;
+    while j + 1 < check_len {
+        let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+        if hw == 0x4770 {
+            thumb_count += 2;
+        } // BX LR
+        if hw & 0xFF00 == 0xB500 {
+            thumb_count += 1;
+        } // PUSH {LR, ...}
+        if hw & 0xFF00 == 0xBD00 {
+            thumb_count += 1;
+        } // POP {PC, ...}
+        if hw == 0xBF00 {
+            thumb_count += 1;
+        } // NOP.N
+        j += 2;
+    }
+    if thumb_count >= 8 {
+        return 0.25;
+    }
+
+    1.0
+}
+
+/// Detect big-endian ISA patterns (MIPS, PowerPC, SPARC, s390x).
+fn detect_big_endian_cross_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+
+    let check_len = data.len().min(1024);
+
+    // MIPS: NOP=0x00000000, JR $ra=0x03E00008, common lui/addiu patterns
+    // PowerPC: BLR=0x4E800020, NOP=0x60000000
+    // SPARC: NOP=0x01000000, RET+RESTORE=0x81C7E008
+    let mut mips_sig = 0u32;
+    let mut ppc_sig = 0u32;
+    let mut sparc_sig = 0u32;
+
+    let mut j = 0;
+    while j + 3 < check_len {
+        let w = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+        // MIPS
+        if w == 0x03E00008 {
+            mips_sig += 3;
+        } // JR $ra
+        if (w >> 26) == 0x0F {
+            mips_sig += 1;
+        } // LUI
+        if (w >> 26) == 0x09 {
+            mips_sig += 1;
+        } // ADDIU
+          // PowerPC
+        if w == 0x4E800020 {
+            ppc_sig += 3;
+        } // BLR
+        if w == 0x60000000 {
+            ppc_sig += 1;
+        } // NOP (ori 0,0,0)
+        if (w >> 26) == 18 {
+            ppc_sig += 1;
+        } // B/BL
+          // SPARC
+        if w == 0x01000000 {
+            sparc_sig += 1;
+        } // NOP
+        if w == 0x81C7E008 {
+            sparc_sig += 3;
+        } // RET
+        if (w >> 30) == 0x01 {
+            sparc_sig += 1;
+        } // CALL
+
+        j += 4;
+    }
+
+    let max_sig = mips_sig.max(ppc_sig).max(sparc_sig);
+    if max_sig >= 8 {
+        return 0.1;
+    }
+    if max_sig >= 4 {
+        return 0.3;
+    }
+
+    // s390x: instructions start with specific opcodes that are very distinctive
+    // s390x RET is 0x07FE (BCR 15,14)
+    let mut s390_sig = 0u32;
+    j = 0;
+    while j + 1 < check_len {
+        let hw = u16::from_be_bytes([data[j], data[j + 1]]);
+        if hw == 0x07FE {
+            s390_sig += 2;
+        } // BCR 15,14 (return)
+        if hw & 0xFF00 == 0x4700 {
+            s390_sig += 1;
+        } // BC (branch)
+        j += 2;
+    }
+    if s390_sig >= 6 {
+        return 0.15;
+    }
+
+    1.0
 }
 
 #[cfg(test)]
@@ -177,17 +488,6 @@ mod tests {
             0x0d, 0x00, 0x00, 0x00, // NOP 32-bit (major 0x0d, op2 = 0)
             0x0d, 0x00, 0x80, 0x01, // RET 32-bit (major 0x0d, op2 = 0x06 in bits 22-27)
         ];
-
-        // 0x0180000d: major=0x0d. >> 22 = 0x06. Yes, bits 22-27.
-        // Let's verify bits 22-27 of 0x0180000d.
-        // 0x0180000d = 0b0000_0001_1000_0000_0000_0000_0000_1101
-        // bit 22 is 1. Wait!
-        // bit 22: 0x00400000 is bit 22.
-        // 0x01800000 is 1_1000_0000_0000_0000_0000_0000.
-        // So bit 23 and 24 are 1.
-        // Let's check: 0x06 = 0b110. 0x06 << 22 = 0b110 << 22 = 0x0180_0000.
-        // Wait, 0x0180_0000 in little endian is 0x00 0x00 0x80 0x01.
-        // Bytes: data[0]=0x0d, data[1]=0x00, data[2]=0x80, data[3]=0x01.
         assert!(score(&code) > 0);
     }
 }

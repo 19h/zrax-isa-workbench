@@ -146,8 +146,8 @@ pub fn score(data: &[u8]) -> i64 {
         // And JMP [reg1] in general: 0x0060 | reg1
         //   where bits [6:5]=01, bits [4:0]=reg1
         if hw == 0x006F {
-            // JMP [r31] = return from subroutine — VERY distinctive
-            total_score += 20;
+            // JMP [r31] = return from subroutine — distinctive
+            total_score += 8;
             ret_count += 1;
             valid_insn_count += 1;
             i += 2;
@@ -155,7 +155,7 @@ pub fn score(data: &[u8]) -> i64 {
         }
         // JMP [reg1] where reg1 != r31 (indirect jump, e.g., switch table)
         if (hw & 0xFFE0) == 0x0060 && reg1 != 0 {
-            total_score += 8;
+            total_score += 3;
             jmp_indirect_count += 1;
             valid_insn_count += 1;
             i += 2;
@@ -166,7 +166,7 @@ pub fn score(data: &[u8]) -> i64 {
         if hw == 0x0144 && i + 3 < data.len() {
             let hw2 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             if hw2 == 0x0014 {
-                total_score += 25;
+                total_score += 10;
                 reti_count += 1;
                 valid_insn_count += 1;
                 i += 4;
@@ -175,63 +175,37 @@ pub fn score(data: &[u8]) -> i64 {
         }
 
         // ─── Check 3: Bcond disp9 — conditional branch (16-bit) ───
-        // Encoding: bits [15:14] = 10, bits [13:11] = disp_hi,
-        //           bits [10:7] = cond (0-15), bits [6:4] = disp_mid, bits [3:0] = disp_lo/sub
-        // So the top 2 bits of the halfword are 10 (0x8000..0xBFFF range)
-        // But more precisely: bits [15:14]=10 means the halfword is 1000_xxxx to 1011_xxxx
-        //
-        // Actually in V850, Bcond encoding is:
-        //   bits [15:11] = disp9[8:4] (displacement high bits)
-        //   ... no, let me re-examine.
-        //
-        // V850 Bcond disp9 format:
-        //   halfword: ddddd_cccc_ddd_0111
-        //   bits [3:0] = 0111 (opcode marker for Bcond)
-        //   bits [6:4] = disp9[3:1]
-        //   bits [10:7] = cond (4-bit condition code)
-        //   bits [15:11] = disp9[8:4]
-        //
-        // So the low nibble is 0x7, and bit 3..0 = 0111.
-        // Wait, actually bits[3:0]=0111 means the lower byte has pattern xxxx_0111.
-        // In hex: lower byte & 0x0F == 0x07, upper bits are displacement + condition.
-        //
-        // Correction: In V850, the branch format is:
-        //   bits[3:0] = 1011 for Bcond (Format III)
-        //   Actually different V850 references disagree. Let me use the canonical:
-        //
         // V850ES manual: Bcond disp9
         //   [15:11] = disp[8:4]
         //   [10:7]  = cond
         //   [6:4]   = disp[3:1]
         //   [3:0]   = 1011  (= 0xB)
         //
-        // So lower nibble of the halfword = 0xB (binary 1011).
+        // IMPORTANT: (hw & 0x000F) == 0x000B matches 1/16 of ALL halfwords.
+        // To reduce false positives, we require the displacement to be non-zero
+        // and small enough to be plausible, and use lower scores.
         if (hw & 0x000F) == 0x000B {
             let cond = (hw >> 7) & 0x0F;
-            // All 16 condition codes are valid (0=BV through 15=BGT)
-            // Score based on how common the condition is
-            let cond_score = match cond {
-                0x02 => 6, // BZ/BE (branch if equal) — very common
-                0x0A => 6, // BNZ/BNE (branch if not equal) — very common
-                0x01 => 5, // BL/BC (branch if carry/lower)
-                0x09 => 5, // BNL/BNC (branch if no carry)
-                0x06 => 5, // BLT (branch if less than, signed)
-                0x0E => 5, // BGE (branch if greater or equal, signed)
-                0x07 => 5, // BLE (branch if less or equal, signed)
-                0x0F => 5, // BGT (branch if greater than, signed)
-                0x05 => 4, // BR (unconditional short branch, cond=always)
-                0x04 => 4, // BN/BS (branch if negative)
-                0x0C => 4, // BNS/BP (branch if positive)
-                0x00 => 3, // BV (branch if overflow) — rare
-                0x08 => 3, // BNV (branch if no overflow) — rare
-                0x03 => 4, // BNH (branch if not higher)
-                0x0B => 4, // BH (branch if higher)
-                0x0D => 3, // BSA (branch if saturated) — rare
-                _ => 2,
-            };
-            total_score += cond_score;
-            branch_count += 1;
-            valid_insn_count += 1;
+            let disp_hi = (hw >> 11) & 0x1F;
+            let disp_lo = (hw >> 4) & 0x07;
+            let has_displacement = disp_hi != 0 || disp_lo != 0;
+
+            // Only score if displacement is non-zero (a zero-displacement branch
+            // is either meaningless or an encoding quirk)
+            if has_displacement {
+                let cond_score = match cond {
+                    0x02 | 0x0A => 3,                             // BZ/BNZ — very common
+                    0x01 | 0x09 | 0x06 | 0x0E | 0x07 | 0x0F => 2, // Common conditions
+                    0x05 => 2,                                    // BR (unconditional)
+                    _ => 1,                                       // Rare conditions
+                };
+                total_score += cond_score;
+                branch_count += 1;
+                valid_insn_count += 1;
+            } else {
+                // Zero displacement — suspicious, don't count
+                total_score += 0;
+            }
             i += 2;
             continue;
         }
@@ -268,38 +242,27 @@ pub fn score(data: &[u8]) -> i64 {
         // So bits [6:5] = 11 indicates JARL/JR format.
         // reg2 != 0 => JARL (call); reg2 == 0 => JR (jump).
         //
-        // Check: sub2 == 0b11 (bits [6:5])
+        // Check: sub2 == 0b11 (bits [6:5]) indicates JARL/JR Format V
+        // IMPORTANT: sub2 == 0x03 alone matches 1/4 of all halfwords!
+        // We need additional validation: the displacement bits should form
+        // a plausible offset (not all-ones or all-zeros in the high bits).
         if sub2 == 0x03 {
             // This is JARL or JR format — needs second halfword
             if i + 3 < data.len() {
-                if reg2 != 0 {
+                let hw2 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
+                // Additional validation: the second halfword should not be
+                // all-zeros or all-ones (which would indicate padding/erased flash)
+                let hw2_valid = hw2 != 0x0000 && hw2 != 0xFFFF;
+
+                if reg2 != 0 && hw2_valid {
                     // JARL disp22, reg2 — function call
-                    // Extra score if linking to r31 (LP), which is the standard calling convention
-                    if reg2 == 0x0F {
-                        // reg2 field is 4 bits, so 0xF = register 15?
-                        // Wait: reg2 is bits [10:7], which is 4 bits wide = 0..15.
-                        // But V850 has 32 registers. The 4-bit field only encodes r0-r15.
-                        // Actually in JARL encoding, the full 5-bit reg2 may be encoded
-                        // differently. Let me reconsider.
-                        //
-                        // V850 Format V uses [10:7] = reg2[4:1] and bit 0 of reg2 is
-                        // implicitly part of the displacement. Actually no — in most
-                        // V850 encodings, reg2 is [10:7] which is only 4 bits = r0-r15.
-                        //
-                        // But V850E extended this. For the basic V850:
-                        // reg2 = [10:7] maps to even registers r0,r2,...r30 (bit 0 implied 0)
-                        // or it maps differently.
-                        //
-                        // For scoring purposes, any non-zero reg2 in a JARL is a call.
-                        total_score += 12;
-                    } else {
-                        total_score += 10;
-                    }
+                    // Score modestly — sub2==3 matches 1/4 of all halfwords
+                    total_score += 3;
                     call_count += 1;
                     valid_insn_count += 1;
-                } else {
+                } else if reg2 == 0 && hw2_valid {
                     // JR disp22 — unconditional jump
-                    total_score += 5;
+                    total_score += 2;
                     branch_count += 1;
                     valid_insn_count += 1;
                 }
@@ -333,13 +296,12 @@ pub fn score(data: &[u8]) -> i64 {
             // LD.B disp16[reg1], reg2
             0x06 => {
                 if i + 3 < data.len() {
-                    // Validate: reg1 should typically be SP(3), GP(4), EP(30), or another valid reg
                     let score_val = if reg1 == 3 || reg1 == 4 || reg1 == 30 {
-                        6 // SP/GP/EP-relative load — very typical
+                        3 // SP/GP/EP-relative load — typical
                     } else if reg2 != 0 {
-                        4 // Loading into non-zero register
+                        2 // Loading into non-zero register
                     } else {
-                        2 // Loading into r0 is odd but technically valid
+                        1 // Loading into r0 is odd
                     };
                     total_score += score_val;
                     load_count += 1;
@@ -352,11 +314,11 @@ pub fn score(data: &[u8]) -> i64 {
             0x07 => {
                 if i + 3 < data.len() {
                     let score_val = if reg1 == 3 || reg1 == 4 || reg1 == 30 {
-                        7 // SP/GP/EP-relative — very common
+                        3 // SP/GP/EP-relative — common
                     } else if reg2 != 0 {
-                        5
-                    } else {
                         2
+                    } else {
+                        1
                     };
                     total_score += score_val;
                     load_count += 1;
@@ -369,9 +331,9 @@ pub fn score(data: &[u8]) -> i64 {
             0x0E => {
                 if i + 3 < data.len() {
                     let score_val = if reg1 == 3 || reg1 == 4 || reg1 == 30 {
-                        6
+                        3
                     } else {
-                        4
+                        2
                     };
                     total_score += score_val;
                     store_count += 1;
@@ -384,9 +346,9 @@ pub fn score(data: &[u8]) -> i64 {
             0x0F => {
                 if i + 3 < data.len() {
                     let score_val = if reg1 == 3 || reg1 == 4 || reg1 == 30 {
-                        7
+                        3
                     } else {
-                        5
+                        2
                     };
                     total_score += score_val;
                     store_count += 1;
@@ -411,7 +373,7 @@ pub fn score(data: &[u8]) -> i64 {
             // ADDI imm16, reg1, reg2
             0x30 => {
                 if i + 3 < data.len() {
-                    total_score += 5;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 4;
@@ -421,9 +383,8 @@ pub fn score(data: &[u8]) -> i64 {
             // MOVEA imm16, reg1, reg2
             0x31 => {
                 if i + 3 < data.len() {
-                    // MOVEA with SP-relative is very common for stack frame setup
-                    let bonus = if reg1 == 3 { 3 } else { 0 };
-                    total_score += 6 + bonus;
+                    let bonus = if reg1 == 3 { 1 } else { 0 };
+                    total_score += 2 + bonus;
                     mov_count += 1;
                     valid_insn_count += 1;
                     i += 4;
@@ -433,8 +394,7 @@ pub fn score(data: &[u8]) -> i64 {
             // MOVHI imm16, reg1, reg2
             0x32 => {
                 if i + 3 < data.len() {
-                    // MOVHI is used for loading upper 16 bits of addresses — very common
-                    total_score += 7;
+                    total_score += 3;
                     mov_count += 1;
                     valid_insn_count += 1;
                     i += 4;
@@ -444,7 +404,7 @@ pub fn score(data: &[u8]) -> i64 {
             // ORI imm16, reg1, reg2
             0x34 => {
                 if i + 3 < data.len() {
-                    total_score += 4;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 4;
@@ -454,7 +414,7 @@ pub fn score(data: &[u8]) -> i64 {
             // ANDI imm16, reg1, reg2
             0x36 => {
                 if i + 3 < data.len() {
-                    total_score += 4;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 4;
@@ -464,7 +424,7 @@ pub fn score(data: &[u8]) -> i64 {
             // XORI imm16, reg1, reg2
             0x35 => {
                 if i + 3 < data.len() {
-                    total_score += 4;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 4;
@@ -474,7 +434,7 @@ pub fn score(data: &[u8]) -> i64 {
             // MULHI imm16, reg1, reg2
             0x37 => {
                 if i + 3 < data.len() {
-                    total_score += 5;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 4;
@@ -507,12 +467,10 @@ pub fn score(data: &[u8]) -> i64 {
 
         // MOV reg1, reg2 (when not NOP)
         if opcode5 == 0x00 && sub2 == 0x00 && (reg1 != 0 || reg2 != 0) {
-            // reg2 should be non-zero for a meaningful MOV
             if reg2 != 0 {
-                total_score += 4;
+                total_score += 2;
                 mov_count += 1;
             } else {
-                // MOV rN, r0 is writing to hardwired zero — unusual
                 total_score += 1;
             }
             valid_insn_count += 1;
@@ -525,15 +483,15 @@ pub fn score(data: &[u8]) -> i64 {
             match opcode5 {
                 0x01 => {
                     // NOT reg1, reg2
-                    total_score += 3;
+                    total_score += 1;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
                     continue;
                 }
                 0x02 => {
-                    // DIVH reg1, reg2 (or SWITCH in some variants)
-                    total_score += 4;
+                    // DIVH reg1, reg2
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -541,7 +499,7 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x08 => {
                     // OR reg1, reg2
-                    total_score += 3;
+                    total_score += 1;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -549,7 +507,7 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x09 => {
                     // XOR reg1, reg2
-                    total_score += 3;
+                    total_score += 1;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -557,7 +515,7 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x0A => {
                     // AND reg1, reg2
-                    total_score += 3;
+                    total_score += 1;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -565,7 +523,7 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x0B => {
                     // TST reg1, reg2
-                    total_score += 4;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -573,7 +531,7 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x0D => {
                     // SUB reg1, reg2
-                    total_score += 3;
+                    total_score += 1;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -581,8 +539,7 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x0E => {
                     // ADD reg1, reg2
-                    // Very common, especially ADD sp, imm patterns
-                    total_score += 3;
+                    total_score += 1;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -590,7 +547,7 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x0F => {
                     // CMP reg1, reg2
-                    total_score += 4;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -614,7 +571,7 @@ pub fn score(data: &[u8]) -> i64 {
             0x10 => {
                 // MOV imm5, reg2
                 if reg2 != 0 {
-                    total_score += 4;
+                    total_score += 2;
                     mov_count += 1;
                     imm_count += 1;
                 } else {
@@ -626,11 +583,8 @@ pub fn score(data: &[u8]) -> i64 {
             }
             0x12 => {
                 // ADD imm5, reg2
-                // Very common for stack adjustment: ADD -N, sp
-                // reg2 field is [10:7], 4 bits (encoding r0-r15).
-                // reg2==3 => r3=SP, indicating stack frame manipulation.
-                let bonus = if reg2 == 3 { 3 } else { 0 };
-                total_score += 4 + bonus;
+                let bonus = if reg2 == 3 { 1 } else { 0 };
+                total_score += 2 + bonus;
                 alu_count += 1;
                 imm_count += 1;
                 valid_insn_count += 1;
@@ -639,7 +593,7 @@ pub fn score(data: &[u8]) -> i64 {
             }
             0x13 => {
                 // CMP imm5, reg2
-                total_score += 4;
+                total_score += 2;
                 alu_count += 1;
                 imm_count += 1;
                 valid_insn_count += 1;
@@ -648,7 +602,7 @@ pub fn score(data: &[u8]) -> i64 {
             }
             0x14 => {
                 // SHR imm5, reg2
-                total_score += 3;
+                total_score += 1;
                 shift_count += 1;
                 imm_count += 1;
                 valid_insn_count += 1;
@@ -657,7 +611,7 @@ pub fn score(data: &[u8]) -> i64 {
             }
             0x15 => {
                 // SAR imm5, reg2
-                total_score += 3;
+                total_score += 1;
                 shift_count += 1;
                 imm_count += 1;
                 valid_insn_count += 1;
@@ -666,7 +620,7 @@ pub fn score(data: &[u8]) -> i64 {
             }
             0x16 => {
                 // SHL imm5, reg2
-                total_score += 3;
+                total_score += 1;
                 shift_count += 1;
                 imm_count += 1;
                 valid_insn_count += 1;
@@ -675,7 +629,7 @@ pub fn score(data: &[u8]) -> i64 {
             }
             0x17 => {
                 // MULH imm5, reg2 / MULHI
-                total_score += 4;
+                total_score += 2;
                 alu_count += 1;
                 imm_count += 1;
                 valid_insn_count += 1;
@@ -689,7 +643,7 @@ pub fn score(data: &[u8]) -> i64 {
         // CALLT imm6: bits[15:10] = 000010
         // This is a distinctive V850 instruction for calling through a table.
         if opcode6 == 0x02 {
-            total_score += 8;
+            total_score += 4;
             call_count += 1;
             valid_insn_count += 1;
             i += 2;
@@ -719,16 +673,13 @@ pub fn score(data: &[u8]) -> i64 {
                 let _hw2 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
 
                 if opcode5 == 0x1E {
-                    // Could be PREPARE, extended ALU, etc.
-                    total_score += 4;
+                    total_score += 2;
                     valid_insn_count += 1;
                     i += 4;
                     continue;
                 }
                 if opcode5 == 0x1F {
-                    // Extended instructions group
-                    // Many V850E2 instructions like MUL, DIVH, MULU, DIVU, etc.
-                    total_score += 4;
+                    total_score += 2;
                     valid_insn_count += 1;
                     i += 4;
                     continue;
@@ -740,7 +691,7 @@ pub fn score(data: &[u8]) -> i64 {
         // SETF cond, reg2: opcode5 = 00000, sub2 = 10 (bits[6:5]=10)
         // This sets reg2 to 1 if condition is true, 0 otherwise.
         if opcode5 == 0x00 && sub2 == 0x02 {
-            total_score += 5;
+            total_score += 2;
             valid_insn_count += 1;
             i += 2;
             continue;
@@ -830,15 +781,15 @@ pub fn score(data: &[u8]) -> i64 {
             }
             0x0C => {
                 // MULH reg1, reg2
-                total_score += 4;
+                total_score += 2;
                 alu_count += 1;
                 valid_insn_count += 1;
                 i += 2;
                 continue;
             }
             0x11 => {
-                // SATADD imm5, reg2 (saturated add) — distinctive for DSP-like V850 code
-                total_score += 4;
+                // SATADD imm5, reg2
+                total_score += 2;
                 alu_count += 1;
                 valid_insn_count += 1;
                 i += 2;
@@ -860,47 +811,24 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x02 => {
                     // SWITCH reg1 (V850E) — jump table dispatch
-                    total_score += 5;
+                    total_score += 2;
                     valid_insn_count += 1;
                     i += 2;
                     continue;
                 }
-                0x04 => {
-                    // SXB reg1 (sign extend byte, V850E)
-                    total_score += 3;
-                    valid_insn_count += 1;
-                    i += 2;
-                    continue;
-                }
-                0x05 => {
-                    // SXH reg1 (sign extend halfword, V850E)
-                    total_score += 3;
-                    valid_insn_count += 1;
-                    i += 2;
-                    continue;
-                }
-                0x06 => {
-                    // ZXB reg1 (zero extend byte, V850E)
-                    total_score += 3;
-                    valid_insn_count += 1;
-                    i += 2;
-                    continue;
-                }
-                0x07 => {
-                    // ZXH reg1 (zero extend halfword, V850E)
-                    total_score += 3;
+                0x04 | 0x05 | 0x06 | 0x07 => {
+                    // SXB/SXH/ZXB/ZXH (sign/zero extend, V850E)
+                    total_score += 2;
                     valid_insn_count += 1;
                     i += 2;
                     continue;
                 }
                 _ => {
-                    // Other sub2=01 instructions — give modest score if opcode5 is in valid range
-                    if opcode5 <= 0x1F {
-                        total_score += 1;
-                        valid_insn_count += 1;
-                        i += 2;
-                        continue;
-                    }
+                    // Other sub2=01 instructions — DON'T award points.
+                    // sub2==1 matches 1/4 of all halfwords, so catch-all scoring
+                    // here causes massive false positives.
+                    i += 2;
+                    continue;
                 }
             }
         }
@@ -913,7 +841,7 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x0D => {
                     // SATSUB reg1, reg2
-                    total_score += 3;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
@@ -921,20 +849,16 @@ pub fn score(data: &[u8]) -> i64 {
                 }
                 0x0E => {
                     // SATADD reg1, reg2
-                    total_score += 3;
+                    total_score += 2;
                     alu_count += 1;
                     valid_insn_count += 1;
                     i += 2;
                     continue;
                 }
                 _ => {
-                    // Other sub2=10 instructions
-                    if opcode5 <= 0x1F {
-                        total_score += 1;
-                        valid_insn_count += 1;
-                        i += 2;
-                        continue;
-                    }
+                    // Other sub2=10 instructions — DON'T award points.
+                    i += 2;
+                    continue;
                 }
             }
         }
@@ -947,7 +871,7 @@ pub fn score(data: &[u8]) -> i64 {
             let hw2 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             if hw2 == 0x0160 {
                 // DI — disable interrupts
-                total_score += 15;
+                total_score += 6;
                 valid_insn_count += 1;
                 i += 4;
                 continue;
@@ -957,7 +881,7 @@ pub fn score(data: &[u8]) -> i64 {
             let hw2 = u16::from_le_bytes([data[i + 2], data[i + 3]]);
             if hw2 == 0x0160 {
                 // EI — enable interrupts
-                total_score += 15;
+                total_score += 6;
                 valid_insn_count += 1;
                 i += 4;
                 continue;
@@ -983,14 +907,14 @@ pub fn score(data: &[u8]) -> i64 {
             match sys_op & 0x001F {
                 0x00 => {
                     // LDSR — load system register
-                    total_score += 10;
+                    total_score += 4;
                     valid_insn_count += 1;
                     i += 4;
                     continue;
                 }
                 0x04 => {
                     // STSR — store system register
-                    total_score += 10;
+                    total_score += 4;
                     valid_insn_count += 1;
                     i += 4;
                     continue;
@@ -1022,98 +946,90 @@ pub fn score(data: &[u8]) -> i64 {
     if total_insns > 10 {
         let valid_ratio = valid_insn_count as f64 / total_insns as f64;
 
-        // High valid instruction ratio bonus
-        if valid_ratio > 0.55 && total_insns > 50 {
-            total_score += (valid_insn_count as i64) / 4;
+        // High valid instruction ratio — tightened threshold
+        if valid_ratio > 0.70 && total_insns > 50 {
+            total_score += (valid_insn_count as i64) / 8;
         }
 
         // ─── Return instructions: JMP [r31] ───
-        // Every function ends with JMP [r31]. This is the single most distinctive
-        // pattern in V850 code.
-        if ret_count >= 3 {
-            total_score += (ret_count as i64) * 10;
-        } else if ret_count >= 1 {
-            total_score += (ret_count as i64) * 5;
+        if ret_count >= 5 {
+            total_score += (ret_count as i64) * 4;
+        } else if ret_count >= 2 {
+            total_score += (ret_count as i64) * 2;
         }
 
         // ─── RETI (return from exception) ───
         if reti_count > 0 {
-            total_score += (reti_count as i64) * 15;
+            total_score += (reti_count as i64) * 5;
         }
 
         // ─── JARL (function calls) ───
-        if call_count >= 3 {
-            total_score += (call_count as i64) * 8;
-        } else if call_count >= 1 {
-            total_score += (call_count as i64) * 5;
+        if call_count >= 5 {
+            total_score += (call_count as i64) * 3;
+        } else if call_count >= 2 {
+            total_score += (call_count as i64) * 2;
         }
 
-        // ─── Conditional branches ───
-        if branch_count >= 5 {
-            total_score += (branch_count as i64) * 4;
-        } else if branch_count >= 2 {
-            total_score += (branch_count as i64) * 2;
+        // ─── Conditional branches — raised threshold ───
+        if branch_count >= 8 {
+            total_score += (branch_count as i64) * 1;
         }
 
-        // ─── Load/Store ───
-        if load_count >= 3 || store_count >= 3 {
-            total_score += ((load_count + store_count) as i64) * 3;
+        // ─── Load/Store — raised threshold ───
+        if load_count >= 5 && store_count >= 3 {
+            total_score += ((load_count + store_count) as i64) * 1;
         }
 
-        // ─── MOV instructions ───
-        if mov_count >= 3 {
-            total_score += (mov_count as i64) * 2;
+        // ─── MOV instructions — raised threshold ───
+        if mov_count >= 5 {
+            total_score += (mov_count as i64) * 1;
         }
 
-        // ─── ALU instructions ───
-        if alu_count >= 5 {
-            total_score += (alu_count as i64) * 2;
-        }
-
-        // ─── Combined structural signature ───
+        // ─── Combined structural signature — require more features, smaller multipliers ───
         let signature_features = [
-            ret_count >= 2,                           // Function returns
-            call_count >= 2,                          // Function calls
-            branch_count >= 3,                        // Conditional branches
-            load_count >= 2 && store_count >= 2,      // Memory access
+            ret_count >= 3,                           // Function returns
+            call_count >= 3,                          // Function calls
+            branch_count >= 5,                        // Conditional branches
+            load_count >= 3 && store_count >= 3,      // Memory access
             mov_count >= 3,                           // Data movement
-            alu_count >= 3,                           // Arithmetic/logic
-            shift_count >= 1,                         // Shift operations
-            imm_count >= 3,                           // Immediate operations
+            alu_count >= 5,                           // Arithmetic/logic
+            shift_count >= 2,                         // Shift operations
+            imm_count >= 5,                           // Immediate operations
             reti_count > 0 || jmp_indirect_count > 0, // System/indirect control flow
         ];
         let feature_count = signature_features.iter().filter(|&&f| f).count();
         if feature_count >= 7 {
-            total_score += (valid_insn_count as i64) / 2;
-        } else if feature_count >= 5 {
             total_score += (valid_insn_count as i64) / 4;
-        } else if feature_count >= 3 {
+        } else if feature_count >= 6 {
             total_score += (valid_insn_count as i64) / 6;
+        } else if feature_count >= 5 {
+            total_score += (valid_insn_count as i64) / 8;
         }
     }
 
-    // ─── Large input penalty: require distinctive patterns ───
-    // For large inputs (>4KB), require at least some returns and calls.
-    // Without these, the file is likely not V850 code and any positive score
-    // is from coincidental opcode matches.
-    if data.len() > 4096 && ret_count == 0 && call_count == 0 {
-        return 0;
+    // ─── Structural evidence requirement ───
+    // For larger files, require actual function structure (returns + calls).
+    if data.len() > 2048 {
+        if ret_count < 2 || call_count < 2 {
+            return 0;
+        }
+    } else if data.len() > 512 {
+        if ret_count == 0 || call_count == 0 {
+            return 0;
+        }
     }
 
-    // If there's too many invalid instructions, V850 should score 0.
+    // If too many invalid instructions, V850 should score 0.
     if data.len() > 4096 && invalid_count > valid_insn_count {
         return 0;
     }
 
     // ─── JMP [r31] + NOP pattern detection ───
-    // V850 code commonly has JMP [r31] (0x006F) followed by NOP (0x0000)
-    // for alignment. This pattern is extremely distinctive.
+    // V850 code commonly has JMP [r31] (0x006F) followed by NOP (0x0000).
     if data.len() >= 4 {
         let mut ret_nop_count: u32 = 0;
         let mut j: usize = 0;
         while j + 3 < data.len() {
-            // JMP [r31] = 0x006F in little-endian: bytes 0x6F, 0x00
-            // NOP = 0x0000: bytes 0x00, 0x00
             if data[j] == 0x6F && data[j + 1] == 0x00 && data[j + 2] == 0x00 && data[j + 3] == 0x00
             {
                 ret_nop_count += 1;
@@ -1121,14 +1037,50 @@ pub fn score(data: &[u8]) -> i64 {
             j += 2;
         }
         if ret_nop_count > 0 {
-            total_score += (ret_nop_count as i64) * 12;
+            total_score += (ret_nop_count as i64) * 5;
         }
     }
 
+    // ─── Cross-architecture penalties ───
     let tc_penalty = detect_tricore_cross_arch_penalty(data);
     if tc_penalty < 1.0 {
         total_score = (total_score as f64 * tc_penalty) as i64;
     }
+
+    let x86_penalty = detect_x86_cross_penalty(data);
+    if x86_penalty < 1.0 {
+        total_score = (total_score as f64 * x86_penalty) as i64;
+    }
+    let ppc_penalty = detect_ppc_cross_penalty(data);
+    if ppc_penalty < 1.0 {
+        total_score = (total_score as f64 * ppc_penalty) as i64;
+    }
+
+    let arm_penalty = detect_arm_cross_arch_penalty(data);
+    if arm_penalty < 1.0 {
+        total_score = (total_score as f64 * arm_penalty) as i64;
+    }
+
+    let be_penalty = detect_big_endian_cross_arch_penalty(data);
+    if be_penalty < 1.0 {
+        total_score = (total_score as f64 * be_penalty) as i64;
+    }
+
+    let rv_penalty = detect_riscv_cross_arch_penalty(data);
+    if rv_penalty < 1.0 {
+        total_score = (total_score as f64 * rv_penalty) as i64;
+    }
+
+    let avr_penalty = detect_avr_cross_arch_penalty(data);
+    if avr_penalty < 1.0 {
+        total_score = (total_score as f64 * avr_penalty) as i64;
+    }
+
+    let hex_penalty = detect_hexagon_cross_arch_penalty(data);
+    if hex_penalty < 1.0 {
+        total_score = (total_score as f64 * hex_penalty) as i64;
+    }
+
     cmp::max(0, total_score)
 }
 
@@ -1150,10 +1102,7 @@ mod tests {
             0x6F, 0x00, // JMP [r31] (return)
         ];
         let s = score(&code);
-        assert!(
-            s > 100,
-            "Multiple JMP [r31] should score very highly, got {s}"
-        );
+        assert!(s > 40, "Multiple JMP [r31] should score well, got {s}");
     }
 
     #[test]
@@ -1412,6 +1361,259 @@ mod tests {
     }
 }
 
+/// Detect ARM32/AArch64 code and penalize V850.
+fn detect_arm_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut arm32_cond_e: u32 = 0;
+    let mut aarch64_ret: u32 = 0;
+    let mut arm_bx_lr: u32 = 0;
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if (w >> 28) == 0xE {
+            arm32_cond_e += 1;
+        }
+        if w == 0xE12FFF1E {
+            arm_bx_lr += 1;
+        }
+        if w == 0xD65F03C0 {
+            aarch64_ret += 1;
+        }
+        i += 4;
+    }
+    let total_words = (check_len / 4) as f64;
+    let mut evidence: u32 = 0;
+    if arm32_cond_e as f64 / total_words > 0.25 {
+        evidence += 3;
+    } else if arm32_cond_e as f64 / total_words > 0.15 {
+        evidence += 2;
+    }
+    if arm_bx_lr >= 3 {
+        evidence += 2;
+    } else if arm_bx_lr >= 1 {
+        evidence += 1;
+    }
+    if aarch64_ret >= 3 {
+        evidence += 3;
+    } else if aarch64_ret >= 1 {
+        evidence += 2;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect big-endian RISC architectures (MIPS, PPC, SPARC, s390x).
+fn detect_big_endian_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut mips_jr_ra: u32 = 0;
+    let mut mips_lui: u32 = 0;
+    let mut ppc_blr: u32 = 0;
+    let mut sparc_ret: u32 = 0;
+    let mut sparc_save: u32 = 0;
+    let mut s390_bcr: u32 = 0;
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if w == 0x03E00008 {
+            mips_jr_ra += 1;
+        }
+        if (w >> 26) == 0x0F {
+            mips_lui += 1;
+        }
+        if w == 0x4E800020 {
+            ppc_blr += 1;
+        }
+        if w == 0x81C7E008 {
+            sparc_ret += 1;
+        }
+        if (w >> 22) == 0x277 {
+            sparc_save += 1;
+        }
+        if i + 1 < check_len {
+            let hw = u16::from_be_bytes([data[i], data[i + 1]]);
+            if hw == 0x07FE {
+                s390_bcr += 1;
+            }
+        }
+        i += 4;
+    }
+    let mut evidence: u32 = 0;
+    if mips_jr_ra >= 3 {
+        evidence += 3;
+    } else if mips_jr_ra >= 1 {
+        evidence += 2;
+    }
+    if mips_lui >= 10 {
+        evidence += 2;
+    } else if mips_lui >= 3 {
+        evidence += 1;
+    }
+    if ppc_blr >= 3 {
+        evidence += 3;
+    } else if ppc_blr >= 1 {
+        evidence += 2;
+    }
+    if sparc_ret >= 2 {
+        evidence += 3;
+    } else if sparc_ret >= 1 {
+        evidence += 2;
+    }
+    if sparc_save >= 2 {
+        evidence += 1;
+    }
+    if s390_bcr >= 5 {
+        evidence += 3;
+    } else if s390_bcr >= 2 {
+        evidence += 2;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect RISC-V code and penalize V850.
+fn detect_riscv_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut rv_ret: u32 = 0;
+    let mut rv_auipc: u32 = 0;
+    let mut rv_jalr: u32 = 0;
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if w == 0x00008067 {
+            rv_ret += 1;
+        }
+        if (w & 0x7F) == 0x17 {
+            rv_auipc += 1;
+        }
+        // JALR rd, rs1, imm — opcode 0x67
+        if (w & 0x7F) == 0x67 {
+            rv_jalr += 1;
+        }
+        i += 4;
+    }
+    let total_words = (check_len / 4) as f64;
+    let mut evidence: u32 = 0;
+    if rv_ret >= 3 {
+        evidence += 3;
+    } else if rv_ret >= 1 {
+        evidence += 2;
+    }
+    if rv_auipc as f64 / total_words > 0.03 && rv_auipc >= 5 {
+        evidence += 2;
+    } else if rv_auipc >= 3 {
+        evidence += 1;
+    }
+    if rv_jalr >= 5 {
+        evidence += 1;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect AVR code and penalize V850.
+fn detect_avr_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut avr_ret: u32 = 0;
+    let mut avr_reti: u32 = 0;
+    let mut avr_rcall: u32 = 0;
+    let mut i = 0;
+    while i + 1 < check_len {
+        let hw = u16::from_le_bytes([data[i], data[i + 1]]);
+        if hw == 0x9508 {
+            avr_ret += 1;
+        }
+        if hw == 0x9518 {
+            avr_reti += 1;
+        }
+        if (hw >> 12) == 0xD {
+            avr_rcall += 1;
+        }
+        i += 2;
+    }
+    let mut evidence: u32 = 0;
+    if avr_ret >= 3 {
+        evidence += 3;
+    } else if avr_ret >= 1 {
+        evidence += 2;
+    }
+    if avr_reti >= 1 {
+        evidence += 1;
+    }
+    let total_halfwords = (check_len / 2) as f64;
+    let rcall_density = avr_rcall as f64 / total_halfwords;
+    if rcall_density > 0.02 && avr_rcall >= 5 {
+        evidence += 2;
+    } else if avr_rcall >= 3 {
+        evidence += 1;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect Hexagon (QDSP6) code and penalize V850.
+fn detect_hexagon_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 128 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut eop: u32 = 0;
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if (w >> 14) & 3 == 3 {
+            eop += 1;
+        }
+        i += 4;
+    }
+    let total_words = (check_len / 4) as f64;
+    let eop_density = eop as f64 / total_words;
+    if eop_density > 0.15 && eop_density < 0.45 {
+        0.10
+    } else {
+        1.0
+    }
+}
+
 fn detect_tricore_cross_arch_penalty(data: &[u8]) -> f64 {
     let mut tricore_ret = 0;
     let mut i = 0;
@@ -1423,6 +1625,85 @@ fn detect_tricore_cross_arch_penalty(data: &[u8]) -> f64 {
     }
     if tricore_ret > 50 && data.len() >= 4096 {
         return 0.05; // 95% penalty
+    }
+    1.0
+}
+
+/// Detect x86/x86-64 patterns to penalize V850 false positives.
+fn detect_x86_cross_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(2048);
+    let mut x86_sig = 0u32;
+
+    for j in 0..check_len {
+        match data[j] {
+            0xC3 => x86_sig += 2, // RET
+            0x55 => {
+                if j + 2 < check_len && data[j + 1] == 0x89 && data[j + 2] == 0xE5 {
+                    x86_sig += 4; // PUSH EBP; MOV EBP, ESP
+                }
+            }
+            0xE8 => x86_sig += 1, // CALL rel32
+            _ => {}
+        }
+        // REX prefix followed by common opcode
+        if j + 1 < check_len && data[j] >= 0x40 && data[j] <= 0x4F {
+            let next = data[j + 1];
+            if next == 0x89 || next == 0x8B || next == 0x83 || next == 0x55 || next == 0x53 {
+                x86_sig += 1;
+            }
+        }
+    }
+
+    if x86_sig >= 12 {
+        return 0.1;
+    }
+    if x86_sig >= 6 {
+        return 0.3;
+    }
+
+    1.0
+}
+
+/// Detect PowerPC patterns to penalize V850 false positives.
+fn detect_ppc_cross_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(2048);
+    let mut ppc_sig = 0u32;
+
+    let mut j = 0usize;
+    while j + 3 < check_len {
+        let w_be = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+        let w_le = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+
+        // PPC BLR
+        if w_be == 0x4E800020 || w_le == 0x4E800020 {
+            ppc_sig += 3;
+        }
+        // PPC NOP (ori 0,0,0)
+        if w_be == 0x60000000 || w_le == 0x60000000 {
+            ppc_sig += 1;
+        }
+        // PPC B/BL (opcode 18)
+        if (w_be >> 26) == 18 {
+            ppc_sig += 1;
+        }
+        if (w_le >> 26) == 18 {
+            ppc_sig += 1;
+        }
+
+        j += 4;
+    }
+
+    if ppc_sig >= 8 {
+        return 0.1;
+    }
+    if ppc_sig >= 4 {
+        return 0.3;
     }
     1.0
 }

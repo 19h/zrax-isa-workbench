@@ -906,6 +906,60 @@ pub fn score(data: &[u8]) -> i64 {
         }
     }
 
+    // ─── Cross-architecture penalty: MSP430 instruction density ───
+    //
+    // MSP430 16-bit instructions have distinctive opcode families:
+    // 0x4xxx (MOV), 0x5xxx (ADD), 0x8xxx (SUB), 0x9xxx (CMP),
+    // plus single-operand instructions 0x1xxx (RRC/SWPB/RRA/SXT/PUSH/CALL/RETI).
+    // MSP430 code also uses distinctive immediate patterns like:
+    // MOV @SP+, PC (RET) = 0x4130, MOV #0, R3 (NOP) = 0x4303.
+    // If a high fraction of halfwords match MSP430 patterns, penalize.
+    if data.len() >= 64 {
+        let mut msp_valid = 0u32;
+        let mut msp_total = 0u32;
+        let mut msp_anchors = 0u32;
+        let mut j = 0;
+        while j + 1 < data.len() {
+            let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+            msp_total += 1;
+            // MSP430 dual-operand instructions: opcode in bits 15:12
+            let top4 = hw >> 12;
+            if matches!(
+                top4,
+                0x4 | 0x5 | 0x6 | 0x7 | 0x8 | 0x9 | 0xA | 0xB | 0xC | 0xD | 0xE | 0xF
+            ) {
+                msp_valid += 1;
+            }
+            // MSP430 single-operand instructions: bits 15:7 = 000100xxx
+            else if (hw & 0xFC00) == 0x1000 {
+                msp_valid += 1;
+            }
+            // MSP430 conditional branches: bits 15:13 = 001
+            else if (hw & 0xE000) == 0x2000 {
+                msp_valid += 1;
+            }
+            // MSP430 anchors
+            if hw == 0x4130 {
+                msp_anchors += 1;
+            } // RET
+            if hw == 0x4303 {
+                msp_anchors += 1;
+            } // NOP
+            if hw == 0x1300 {
+                msp_anchors += 1;
+            } // RETI
+            j += 2;
+        }
+        if msp_total > 20 {
+            let msp_frac = msp_valid as f64 / msp_total as f64;
+            if msp_frac > 0.6 && msp_anchors >= 1 {
+                total_score = (total_score as f64 * 0.10) as i64;
+            } else if msp_frac > 0.7 {
+                total_score = (total_score as f64 * 0.20) as i64;
+            }
+        }
+    }
+
     total_score.max(0)
 }
 

@@ -429,17 +429,17 @@ fn score_word(word: u16) -> (i64, bool, bool, bool) {
     // === High-confidence exact patterns ===
     // NOP (0x0009) - exact single value
     if is_nop(word) {
-        return (25, false, false, true);
+        return (10, false, false, true);
     }
 
     // RTS (return) - exact single value
     if is_rts(word) {
-        return (30, true, false, true);
+        return (12, true, false, true);
     }
 
     // RTE (return from exception)
     if word == patterns::RTE {
-        return (25, true, false, true);
+        return (10, true, false, true);
     }
 
     // CLRT, SETT, CLRMAC, DIV0U, SLEEP - exact values
@@ -447,27 +447,22 @@ fn score_word(word: u16) -> (i64, bool, bool, bool) {
         word,
         patterns::CLRT | patterns::SETT | patterns::CLRMAC | patterns::DIV0U | patterns::SLEEP
     ) {
-        return (15, false, false, true);
+        return (6, false, false, true);
     }
 
     // TRAPA (0xC3xx) - 256 values out of 65536 = 0.39%
-    // Score positively but do NOT mark as distinctive. TRAPA is a valid SH
-    // instruction, but 0xC3xx patterns are also common fill/padding bytes
-    // in non-SH firmware (e.g., Bosch ECU EEPROMs use 0xC3 fill).
-    // The run-length detector handles bulk fill, but scattered 0xC3xx values
-    // should not alone satisfy the structural requirement for "this is SH code".
     if is_trapa(word) {
-        return (8, false, false, false);
+        return (3, false, false, false);
     }
 
     // JSR @Rm (0x4m0B) - 16 values = 0.024%
     if is_jsr(word) {
-        return (10, false, true, true);
+        return (5, false, true, true);
     }
 
     // JMP @Rm (0x4m2B) - 16 values = 0.024%
     if is_jmp(word) {
-        return (8, false, false, true);
+        return (4, false, false, true);
     }
 
     // BSR (0xBxxx) - 6.25% of space → reduced score
@@ -663,6 +658,74 @@ fn cross_arch_penalty_be(word: u16) -> i64 {
     if (word & 0xFF00) == 0x6100 {
         return -5;
     } // m68k BSR.B
+
+    // SPARC patterns (32-bit BE instructions read as two 16-bit BE halfwords).
+    // SPARC instructions are 32-bit, so we see their upper and lower halves as
+    // separate 16-bit values. Many SPARC opcodes produce halfwords that
+    // coincidentally match SH format groups (especially formats 1,2,3,5,6,7,9,A,B,D,E
+    // which cover 75%+ of the 16-bit space).
+    //
+    // SPARC "save %sp, -N, %sp" upper half: op=10, rd=01110 (sp=o6=r14),
+    // op3=111100 → bits 31:16 = 0x9DE3 → format 9 in SH (MOV.W @(disp,PC))
+    if word == 0x9DE3 {
+        return -12;
+    } // SPARC save (upper half)
+      // SPARC "save" lower halves: common immediate values like -96, -112, etc.
+      // 0xBF40 = -64-16 region, 0xBFA0 = -96, etc.
+    if word == 0xBFA0 || word == 0xBF90 || word == 0xBF80 || word == 0xBF60 || word == 0xBF40 {
+        return -8;
+    } // SPARC save lower halves (common frame sizes)
+
+    // SPARC "restore" = 0x81E80000 → upper=0x81E8, lower=0x0000
+    if word == 0x81E8 {
+        return -12;
+    } // SPARC restore (upper half)
+
+    // SPARC "ret" = jmpl %i7+8, %g0 = 0x81C7E008 → upper=0x81C7, lower=0xE008
+    if word == 0x81C7 {
+        return -12;
+    } // SPARC ret (upper half)
+    if word == 0xE008 {
+        return -8;
+    } // SPARC ret (lower half)
+
+    // SPARC "retl" = jmpl %o7+8, %g0 = 0x81C3E008 → upper=0x81C3
+    if word == 0x81C3 {
+        return -10;
+    } // SPARC retl (upper half)
+
+    // SPARC NOP = sethi 0, %g0 = 0x01000000 → upper=0x0100
+    if word == 0x0100 {
+        return -8;
+    } // SPARC NOP (upper half)
+
+    // SPARC "call" instructions: op=01 → bits 31:30 = 01 → upper half 0x40xx-0x7Fxx
+    // These overlap heavily with SH format 4 (system/shift) and formats 5,6,7.
+    // We only penalize the most common call patterns where disp30 is small
+    // (near calls), producing upper halves 0x4000-0x400F.
+    if (word & 0xFFF0) == 0x4000 && word != 0x400B {
+        return -5;
+    } // SPARC near call (not SH JSR)
+
+    // SPARC "sethi" upper halves: op=00, op2=100 → bits 31:22 = 00_xxxxx_100
+    // Common pattern: sethi %hi(addr), %reg → upper half varies but
+    // register g1 (rd=00001): 0x0320-0x03FF range
+    // register o0 (rd=01000): 0x1100-0x11FF range
+    // etc. Too broad to penalize individually.
+
+    // SPARC branch instructions: op=00, op2=010 (Bicc) or 110 (FBfcc)
+    // Bicc upper halves have form 0x_0aaa_a010 where a=cond+annul
+    // Common: ba (always) = 0x10800000 → upper=0x1080
+    // be (equal) = 0x02800000 → upper=0x0280
+    // bne = 0x12800000 → upper=0x1280
+    // bg = 0x14800000 → upper=0x1480
+    // ble = 0x08800000 → upper=0x0880
+    // bge = 0x16800000 → upper=0x1680
+    // bl = 0x06800000 → upper=0x0680
+    // These are all format 0/1 in SH. Penalize the most distinctive ones.
+    if word == 0x1080 || word == 0x1280 || word == 0x0280 {
+        return -5;
+    } // SPARC ba/bne/be upper half
 
     // x86-64 byte pairs that commonly appear as BE halfwords:
     // REX.W (0x48) followed by common opcodes produces distinctive BE halfwords
@@ -1069,61 +1132,61 @@ pub fn score(data: &[u8]) -> (i64, i64) {
         // Detect compound delay-slot patterns (prev_word; current_word)
         // These are extremely distinctive SH idioms.
         {
-            // BE compound patterns
+            // BE compound patterns — reduced bonuses
             if word_be == patterns::NOP {
                 match prev_word_be {
                     w if w == patterns::RTS => {
-                        score_be += 40;
+                        score_be += 15;
                         compound_be += 1;
                     }
                     w if w == patterns::RTE => {
-                        score_be += 35;
+                        score_be += 12;
                         compound_be += 1;
                     }
                     w if is_jsr(w) => {
-                        score_be += 30;
+                        score_be += 10;
                         compound_be += 1;
                     }
                     w if is_jmp(w) => {
-                        score_be += 25;
+                        score_be += 8;
                         compound_be += 1;
                     }
                     w if is_bra(w) => {
-                        score_be += 15;
+                        score_be += 5;
                         compound_be += 1;
                     }
                     w if is_bsr(w) => {
-                        score_be += 15;
+                        score_be += 5;
                         compound_be += 1;
                     }
                     _ => {}
                 }
             }
-            // LE compound patterns
+            // LE compound patterns — reduced bonuses
             if word_le == patterns::NOP {
                 match prev_word_le {
                     w if w == patterns::RTS => {
-                        score_le += 40;
+                        score_le += 15;
                         compound_le += 1;
                     }
                     w if w == patterns::RTE => {
-                        score_le += 35;
+                        score_le += 12;
                         compound_le += 1;
                     }
                     w if is_jsr(w) => {
-                        score_le += 30;
+                        score_le += 10;
                         compound_le += 1;
                     }
                     w if is_jmp(w) => {
-                        score_le += 25;
+                        score_le += 8;
                         compound_le += 1;
                     }
                     w if is_bra(w) => {
-                        score_le += 15;
+                        score_le += 5;
                         compound_le += 1;
                     }
                     w if is_bsr(w) => {
-                        score_le += 15;
+                        score_le += 5;
                         compound_le += 1;
                     }
                     _ => {}
@@ -1196,6 +1259,169 @@ pub fn score(data: &[u8]) -> (i64, i64) {
 
         prev_word_be = word_be;
         prev_word_le = word_le;
+    }
+
+    // Cross-architecture penalty: detect SPARC 32-bit instructions in the BE stream.
+    // SPARC uses fixed 32-bit BE instructions. When read as pairs of 16-bit BE
+    // halfwords, they produce values that broadly match SH format groups (SH covers
+    // ~80%+ of the 16-bit opcode space). We detect common SPARC instruction patterns
+    // at the 32-bit level and apply a multiplier penalty to the BE score.
+    {
+        let mut sparc_hits = 0u32;
+        let len = data.len();
+        let mut j = 0;
+        while j + 3 < len {
+            let w = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+            // SPARC instruction encoding: bits 31:30 = op
+            let op = w >> 30;
+            match op {
+                // op=01: CALL (disp30)
+                1 => {
+                    sparc_hits += 1;
+                }
+                // op=00: branches (Bicc, FBfcc, sethi)
+                0 => {
+                    let op2 = (w >> 22) & 0x7;
+                    match op2 {
+                        // 010 = Bicc, 110 = FBfcc, 100 = SETHI/NOP
+                        2 | 4 | 6 => {
+                            sparc_hits += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                // op=10: arithmetic/logic
+                2 => {
+                    let op3 = (w >> 19) & 0x3F;
+                    // Common ALU: ADD=0, SUB=4, AND=1, OR=2, XOR=3, SLL=37, SRL=38, SRA=39
+                    // SAVE=60, RESTORE=61, JMPL=56, RD/WR special regs
+                    match op3 {
+                        0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | // ADD,AND,OR,XOR,SUB,ANDN,ORN,XNOR
+                        0x10 | 0x11 | 0x12 | 0x14 |       // ADDCC,ANDCC,ORCC,SUBCC
+                        0x25 | 0x26 | 0x27 |               // SLL,SRL,SRA
+                        0x38 | 0x3C | 0x3D => {            // JMPL,SAVE,RESTORE
+                            sparc_hits += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                // op=11: loads/stores
+                3 => {
+                    let op3 = (w >> 19) & 0x3F;
+                    // Common loads/stores: LD=0, LDB=1, LDH=2, LDD=3, ST=4, STB=5, STH=6, STD=7
+                    // LDSB=9, LDSH=10, LDF=32, STF=36, LDDF=35, STDF=39
+                    if op3 <= 15 || (op3 >= 32 && op3 <= 39) {
+                        sparc_hits += 1;
+                    }
+                }
+                _ => {}
+            }
+            j += 4;
+        }
+        // If a significant fraction of 32-bit words decode as valid SPARC instructions,
+        // this is likely SPARC data, not SH.
+        let total_words = (len / 4).max(1) as f64;
+        let sparc_fraction = sparc_hits as f64 / total_words;
+        if sparc_fraction > 0.5 {
+            // Strong SPARC evidence: apply heavy penalty
+            score_be = (score_be as f64 * 0.15) as i64;
+        } else if sparc_fraction > 0.3 {
+            score_be = (score_be as f64 * 0.30) as i64;
+        }
+    }
+
+    // Cross-architecture penalty: detect AVR patterns in the LE stream.
+    // AVR uses 16-bit LE instructions with distinctive patterns. The SH LE
+    // scorer already penalizes individual AVR instructions via cross_arch_penalty_le,
+    // but we need a broader structural check for AVR-dense data.
+    {
+        let mut avr_hits = 0u32;
+        let len = data.len();
+        let mut j = 0;
+        while j + 1 < len {
+            let w = u16::from_le_bytes([data[j], data[j + 1]]);
+            // AVR instruction patterns:
+            // NOP = 0x0000
+            if w == 0x0000 {
+                avr_hits += 1;
+            }
+            // RET = 0x9508, RETI = 0x9518
+            else if w == 0x9508 || w == 0x9518 {
+                avr_hits += 1;
+            }
+            // PUSH Rr = 0x920F (mask 0xFE0F)
+            else if (w & 0xFE0F) == 0x920F {
+                avr_hits += 1;
+            }
+            // POP Rd = 0x900F (mask 0xFE0F)
+            else if (w & 0xFE0F) == 0x900F {
+                avr_hits += 1;
+            }
+            // IN Rd,A = 0xB000 (mask 0xF800)
+            else if (w & 0xF800) == 0xB000 {
+                avr_hits += 1;
+            }
+            // OUT A,Rr = 0xB800 (mask 0xF800)
+            else if (w & 0xF800) == 0xB800 {
+                avr_hits += 1;
+            }
+            // LDI Rd,K = 0xE000 (mask 0xF000) — only r16-r31
+            else if (w & 0xF000) == 0xE000 {
+                avr_hits += 1;
+            }
+            // MOVW Rd,Rr = 0x0100 (mask 0xFF00)
+            else if (w & 0xFF00) == 0x0100 {
+                avr_hits += 1;
+            }
+            // STD Y+q, Rr = 0x8208 (mask 0xD208)
+            else if (w & 0xD208) == 0x8208 {
+                avr_hits += 1;
+            }
+            // LDD Rd, Y+q = 0x8008 (mask 0xD208)
+            else if (w & 0xD208) == 0x8008 {
+                avr_hits += 1;
+            }
+            // RCALL = 0xD000 (mask 0xF000)
+            else if (w & 0xF000) == 0xD000 {
+                avr_hits += 1;
+            }
+            // RJMP = 0xC000 (mask 0xF000)
+            else if (w & 0xF000) == 0xC000 {
+                avr_hits += 1;
+            }
+            // CP/CPC/CPI patterns
+            else if (w & 0xFC00) == 0x1400 || (w & 0xFC00) == 0x0400 {
+                avr_hits += 1;
+            }
+            // ADD/ADC = 0x0C00/0x1C00 (mask 0xFC00)
+            else if (w & 0xFC00) == 0x0C00 || (w & 0xFC00) == 0x1C00 {
+                avr_hits += 1;
+            }
+            // SUB/SBC = 0x1800/0x0800 (mask 0xFC00)
+            else if (w & 0xFC00) == 0x1800 || (w & 0xFC00) == 0x0800 {
+                avr_hits += 1;
+            }
+            // AND/OR/EOR = 0x2000/0x2800/0x2400 (mask 0xFC00)
+            else if (w & 0xFC00) == 0x2000 || (w & 0xFC00) == 0x2800 || (w & 0xFC00) == 0x2400 {
+                avr_hits += 1;
+            }
+            // MOV = 0x2C00 (mask 0xFC00)
+            else if (w & 0xFC00) == 0x2C00 {
+                avr_hits += 1;
+            }
+            // BRBS/BRBC = 0xF000/0xF400 (mask 0xFC00)
+            else if (w & 0xFC00) == 0xF000 || (w & 0xFC00) == 0xF400 {
+                avr_hits += 1;
+            }
+            j += 2;
+        }
+        let total_halfwords = (len / 2).max(1) as f64;
+        let avr_fraction = avr_hits as f64 / total_halfwords;
+        if avr_fraction > 0.5 {
+            score_le = (score_le as f64 * 0.15) as i64;
+        } else if avr_fraction > 0.3 {
+            score_le = (score_le as f64 * 0.30) as i64;
+        }
     }
 
     // Structural requirement: real SH code needs distinctive patterns
@@ -1394,12 +1620,12 @@ mod tests {
     #[test]
     fn test_score_word_helper() {
         // Direct test of score_word for key patterns
-        assert_eq!(score_word(patterns::NOP), (25, false, false, true));
-        assert_eq!(score_word(patterns::RTS), (30, true, false, true));
-        assert_eq!(score_word(patterns::RTE), (25, true, false, true));
+        assert_eq!(score_word(patterns::NOP), (10, false, false, true));
+        assert_eq!(score_word(patterns::RTS), (12, true, false, true));
+        assert_eq!(score_word(patterns::RTE), (10, true, false, true));
         // JSR @R0 = 0x400B
         let (delta, _, is_call, is_dist) = score_word(0x400B);
-        assert_eq!(delta, 10);
+        assert_eq!(delta, 5);
         assert!(is_call);
         assert!(is_dist);
         // Zero word — neutral (padding/erased flash)

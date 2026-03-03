@@ -196,107 +196,104 @@ pub fn score(data: &[u8]) -> i64 {
     if total_insns > 10 {
         let valid_ratio = valid_insn_count as f64 / total_insns as f64;
 
-        // High valid instruction ratio
-        if valid_ratio > 0.55 && total_insns > 50 {
-            total_score += (valid_insn_count as i64) / 4;
+        // High valid instruction ratio — tightened threshold
+        if valid_ratio > 0.70 && total_insns > 100 {
+            total_score += (valid_insn_count as i64) / 8;
         }
 
-        // RET (0xCB) — near return, every function ends with it
-        if ret_count > 2 {
-            total_score += (ret_count as i64) * 8;
+        // RET (0xCB) — near return
+        if ret_count > 4 {
+            total_score += (ret_count as i64) * 3;
         }
 
-        // RETS (0xDB) — segmented return, highly distinctive of C166
+        // RETS (0xDB) — segmented return, distinctive of C166
         if rets_count > 0 {
-            total_score += (rets_count as i64) * 15;
+            total_score += (rets_count as i64) * 5;
         }
 
-        // CALLR (0xBB) — relative call, extremely common in C166 code
-        if callr_count > 2 {
-            total_score += (callr_count as i64) * 8;
+        // CALLR (0xBB) — relative call
+        if callr_count > 4 {
+            total_score += (callr_count as i64) * 3;
         }
 
-        // CALLS (0xDA) — segmented call, distinctive
+        // CALLS (0xDA) — segmented call
         if calls_count > 0 {
-            total_score += (calls_count as i64) * 12;
+            total_score += (calls_count as i64) * 4;
         }
 
         // CALLI (0xCA) — indirect call
         if calli_count > 0 {
-            total_score += (calli_count as i64) * 10;
+            total_score += (calli_count as i64) * 3;
         }
 
-        // JMPR (0x_D) — conditional relative jump, very common
-        if jmpr_count > 3 {
-            total_score += (jmpr_count as i64) * 5;
+        // JMPR (0x_D) — conditional relative jump
+        if jmpr_count > 5 {
+            total_score += (jmpr_count as i64) * 2;
         }
 
-        // EXTS/EXTR (0xD7/0xD1) — unique to C166, no other ISA has these
-        // These are extremely strong signals — worth extra weight
+        // EXTS/EXTR (0xD7/0xD1) — unique to C166
         if exts_count > 0 {
-            total_score += (exts_count as i64) * 20;
+            total_score += (exts_count as i64) * 5;
         }
         if extr_count > 0 {
-            total_score += (extr_count as i64) * 20;
+            total_score += (extr_count as i64) * 5;
         }
 
         // PUSH/POP (0xEC/0xFC)
-        if push_count > 1 {
-            total_score += (push_count as i64) * 5;
+        if push_count > 2 {
+            total_score += (push_count as i64) * 2;
         }
-        if pop_count > 1 {
-            total_score += (pop_count as i64) * 5;
-        }
-
-        // BSET/BCLR (0x_F/0x_E) — bit operations
-        if bset_count > 0 || bclr_count > 0 {
-            total_score += ((bset_count + bclr_count) as i64) * 6;
+        if pop_count > 2 {
+            total_score += (pop_count as i64) * 2;
         }
 
-        // BFLDL/BFLDH (0x0A/0x1A) — bit field operations, quite distinctive
+        // BSET/BCLR — bit operations
+        if bset_count + bclr_count > 2 {
+            total_score += ((bset_count + bclr_count) as i64) * 2;
+        }
+
+        // BFLDL/BFLDH — bit field operations
         if bfld_count > 0 {
-            total_score += (bfld_count as i64) * 10;
+            total_score += (bfld_count as i64) * 3;
         }
 
-        // JB/JNB (0x8A/0x9A) — bit test and jump, distinctive
+        // JB/JNB — bit test and jump
         if jb_jnb_count > 0 {
-            total_score += (jb_jnb_count as i64) * 8;
+            total_score += (jb_jnb_count as i64) * 3;
         }
 
-        // SFR references — accessing C166 hardware registers is a very strong signal
-        if sfr_ref_count > 2 {
-            total_score += (sfr_ref_count as i64) * 12;
+        // SFR references
+        if sfr_ref_count > 3 {
+            total_score += (sfr_ref_count as i64) * 4;
         }
 
-        // MOV instructions — backbone of any code
-        if mov_count > 5 {
-            total_score += (mov_count as i64) * 2;
+        // MOV instructions — raised threshold
+        if mov_count > 8 {
+            total_score += (mov_count as i64) * 1;
         }
 
-        // Combined structural signature
+        // Combined structural signature — require more features
         let signature_features = [
-            ret_count > 2,                                      // Function returns
-            callr_count > 2 || calls_count > 0,                 // Subroutine calls
-            jmpr_count > 3,                                     // Conditional branches
-            push_count > 1 && pop_count > 1,                    // Stack operations
-            mov_count > 5,                                      // Data movement
+            ret_count > 3,                                      // Function returns
+            callr_count > 3 || calls_count > 0,                 // Subroutine calls
+            jmpr_count > 5,                                     // Conditional branches
+            push_count > 2 && pop_count > 2,                    // Stack operations
+            mov_count > 8,                                      // Data movement
             exts_count > 0 || extr_count > 0,                   // Segmented operations (unique!)
-            sfr_ref_count > 2,                                  // Hardware register access
+            sfr_ref_count > 3,                                  // Hardware register access
             bset_count > 0 || bclr_count > 0 || bfld_count > 0, // Bit operations
             rets_count > 0 || calls_count > 0,                  // Segmented call/return
         ];
         let feature_count = signature_features.iter().filter(|&&f| f).count();
-        if feature_count >= 6 {
-            total_score += (valid_insn_count as i64) / 2;
-        } else if feature_count >= 4 {
+        if feature_count >= 7 {
             total_score += (valid_insn_count as i64) / 4;
-        } else if feature_count >= 3 {
+        } else if feature_count >= 5 {
             total_score += (valid_insn_count as i64) / 6;
+        } else if feature_count >= 4 {
+            total_score += (valid_insn_count as i64) / 8;
         }
 
         // ─── RET;NOP pattern detection ───
-        // C166 code commonly has RET (0xCB 0x00) followed by NOP (0xCC 0x00)
-        // for alignment. Also RETS;NOP. Scan for these.
         if data.len() >= 4 {
             let mut ret_nop_count: u32 = 0;
             let mut j = 0;
@@ -318,7 +315,7 @@ pub fn score(data: &[u8]) -> i64 {
                 j += 2;
             }
             if ret_nop_count > 0 {
-                total_score += (ret_nop_count as i64) * 15;
+                total_score += (ret_nop_count as i64) * 5;
             }
         }
     }
@@ -340,15 +337,46 @@ pub fn score(data: &[u8]) -> i64 {
         total_score = (total_score as f64 * sh_penalty) as i64;
     }
 
-    if data.len() > 4096 && ret_count == 0 {
-        return 0;
-    }
-    {
-        if total_insns > 50 && ret_count > 0 {
-            total_score *= 5;
+    // ─── Structural evidence requirement ───
+    let call_total = callr_count + calls_count + calli_count;
+    let ret_total = ret_count + rets_count;
+    if data.len() > 2048 {
+        if ret_total < 2 || call_total < 2 {
+            return 0;
         }
-        cmp::max(0, total_score)
+    } else if data.len() > 512 {
+        if ret_total == 0 || call_total == 0 {
+            return 0;
+        }
     }
+
+    // ─── Cross-architecture penalties ───
+    let arm_penalty = detect_arm_cross_arch_penalty(data);
+    if arm_penalty < 1.0 {
+        total_score = (total_score as f64 * arm_penalty) as i64;
+    }
+    let be_penalty = detect_big_endian_cross_arch_penalty(data);
+    if be_penalty < 1.0 {
+        total_score = (total_score as f64 * be_penalty) as i64;
+    }
+    let x86_penalty = detect_x86_cross_arch_penalty(data);
+    if x86_penalty < 1.0 {
+        total_score = (total_score as f64 * x86_penalty) as i64;
+    }
+    let riscv_penalty = detect_riscv_cross_arch_penalty(data);
+    if riscv_penalty < 1.0 {
+        total_score = (total_score as f64 * riscv_penalty) as i64;
+    }
+    let avr_penalty = detect_avr_cross_arch_penalty(data);
+    if avr_penalty < 1.0 {
+        total_score = (total_score as f64 * avr_penalty) as i64;
+    }
+    let hex_penalty = detect_hexagon_cross_arch_penalty(data);
+    if hex_penalty < 1.0 {
+        total_score = (total_score as f64 * hex_penalty) as i64;
+    }
+
+    cmp::max(0, total_score)
 }
 
 /// Detect SuperH firmware structural signatures and return a multiplier
@@ -467,43 +495,41 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
         // RET — near return. Second byte should be 0x00.
         0xCB => {
             if operand == 0x00 {
-                return (12, 2);
+                return (5, 2);
             }
-            return (3, 2); // Non-zero operand is unusual but may occur
+            return (1, 2);
         }
-        // RETS — segmented return (far return). Very distinctive.
+        // RETS — segmented return (far return). Distinctive.
         0xDB => {
             if operand == 0x00 {
-                return (15, 2);
+                return (6, 2);
             }
-            return (4, 2);
+            return (2, 2);
         }
         // NOP — 0xCC 0x00
         0xCC => {
             if operand == 0x00 {
-                return (5, 2);
+                return (2, 2);
             }
             return (1, 2);
         }
         // PUSH reg
         0xEC => {
-            // Operand encodes the register: 0xFn where n = reg number
             if (operand & 0xF0) == 0xF0 {
-                return (6, 2);
+                return (3, 2);
             }
-            // PUSH can also take a DPP-prefixed SFR
-            return (3, 2);
+            return (1, 2);
         }
         // POP reg
         0xFC => {
             if (operand & 0xF0) == 0xF0 {
-                return (6, 2);
+                return (3, 2);
             }
-            return (3, 2);
+            return (1, 2);
         }
-        // CALLR — relative call (2 bytes: opcode + signed offset)
+        // CALLR — relative call
         0xBB => {
-            return (8, 2);
+            return (3, 2);
         }
         _ => {}
     }
@@ -516,11 +542,11 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
         // All 16 condition codes are valid (0=cc_UC to F=cc_NV)
         // cc_UC (unconditional) and common conditions score higher
         let cc_score = match cc {
-            0x00 => 6,        // cc_UC (unconditional jump)
-            0x02 | 0x03 => 6, // cc_Z / cc_NZ (equal/not equal)
-            0x06 | 0x07 => 5, // cc_C / cc_NC (carry/no carry)
-            0x04 | 0x05 => 5, // cc_V / cc_NV
-            _ => 4,
+            0x00 => 3,        // cc_UC (unconditional jump)
+            0x02 | 0x03 => 3, // cc_Z / cc_NZ (equal/not equal)
+            0x06 | 0x07 => 2, // cc_C / cc_NC (carry/no carry)
+            0x04 | 0x05 => 2, // cc_V / cc_NV
+            _ => 2,
         };
         return (cc_score, 2);
     }
@@ -530,13 +556,12 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
     // BCLR: upper nibble = bit number (q), lower nibble = 0xE
     // Second byte encodes the bit-addressable SFR/register byte address
     if (opcode & 0x0F) == 0x0F && opcode >= 0x0F {
-        // BSET — validate that operand looks like an SFR byte address
-        // C166 SFR byte addresses in BSET/BCLR are (addr >> 1), in range 0x00-0xFF
-        return (7, 2);
+        // BSET
+        return (3, 2);
     }
     if (opcode & 0x0F) == 0x0E && opcode >= 0x0E {
         // BCLR
-        return (7, 2);
+        return (3, 2);
     }
 
     // ─── EXTS — extended segment override (UNIQUE to C166!) ───
@@ -544,66 +569,66 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
     if opcode == 0xD7 {
         // EXTS #seg, #pag_cnt — 4-byte form
         if i + 3 < data.len() {
-            return (18, 4);
+            return (8, 4);
         }
-        return (10, 2);
+        return (4, 2);
     }
 
     // ─── EXTR — extended register bank (UNIQUE to C166!) ───
     if opcode == 0xD1 {
-        return (18, 2);
+        return (8, 2);
     }
 
     // ─── 4-byte instructions with immediate/memory operands ───
 
-    // MOV Rn, #imm16 (0xE6) — very common
+    // MOV Rn, #imm16 (0xE6)
     if opcode == 0xE6 {
         if i + 3 < data.len() {
-            return (6, 4);
+            return (2, 4);
         }
         return (-1, 2);
     }
 
-    // MOVB RLn, #imm8 (0xE7) — byte register load
+    // MOVB RLn, #imm8 (0xE7)
     if opcode == 0xE7 {
-        return (5, 2); // Only 2 bytes (opcode + imm8 in operand byte)
+        return (2, 2);
     }
 
-    // MOV Rn, #imm4 (0xE0) — small immediate load
+    // MOV Rn, #imm4 (0xE0)
     if opcode == 0xE0 {
-        return (5, 2);
+        return (2, 2);
     }
 
-    // MOV Rn, Rm (0xF0) — register-to-register
+    // MOV Rn, Rm (0xF0)
     if opcode == 0xF0 {
-        return (4, 2);
+        return (2, 2);
     }
 
-    // MOV Rn, [mem] (0xF2) — memory load
+    // MOV Rn, [mem] (0xF2)
     if opcode == 0xF2 {
         if i + 3 < data.len() {
-            return (5, 4);
+            return (2, 4);
         }
         return (-1, 2);
     }
 
-    // MOVB Rn, Rm (0xF4) — byte register move
+    // MOVB Rn, Rm (0xF4)
     if opcode == 0xF4 {
-        return (4, 2);
+        return (2, 2);
     }
 
-    // MOV [mem], Rn (0xF6) — memory store
+    // MOV [mem], Rn (0xF6)
     if opcode == 0xF6 {
         if i + 3 < data.len() {
-            return (5, 4);
+            return (2, 4);
         }
         return (-1, 2);
     }
 
-    // MOVB [mem], Rn (0xF7) — byte memory store
+    // MOVB [mem], Rn (0xF7)
     if opcode == 0xF7 {
         if i + 3 < data.len() {
-            return (5, 4);
+            return (2, 4);
         }
         return (-1, 2);
     }
@@ -612,26 +637,26 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
     match opcode {
         0xCA => {
             // CALLI cc, [Rn] — indirect call with condition
-            return (8, 2);
+            return (4, 2);
         }
         0xDA => {
             // CALLS seg, addr — segmented call (4 bytes)
             if i + 3 < data.len() {
-                return (12, 4);
+                return (5, 4);
             }
             return (-1, 2);
         }
         0xEA => {
             // JMPA cc, addr — absolute jump with condition (4 bytes)
             if i + 3 < data.len() {
-                return (6, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
         0xFA => {
             // JMPS seg, addr — segmented jump (4 bytes)
             if i + 3 < data.len() {
-                return (10, 4);
+                return (4, 4);
             }
             return (-1, 2);
         }
@@ -643,28 +668,28 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
         0x8A => {
             // JB bitaddr.q, rel — jump if bit set
             if i + 3 < data.len() {
-                return (8, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
         0x9A => {
             // JNB bitaddr.q, rel — jump if bit not set
             if i + 3 < data.len() {
-                return (8, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
         0xAA => {
             // JBC bitaddr.q, rel — jump if bit set and clear it
             if i + 3 < data.len() {
-                return (10, 4);
+                return (4, 4);
             }
             return (-1, 2);
         }
         0xBA => {
             // JNBS bitaddr.q, rel — jump if bit not set and set it
             if i + 3 < data.len() {
-                return (10, 4);
+                return (4, 4);
             }
             return (-1, 2);
         }
@@ -675,14 +700,14 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
     if opcode == 0x0A {
         // BFLDL bitoff, #mask, #data
         if i + 3 < data.len() {
-            return (10, 4);
+            return (4, 4);
         }
         return (-1, 2);
     }
     if opcode == 0x1A {
         // BFLDH bitoff, #mask, #data
         if i + 3 < data.len() {
-            return (10, 4);
+            return (4, 4);
         }
         return (-1, 2);
     }
@@ -692,44 +717,44 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
     // High nibble of operand = destination reg, low nibble = source reg
     match opcode {
         // ADD Rn, Rm
-        0x00 => return (3, 2),
+        0x00 => return (1, 2),
         // ADDB RLn, RLm
-        0x10 => return (3, 2),
+        0x10 => return (1, 2),
         // SUB Rn, Rm
-        0x20 => return (3, 2),
+        0x20 => return (1, 2),
         // SUBB RLn, RLm
-        0x30 => return (3, 2),
+        0x30 => return (1, 2),
         // CMP Rn, Rm
-        0x40 => return (4, 2),
+        0x40 => return (2, 2),
         // CMPB RLn, RLm
-        0x41 => return (3, 2),
+        0x41 => return (1, 2),
         // XOR Rn, Rm
-        0x50 => return (3, 2),
+        0x50 => return (1, 2),
         // AND Rn, Rm
-        0x60 => return (3, 2),
+        0x60 => return (1, 2),
         // OR Rn, Rm
-        0x70 => return (3, 2),
+        0x70 => return (1, 2),
         _ => {}
     }
 
     // ─── ALU operations with register indirect ───
     match opcode {
         // ADD Rn, [Rm] / ADD Rn, [Rm+]
-        0x08 | 0x09 => return (4, 2),
+        0x08 | 0x09 => return (2, 2),
         // ADDB
-        0x18 | 0x19 => return (3, 2),
+        0x18 | 0x19 => return (1, 2),
         // SUB
-        0x28 | 0x29 => return (4, 2),
+        0x28 | 0x29 => return (2, 2),
         // SUBB
-        0x38 | 0x39 => return (3, 2),
+        0x38 | 0x39 => return (1, 2),
         // CMP
-        0x48 | 0x49 => return (4, 2),
+        0x48 | 0x49 => return (2, 2),
         // XOR
-        0x58 | 0x59 => return (3, 2),
+        0x58 | 0x59 => return (1, 2),
         // AND
-        0x68 | 0x69 => return (3, 2),
+        0x68 | 0x69 => return (1, 2),
         // OR
-        0x78 | 0x79 => return (3, 2),
+        0x78 | 0x79 => return (1, 2),
         _ => {}
     }
 
@@ -739,13 +764,13 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
         0x06 | 0x16 | 0x26 | 0x36 | 0x46 | 0x56 | 0x66 | 0x76 => {
             // ADD/ADDB/SUB/SUBB/CMP/XOR/AND/OR Rn, #imm16
             if i + 3 < data.len() {
-                return (4, 4);
+                return (2, 4);
             }
             return (-1, 2);
         }
         0x07 | 0x17 | 0x27 | 0x37 | 0x47 | 0x57 | 0x67 | 0x77 => {
             // Byte immediate forms
-            return (3, 2);
+            return (1, 2);
         }
         _ => {}
     }
@@ -755,7 +780,7 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
         0x02 | 0x04 | 0x12 | 0x14 | 0x22 | 0x24 | 0x32 | 0x34 | 0x42 | 0x44 | 0x52 | 0x54
         | 0x62 | 0x64 | 0x72 | 0x74 => {
             if i + 3 < data.len() {
-                return (4, 4);
+                return (2, 4);
             }
             return (-1, 2);
         }
@@ -765,68 +790,68 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
     // ─── MOV indirect forms ───
     match opcode {
         // MOV [Rn], Rm
-        0x88 => return (4, 2),
+        0x88 => return (2, 2),
         // MOV Rn, [Rm+]
-        0x98 => return (4, 2),
+        0x98 => return (2, 2),
         // MOV [-Rn], Rm
-        0xA8 => return (4, 2),
+        0xA8 => return (2, 2),
         // MOV Rn, [Rm]
-        0xB8 => return (4, 2),
+        0xB8 => return (2, 2),
         // MOV [Rm], Rn (alternate encoding)
-        0xC8 => return (4, 2),
+        0xC8 => return (2, 2),
         // MOVB indirect forms
-        0x89 | 0x99 | 0xA9 | 0xB9 | 0xC9 => return (3, 2),
+        0x89 | 0x99 | 0xA9 | 0xB9 | 0xC9 => return (1, 2),
         _ => {}
     }
 
     // ─── MOVBZ / MOVBS (zero/sign extend) ───
     match opcode {
-        0xB0 | 0xB5 => return (4, 2), // MOVBZ
-        0xC0 | 0xC5 => return (4, 2), // MOVBS
-        0xD0 => return (4, 2),        // MOV byte indirect variants
+        0xB0 | 0xB5 => return (2, 2), // MOVBZ
+        0xC0 | 0xC5 => return (2, 2), // MOVBS
+        0xD0 => return (2, 2),        // MOV byte indirect variants
         _ => {}
     }
 
     // ─── Shift/rotate operations ───
     match opcode {
-        0x5C => return (4, 2), // SHL Rn, #cnt
-        0x7C => return (4, 2), // SHR Rn, #cnt
-        0x6C => return (4, 2), // ROL Rn, #cnt
-        0x4C => return (4, 2), // ROR Rn, #cnt
-        0xAC => return (4, 2), // ASHR Rn, #cnt
-        0xBC => return (3, 2), // PRIOR — find first bit (distinctive!)
+        0x5C => return (2, 2), // SHL Rn, #cnt
+        0x7C => return (2, 2), // SHR Rn, #cnt
+        0x6C => return (2, 2), // ROL Rn, #cnt
+        0x4C => return (2, 2), // ROR Rn, #cnt
+        0xAC => return (2, 2), // ASHR Rn, #cnt
+        0xBC => return (2, 2), // PRIOR — find first bit
         _ => {}
     }
 
     // ─── CMPI/CMPD — compare and increment/decrement (unique to C166!) ───
     match opcode {
-        0x80 => return (8, 2), // CMPI1 Rn, #imm4
+        0x80 => return (3, 2), // CMPI1 Rn, #imm4
         0x82 => {
             // CMPI1 Rn, #imm16
             if i + 3 < data.len() {
-                return (8, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
         0x84 => {
             // CMPI2 Rn, #imm16
             if i + 3 < data.len() {
-                return (8, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
-        0x90 => return (8, 2), // CMPD1 Rn, #imm4
+        0x90 => return (3, 2), // CMPD1 Rn, #imm4
         0x92 => {
             // CMPD1 Rn, #imm16
             if i + 3 < data.len() {
-                return (8, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
         0x94 => {
             // CMPD2 Rn, #imm16
             if i + 3 < data.len() {
-                return (8, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
@@ -835,77 +860,77 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
 
     // ─── MUL/DIV ───
     match opcode {
-        0x0B => return (5, 2), // MUL Rn, Rm
-        0x1B => return (5, 2), // MULU Rn, Rm
-        0x4B => return (5, 2), // DIV Rwn
-        0x5B => return (5, 2), // DIVU Rwn
-        0x6B => return (5, 2), // DIVL Rwn
-        0x7B => return (5, 2), // DIVLU Rwn
+        0x0B => return (2, 2), // MUL Rn, Rm
+        0x1B => return (2, 2), // MULU Rn, Rm
+        0x4B => return (2, 2), // DIV Rwn
+        0x5B => return (2, 2), // DIVU Rwn
+        0x6B => return (2, 2), // DIVL Rwn
+        0x7B => return (2, 2), // DIVLU Rwn
         _ => {}
     }
 
     // ─── Miscellaneous ───
     match opcode {
         // NEG Rn
-        0x81 => return (3, 2),
+        0x81 => return (1, 2),
         // CPL Rn (complement)
-        0x91 => return (3, 2),
+        0x91 => return (1, 2),
         // NEGB
-        0xA1 => return (3, 2),
+        0xA1 => return (1, 2),
         // CPLB
-        0xB1 => return (3, 2),
+        0xB1 => return (1, 2),
         // TRAP — software interrupt
-        0x9B => return (5, 2),
+        0x9B => return (2, 2),
         // RETI — return from interrupt
-        0xFB => return (10, 2),
+        0xFB => return (4, 2),
         // IDLE — enter idle mode
         0x87 => {
             if operand == 0x78 {
-                return (6, 2);
+                return (3, 2);
             }
             return (1, 2);
         }
         // SRST — software reset
         0xB7 => {
             if operand == 0x48 {
-                return (6, 2);
+                return (3, 2);
             }
             return (1, 2);
         }
         // SRVWDT — service watchdog timer
         0xA7 => {
             if operand == 0x58 {
-                return (6, 2);
+                return (3, 2);
             }
             return (1, 2);
         }
         // DISWDT — disable watchdog timer
         0xA5 => {
             if operand == 0x5A {
-                return (8, 2);
+                return (4, 2);
             }
             return (1, 2);
         }
         // EINIT — end of initialization
         0xB5 => {
             if operand == 0x4A {
-                return (8, 2);
+                return (4, 2);
             }
             return (1, 2);
         }
         // ATOMIC/EXTS prefix sequences
-        0xD4 => return (3, 2), // ATOMIC
+        0xD4 => return (2, 2), // ATOMIC
         // SCXT — switch context
         0xC6 => {
             if i + 3 < data.len() {
-                return (6, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
         // PCALL — push and call
         0xE2 => {
             if i + 3 < data.len() {
-                return (7, 4);
+                return (3, 4);
             }
             return (-1, 2);
         }
@@ -916,29 +941,31 @@ fn score_c166_instruction(opcode: u8, operand: u8, data: &[u8], i: usize) -> (i6
     match opcode {
         0xA2 | 0xA4 | 0xB2 | 0xB4 | 0xC2 | 0xC4 | 0xD2 | 0xD4 | 0xE2 | 0xE4 => {
             if i + 3 < data.len() {
-                return (4, 4);
+                return (2, 4);
             }
             return (-1, 2);
         }
         _ => {}
     }
 
-    // ─── Remaining even opcodes (0x_2, 0x_4, 0x_6) not yet matched ───
-    // These are generally 4-byte memory/immediate forms
+    // ─── Remaining even opcodes: DO NOT award points ───
+    // Previously this catch-all gave +2/+3 to any opcode with low nibble
+    // 0x02, 0x04, 0x06, 0x0A. This matches ~25% of all possible opcodes
+    // and causes massive false positives. The specific C166 instructions
+    // with these low nibbles have already been matched above.
     let lo = opcode & 0x0F;
     if lo == 0x02 || lo == 0x04 || lo == 0x06 {
         if i + 3 < data.len() {
-            return (2, 4);
+            return (0, 4); // Neutral: possibly valid but not distinctive
         }
-        return (-1, 2);
+        return (0, 2);
     }
 
-    // ─── Remaining 0x_A opcodes (4-byte bit operations) ───
     if lo == 0x0A {
         if i + 3 < data.len() {
-            return (3, 4);
+            return (0, 4); // Neutral
         }
-        return (-1, 2);
+        return (0, 2);
     }
 
     // ─── Everything else: default 2-byte instruction with ZERO score ───
@@ -1134,4 +1161,336 @@ fn detect_tricore_cross_arch_penalty(data: &[u8]) -> f64 {
         return 0.05; // 95% penalty
     }
     1.0
+}
+
+/// Detect ARM32/Thumb patterns in data.
+fn detect_arm_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(2048);
+
+    // ARM32: condition code 0xE (always) in bits [31:28] = byte[3] >> 4
+    let mut al_count = 0u32;
+    let mut check_count = 0u32;
+    let mut j = 0usize;
+    while j + 3 < check_len {
+        if data[j + 3] >> 4 == 0xE {
+            al_count += 1;
+        }
+        check_count += 1;
+        j += 4;
+    }
+    if check_count > 10 && (al_count as f64 / check_count as f64) > 0.40 {
+        return 0.15;
+    }
+
+    // Thumb: BX LR (0x4770), PUSH {LR} (0xB5xx), POP {PC} (0xBDxx)
+    let mut thumb_sig = 0u32;
+    j = 0;
+    while j + 1 < check_len {
+        let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+        if hw == 0x4770 {
+            thumb_sig += 3;
+        }
+        if hw & 0xFF00 == 0xB500 {
+            thumb_sig += 2;
+        }
+        if hw & 0xFF00 == 0xBD00 {
+            thumb_sig += 2;
+        }
+        if hw == 0xBF00 {
+            thumb_sig += 1;
+        }
+        j += 2;
+    }
+    if thumb_sig >= 8 {
+        return 0.15;
+    }
+
+    // AArch64: MRS/MSR patterns
+    let mut aarch64_sig = 0u32;
+    j = 0;
+    while j + 3 < check_len {
+        let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+        let top12 = w >> 20;
+        if top12 == 0xD53 || top12 == 0xD51 {
+            aarch64_sig += 1;
+        }
+        // AArch64 RET (0xD65F03C0)
+        if w == 0xD65F03C0 {
+            aarch64_sig += 3;
+        }
+        j += 4;
+    }
+    if aarch64_sig >= 3 {
+        return 0.12;
+    }
+
+    1.0
+}
+
+/// Detect big-endian ISA patterns (MIPS, PowerPC, SPARC, s390x, Hexagon).
+fn detect_big_endian_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(2048);
+    let mut mips_sig = 0u32;
+    let mut ppc_sig = 0u32;
+    let mut sparc_sig = 0u32;
+
+    let mut j = 0usize;
+    while j + 3 < check_len {
+        let w = u32::from_be_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+        // MIPS
+        if w == 0x03E00008 {
+            mips_sig += 3;
+        } // JR $ra
+        if (w >> 26) == 0x0F {
+            mips_sig += 1;
+        } // LUI
+        if (w >> 26) == 0x09 {
+            mips_sig += 1;
+        } // ADDIU
+          // MIPS LE (check both endianness)
+        let wle = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+        if wle == 0x03E00008 {
+            mips_sig += 3;
+        }
+        if (wle >> 26) == 0x0F {
+            mips_sig += 1;
+        }
+        // PowerPC
+        if w == 0x4E800020 {
+            ppc_sig += 3;
+        } // BLR
+        if w == 0x60000000 {
+            ppc_sig += 1;
+        } // NOP
+        if (w >> 26) == 18 {
+            ppc_sig += 1;
+        } // B/BL
+          // PPC LE
+        if wle == 0x4E800020 {
+            ppc_sig += 3;
+        }
+        // SPARC
+        if w == 0x81C7E008 {
+            sparc_sig += 3;
+        } // RET
+        if w == 0x01000000 {
+            sparc_sig += 1;
+        } // NOP
+        j += 4;
+    }
+
+    let max_sig = mips_sig.max(ppc_sig).max(sparc_sig);
+    if max_sig >= 8 {
+        return 0.1;
+    }
+    if max_sig >= 4 {
+        return 0.3;
+    }
+
+    // s390x
+    let mut s390_sig = 0u32;
+    j = 0;
+    while j + 1 < check_len {
+        let hw = u16::from_be_bytes([data[j], data[j + 1]]);
+        if hw == 0x07FE {
+            s390_sig += 2;
+        } // BCR 15,14 (return)
+        j += 2;
+    }
+    if s390_sig >= 6 {
+        return 0.15;
+    }
+
+    1.0
+}
+
+/// Detect x86/x86-64 patterns.
+fn detect_x86_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(2048);
+    let mut x86_sig = 0u32;
+
+    for j in 0..check_len {
+        match data[j] {
+            0xC3 => x86_sig += 2, // RET
+            0xCC => {
+                // C166 NOP is also 0xCC, but in x86 this is INT3
+                // Check if this looks like x86 context (preceded by RET or followed by push)
+                if j > 0 && data[j - 1] == 0xC3 {
+                    x86_sig += 1; // INT3 after RET = common x86 padding
+                }
+            }
+            0x55 => {
+                // PUSH EBP — extremely common x86 function prologue
+                if j + 2 < check_len && data[j + 1] == 0x89 && data[j + 2] == 0xE5 {
+                    x86_sig += 3; // PUSH EBP; MOV EBP, ESP
+                }
+            }
+            0xE8 => x86_sig += 1, // CALL rel32
+            _ => {}
+        }
+    }
+
+    // REX prefixes (0x40-0x4F) followed by common opcodes indicate x86-64
+    let mut rex_count = 0u32;
+    for j in 0..check_len.saturating_sub(1) {
+        if data[j] >= 0x40 && data[j] <= 0x4F {
+            let next = data[j + 1];
+            if next == 0x89
+                || next == 0x8B
+                || next == 0x83
+                || next == 0x01
+                || next == 0x29
+                || next == 0x53
+                || next == 0x55
+                || next == 0x56
+                || next == 0x57
+            {
+                rex_count += 1;
+            }
+        }
+    }
+    x86_sig += rex_count;
+
+    if x86_sig >= 10 {
+        return 0.12;
+    }
+    if x86_sig >= 5 {
+        return 0.3;
+    }
+
+    1.0
+}
+
+/// Detect RISC-V patterns.
+fn detect_riscv_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(2048);
+    let mut riscv_sig = 0u32;
+
+    let mut j = 0usize;
+    while j + 3 < check_len {
+        let w = u32::from_le_bytes([data[j], data[j + 1], data[j + 2], data[j + 3]]);
+        // RISC-V JALR x0, x1, 0 (ret) = 0x00008067
+        if w == 0x00008067 {
+            riscv_sig += 3;
+        }
+        // RISC-V JAL (opcode = 0x6F)
+        if (w & 0x7F) == 0x6F {
+            riscv_sig += 1;
+        }
+        // RISC-V AUIPC (opcode = 0x17)
+        if (w & 0x7F) == 0x17 {
+            riscv_sig += 1;
+        }
+        j += 4;
+    }
+
+    // Compressed RISC-V: C.JALR, C.JR (16-bit instructions)
+    j = 0;
+    while j + 1 < check_len {
+        let hw = u16::from_le_bytes([data[j], data[j + 1]]);
+        // C.JR rs1: [15:12]=1000, [11:7]=rs1, [6:2]=00000, [1:0]=10
+        if (hw & 0xF07F) == 0x8002 {
+            riscv_sig += 1;
+        }
+        // C.JALR rs1: [15:12]=1001, [11:7]=rs1, [6:2]=00000, [1:0]=10
+        if (hw & 0xF07F) == 0x9002 {
+            riscv_sig += 1;
+        }
+        j += 2;
+    }
+
+    if riscv_sig >= 8 {
+        return 0.12;
+    }
+    if riscv_sig >= 4 {
+        return 0.3;
+    }
+
+    1.0
+}
+
+/// Detect AVR code and penalize C166.
+fn detect_avr_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut avr_ret: u32 = 0;
+    let mut avr_reti: u32 = 0;
+    let mut avr_rcall: u32 = 0;
+    let mut i = 0;
+    while i + 1 < check_len {
+        let hw = u16::from_le_bytes([data[i], data[i + 1]]);
+        if hw == 0x9508 {
+            avr_ret += 1;
+        }
+        if hw == 0x9518 {
+            avr_reti += 1;
+        }
+        if (hw >> 12) == 0xD {
+            avr_rcall += 1;
+        }
+        i += 2;
+    }
+    let mut evidence: u32 = 0;
+    if avr_ret >= 3 {
+        evidence += 3;
+    } else if avr_ret >= 1 {
+        evidence += 2;
+    }
+    if avr_reti >= 1 {
+        evidence += 1;
+    }
+    let total_halfwords = (check_len / 2) as f64;
+    let rcall_density = avr_rcall as f64 / total_halfwords;
+    if rcall_density > 0.02 && avr_rcall >= 5 {
+        evidence += 2;
+    } else if avr_rcall >= 3 {
+        evidence += 1;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect Hexagon (QDSP6) code and penalize C166.
+fn detect_hexagon_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 128 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut eop: u32 = 0;
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if (w >> 14) & 3 == 3 {
+            eop += 1;
+        }
+        i += 4;
+    }
+    let total_words = (check_len / 4) as f64;
+    let eop_density = eop as f64 / total_words;
+    if eop_density > 0.15 && eop_density < 0.45 {
+        0.10
+    } else {
+        1.0
+    }
 }

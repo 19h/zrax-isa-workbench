@@ -138,96 +138,94 @@ pub fn score(data: &[u8]) -> i64 {
     }
 
     // ─── Structural bonuses ───
+    // Tightened thresholds and halved multipliers to reduce false positives.
     let total_insns = valid_insn_count + invalid_count;
     if total_insns > 20 {
         let valid_ratio = valid_insn_count as f64 / total_insns as f64;
 
-        // High valid instruction ratio is a strong signal
-        if valid_ratio > 0.55 && total_insns > 100 {
-            total_score += (valid_insn_count as i64) / 4;
+        // High valid instruction ratio — tightened threshold
+        if valid_ratio > 0.70 && total_insns > 100 {
+            total_score += (valid_insn_count as i64) / 8;
         }
 
-        // RTS (0x3D) is the function return — every function ends with it.
-        // This is the most common single-byte instruction in HC12 code.
-        if rts_count > 5 {
-            total_score += (rts_count as i64) * 6;
+        // RTS (0x3D) — function return
+        if rts_count > 8 {
+            total_score += (rts_count as i64) * 3;
         }
 
         // RTC (0x0A) — banked return — distinctive for HCS12X
         if rtc_count > 0 {
-            total_score += (rtc_count as i64) * 12;
+            total_score += (rtc_count as i64) * 5;
         }
 
-        // RTI (0x0B) — interrupt return — limited count, but very specific
+        // RTI (0x0B) — interrupt return
         if rti_count > 0 {
-            total_score += (rti_count as i64) * 10;
+            total_score += (rti_count as i64) * 4;
         }
 
-        // Branch instructions (0x20-0x2F) are extremely common.
-        // BNE (0x26) and BEQ (0x27) are the most frequent.
-        if bcc_count > 10 {
-            total_score += (bcc_count as i64) * 3;
+        // Conditional branches — raised threshold
+        if bcc_count > 15 {
+            total_score += (bcc_count as i64) * 1;
         }
 
         // BSR (0x07) — relative subroutine call
-        if bsr_count > 2 {
-            total_score += (bsr_count as i64) * 5;
+        if bsr_count > 4 {
+            total_score += (bsr_count as i64) * 2;
         }
 
-        // JSR (0x15-0x17) — absolute subroutine call, very common
-        if jsr_count > 5 {
-            total_score += (jsr_count as i64) * 5;
+        // JSR (0x15-0x17) — absolute subroutine call
+        if jsr_count > 8 {
+            total_score += (jsr_count as i64) * 2;
         }
 
         // CALL (0x4A/0x4B) — banked call, distinctive for HCS12X
         if call_count > 0 {
-            total_score += (call_count as i64) * 10;
+            total_score += (call_count as i64) * 4;
         }
 
-        // Load instructions are extremely common in firmware
-        if load_count > 20 {
-            total_score += (load_count as i64) * 2;
+        // Load instructions — raised threshold
+        if load_count > 30 {
+            total_score += (load_count as i64) * 1;
         }
 
-        // Store instructions
-        if store_count > 10 {
-            total_score += (store_count as i64) * 2;
+        // Store instructions — raised threshold
+        if store_count > 15 {
+            total_score += (store_count as i64) * 1;
         }
 
-        // PUSH/PULL (function prologue/epilogue)
-        if push_pull_count > 5 {
-            total_score += (push_pull_count as i64) * 3;
+        // PUSH/PULL — raised threshold
+        if push_pull_count > 8 {
+            total_score += (push_pull_count as i64) * 1;
         }
 
-        // Page 2 prefix (0x18) — highly characteristic of HC12.
-        // This byte as a prefix followed by specific opcodes is a strong signature.
-        if page2_count > 5 {
-            total_score += (page2_count as i64) * 4;
+        // Page 2 prefix (0x18) — characteristic of HC12
+        if page2_count > 8 {
+            total_score += (page2_count as i64) * 2;
         }
 
-        // CLR/TST instructions (common for flag/register initialization)
-        if clr_tst_count > 5 {
-            total_score += (clr_tst_count as i64) * 2;
+        // CLR/TST — raised threshold
+        if clr_tst_count > 8 {
+            total_score += (clr_tst_count as i64) * 1;
         }
 
-        // Combined structural signature: multiple HC12-specific features present
+        // Combined structural signature: require more features, smaller multipliers
         let signature_features = [
             rts_count > 10,                  // Function returns
             bcc_count > 20,                  // Conditional branches
-            jsr_count > 10,                  // Subroutine calls
+            jsr_count > 10 || bsr_count > 5, // Subroutine calls
             load_count > 30,                 // Load instructions
             store_count > 15,                // Store instructions
-            page2_count > 3,                 // Page 2 prefix usage
+            page2_count > 5,                 // Page 2 prefix usage
             rtc_count > 0 || call_count > 0, // Banked calls/returns (HCS12X specific)
             push_pull_count > 5,             // Stack operations
         ];
         let feature_count = signature_features.iter().filter(|&&f| f).count();
-        if feature_count >= 5 {
-            total_score += (valid_insn_count as i64) / 2;
-        } else if feature_count >= 4 {
+        if feature_count >= 6 {
             total_score += (valid_insn_count as i64) / 4;
-        } else if feature_count >= 3 {
+        } else if feature_count >= 5 {
             total_score += (valid_insn_count as i64) / 6;
+        } else if feature_count >= 4 {
+            total_score += (valid_insn_count as i64) / 8;
         }
     }
 
@@ -277,13 +275,58 @@ pub fn score(data: &[u8]) -> i64 {
         total_score = (total_score as f64 * c166_penalty) as i64;
     }
 
-    if data.len() > 4096 && rts_count == 0 && rtc_count == 0 && call_count == 0 && jsr_count == 0 {
-        return 0;
+    // ─── Structural evidence requirement ───
+    // For larger files, require actual function structure (returns + calls).
+    // Without this, random data accumulates massive false-positive scores
+    // because ~75% of all byte values map to valid HCS12 opcodes.
+    let ret_total = rts_count + rtc_count + rti_count;
+    let call_total = jsr_count + bsr_count + call_count;
+    if data.len() > 2048 {
+        if ret_total < 2 || call_total < 2 {
+            return 0;
+        }
+    } else if data.len() > 512 {
+        if ret_total == 0 || call_total == 0 {
+            return 0;
+        }
     }
+
+    // ─── Cross-architecture penalties ───
     let tc_penalty = detect_tricore_cross_arch_penalty(data);
     if tc_penalty < 1.0 {
         total_score = (total_score as f64 * tc_penalty) as i64;
     }
+
+    let arm_penalty = detect_arm_cross_arch_penalty(data);
+    if arm_penalty < 1.0 {
+        total_score = (total_score as f64 * arm_penalty) as i64;
+    }
+
+    let be_penalty = detect_big_endian_cross_arch_penalty(data);
+    if be_penalty < 1.0 {
+        total_score = (total_score as f64 * be_penalty) as i64;
+    }
+
+    let x86_penalty = detect_x86_cross_arch_penalty(data);
+    if x86_penalty < 1.0 {
+        total_score = (total_score as f64 * x86_penalty) as i64;
+    }
+
+    let rv_penalty = detect_riscv_cross_arch_penalty(data);
+    if rv_penalty < 1.0 {
+        total_score = (total_score as f64 * rv_penalty) as i64;
+    }
+
+    let avr_penalty = detect_avr_cross_arch_penalty(data);
+    if avr_penalty < 1.0 {
+        total_score = (total_score as f64 * avr_penalty) as i64;
+    }
+
+    let hex_penalty = detect_hexagon_cross_arch_penalty(data);
+    if hex_penalty < 1.0 {
+        total_score = (total_score as f64 * hex_penalty) as i64;
+    }
+
     cmp::max(0, total_score)
 }
 
@@ -301,50 +344,51 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
     }
 
     // ─── Inherent (1-byte) instructions ───
+    // Scores kept low — single-byte opcode matches are the #1 false positive source.
     match opcode {
-        0x3D => return (12, 1), // RTS — function return, extremely common
-        0x0A => return (15, 1), // RTC — banked return (HCS12X specific)
-        0x0B => return (15, 1), // RTI — interrupt return
-        0xA7 => return (6, 1),  // NOP
-        0x87 => return (5, 1),  // CLRA
-        0xC7 => return (5, 1),  // CLRB
-        0x97 => return (4, 1),  // TSTA
-        0xD7 => return (4, 1),  // TSTB
-        0x42 => return (4, 1),  // INCA
-        0x43 => return (4, 1),  // DECA
-        0x52 => return (4, 1),  // INCB
-        0x53 => return (4, 1),  // DECB
-        0x08 => return (3, 1),  // INX
-        0x09 => return (3, 1),  // DEX
-        0x02 => return (3, 1),  // INY
-        0x03 => return (3, 1),  // DEY
+        0x3D => return (5, 1), // RTS — function return
+        0x0A => return (6, 1), // RTC — banked return (HCS12X specific)
+        0x0B => return (6, 1), // RTI — interrupt return
+        0xA7 => return (2, 1), // NOP
+        0x87 => return (2, 1), // CLRA
+        0xC7 => return (2, 1), // CLRB
+        0x97 => return (1, 1), // TSTA
+        0xD7 => return (1, 1), // TSTB
+        0x42 => return (1, 1), // INCA
+        0x43 => return (1, 1), // DECA
+        0x52 => return (1, 1), // INCB
+        0x53 => return (1, 1), // DECB
+        0x08 => return (1, 1), // INX
+        0x09 => return (1, 1), // DEX
+        0x02 => return (1, 1), // INY
+        0x03 => return (1, 1), // DEY
         0x04 => {
-            // DBEQ/DBNE/IBEQ/IBNE/TBEQ/TBNE — loop primitives (3 bytes total)
+            // DBEQ/DBNE — loop primitives (3 bytes total)
             if i + 2 < data.len() {
-                return (8, 3);
+                return (1, 3);
             }
-            return (2, 1);
+            return (1, 1);
         }
-        0x12 => return (5, 1), // MUL (A × B → D)
-        0x10 => return (4, 1), // IDIV (D / X → X, rem D)
-        0x11 => return (5, 1), // EDIV (Y:D / X → Y, rem D)
-        0x14 => return (4, 1), // EDIVS
-        0x41 => return (4, 1), // COMA
-        0x51 => return (4, 1), // COMB
-        0x40 => return (4, 1), // NEGA
-        0x50 => return (4, 1), // NEGB
-        0x44 => return (3, 1), // LSRA
-        0x54 => return (3, 1), // LSRB
-        0x45 => return (3, 1), // ROLA
-        0x55 => return (3, 1), // ROLB
-        0x46 => return (3, 1), // RORA
-        0x56 => return (3, 1), // RORB
-        0x47 => return (3, 1), // ASRA
-        0x57 => return (3, 1), // ASRB
-        0x48 => return (3, 1), // ASLA/LSLA
-        0x58 => return (3, 1), // ASLB/LSLB
-        0x01 => return (3, 1), // MEM (fuzzy logic membership function)
-        0x0C => return (3, 1), // BSET/BCLR (indexed with mask, multi-byte)
+        0x12 => return (2, 1), // MUL
+        0x10 => return (2, 1), // IDIV
+        0x11 => return (2, 1), // EDIV
+        0x14 => return (2, 1), // EDIVS
+        0x41 => return (1, 1), // COMA
+        0x51 => return (1, 1), // COMB
+        0x40 => return (1, 1), // NEGA
+        0x50 => return (1, 1), // NEGB
+        0x44 => return (1, 1), // LSRA
+        0x54 => return (1, 1), // LSRB
+        0x45 => return (1, 1), // ROLA
+        0x55 => return (1, 1), // ROLB
+        0x46 => return (1, 1), // RORA
+        0x56 => return (1, 1), // RORB
+        0x47 => return (1, 1), // ASRA
+        0x57 => return (1, 1), // ASRB
+        0x48 => return (1, 1), // ASLA
+        0x58 => return (1, 1), // ASLB
+        0x01 => return (1, 1), // MEM
+        0x0C => return (1, 1), // BSET/BCLR
         _ => {}
     }
 
@@ -358,21 +402,21 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
         // Branch target should be reasonable (within ~127 bytes)
         // All branch offsets are valid, but very extreme values are less common
         if opcode == 0x20 {
-            return (6, 2); // BRA — unconditional branch
+            return (1, 2); // BRA — unconditional branch
         }
         if opcode == 0x21 {
-            return (3, 2); // BRN — branch never (effective 2-byte NOP)
+            return (1, 2); // BRN — branch never (effective 2-byte NOP)
         }
         // Conditional branches: BNE (0x26) and BEQ (0x27) are extremely common
         if opcode == 0x26 || opcode == 0x27 {
-            return (6, 2);
+            return (1, 2);
         }
         // BCC (0x24) / BCS (0x25) — carry condition
         if opcode == 0x24 || opcode == 0x25 {
-            return (5, 2);
+            return (2, 2);
         }
         // All other conditional branches
-        return (4, 2);
+        return (2, 2);
     }
 
     // ─── BSR rel8 (0x07) — branch to subroutine ───
@@ -380,7 +424,7 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
         if i + 1 >= data.len() {
             return (-1, 1);
         }
-        return (8, 2);
+        return (1, 2);
     }
 
     // ─── JMP/JSR instructions ───
@@ -391,14 +435,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x06 => {
             // JMP extended — 3 bytes (opcode + 16-bit addr)
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (6, 3);
+            return (1, 3);
         }
         0x15 => {
             // JSR indexed — 2+ bytes
@@ -406,7 +450,7 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (7, 1 + plen);
+            return (1, 1 + plen);
         }
         0x16 => {
             // JSR extended — 3 bytes (opcode + 16-bit addr)
@@ -416,16 +460,16 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             // Validate that the target address looks reasonable
             let addr = u16::from_be_bytes([data[i + 1], data[i + 2]]);
             if addr >= 0x0800 {
-                return (8, 3); // Reasonable code address
+                return (1, 3); // Reasonable code address
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x17 => {
             // JSR direct — 2 bytes (opcode + 8-bit addr)
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (6, 2);
+            return (1, 2);
         }
         _ => {}
     }
@@ -437,7 +481,7 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 3 >= data.len() {
                 return (-1, 1);
             }
-            return (10, 4);
+            return (5, 4);
         }
         0x4B => {
             // CALL indexed — 2+ bytes (opcode + index postbyte + page)
@@ -445,30 +489,30 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (9, 1 + plen + 1); // +1 for page byte
+            return (4, 1 + plen + 1); // +1 for page byte
         }
         _ => {}
     }
 
     // ─── SWI — software interrupt ───
     if opcode == 0x3F {
-        return (6, 1);
+        return (3, 1);
     }
 
     // ─── PUSH/PULL instructions (0x30-0x3B, excluding 0x3D=RTS, 0x3F=SWI) ───
     match opcode {
-        0x30 => return (5, 1), // PULX
-        0x31 => return (5, 1), // PULY
-        0x32 => return (5, 1), // PULA
-        0x33 => return (5, 1), // PULB
-        0x34 => return (5, 1), // PSHX
-        0x35 => return (5, 1), // PSHY
-        0x36 => return (5, 1), // PSHA
-        0x37 => return (5, 1), // PSHB
-        0x38 => return (5, 1), // PULC (pull CCR)
-        0x39 => return (5, 1), // PSHC (push CCR)
-        0x3A => return (5, 1), // PULD
-        0x3B => return (5, 1), // PSHD
+        0x30 => return (2, 1), // PULX
+        0x31 => return (2, 1), // PULY
+        0x32 => return (2, 1), // PULA
+        0x33 => return (2, 1), // PULB
+        0x34 => return (2, 1), // PSHX
+        0x35 => return (2, 1), // PSHY
+        0x36 => return (2, 1), // PSHA
+        0x37 => return (2, 1), // PSHB
+        0x38 => return (2, 1), // PULC (pull CCR)
+        0x39 => return (2, 1), // PSHC (push CCR)
+        0x3A => return (2, 1), // PULD
+        0x3B => return (2, 1), // PSHD
         0x3C => return (3, 1), // unused/reserved in some variants
         0x3E => return (4, 1), // STOP / WAI depending on variant
         _ => {}
@@ -481,14 +525,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0x96 => {
             // LDAA direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0xA6 => {
             // LDAA indexed
@@ -496,21 +540,21 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0xB6 => {
             // LDAA extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x5A => {
             // STAA direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0x6A => {
             // STAA indexed
@@ -518,14 +562,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x7A => {
             // STAA extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         _ => {}
     }
@@ -537,14 +581,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0xD6 => {
             // LDAB direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0xE6 => {
             // LDAB indexed
@@ -552,21 +596,21 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0xF6 => {
             // LDAB extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x5B => {
             // STAB direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0x6B => {
             // STAB indexed
@@ -574,14 +618,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x7B => {
             // STAB extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         _ => {}
     }
@@ -593,14 +637,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (6, 3);
+            return (2, 3);
         }
         0xDC => {
             // LDD direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0xEC => {
             // LDD indexed
@@ -608,21 +652,21 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0xFC => {
             // LDD extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x5C => {
             // STD direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0x6C => {
             // STD indexed
@@ -630,14 +674,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x7C => {
             // STD extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         _ => {}
     }
@@ -649,14 +693,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0xDE => {
             // LDX direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0xEE => {
             // LDX indexed
@@ -664,21 +708,21 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0xFE => {
             // LDX extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x5E => {
             // STX direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0x6E => {
             // STX indexed
@@ -686,14 +730,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x7E => {
             // STX extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         _ => {}
     }
@@ -705,14 +749,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0xDD => {
             // LDY direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0xED => {
             // LDY indexed
@@ -720,21 +764,21 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0xFD => {
             // LDY extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x5D => {
             // STY direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0x6D => {
             // STY indexed
@@ -742,14 +786,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x7D => {
             // STY extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         _ => {}
     }
@@ -761,14 +805,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0xDF => {
             // LDS direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0xEF => {
             // LDS indexed
@@ -776,21 +820,21 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0xFF => {
             // LDS extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x5F => {
             // STS direct
             if i + 1 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 2);
+            return (2, 2);
         }
         0x6F => {
             // STS indexed
@@ -798,14 +842,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x7F => {
             // STS extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         _ => {}
     }
@@ -828,14 +872,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 if i + 1 >= data.len() {
                     return (-1, 1);
                 }
-                return (3, 2);
+                return (1, 2);
             }
             0x9 => {
                 // Direct mode: 2 bytes
                 if i + 1 >= data.len() {
                     return (-1, 1);
                 }
-                return (4, 2);
+                return (1, 2);
             }
             0xA => {
                 // Indexed mode: 2+ bytes
@@ -843,14 +887,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                     return (-1, 1);
                 }
                 let (_, plen) = decode_index_postbyte(data, i + 1);
-                return (3, 1 + plen);
+                return (1, 1 + plen);
             }
             0xB => {
                 // Extended mode: 3 bytes
                 if i + 2 >= data.len() {
                     return (-1, 1);
                 }
-                return (4, 3);
+                return (1, 3);
             }
             _ => {}
         }
@@ -875,26 +919,26 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                     return (-1, 1);
                 }
                 // Some are 2-byte (imm8), some are 3-byte (imm16)
-                return (3, 2);
+                return (1, 2);
             }
             0xD => {
                 if i + 1 >= data.len() {
                     return (-1, 1);
                 }
-                return (4, 2);
+                return (1, 2);
             }
             0xE => {
                 if i + 1 >= data.len() {
                     return (-1, 1);
                 }
                 let (_, plen) = decode_index_postbyte(data, i + 1);
-                return (3, 1 + plen);
+                return (1, 1 + plen);
             }
             0xF => {
                 if i + 2 >= data.len() {
                     return (-1, 1);
                 }
-                return (4, 3);
+                return (1, 3);
             }
             _ => {}
         }
@@ -905,7 +949,7 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
         if i + 1 >= data.len() {
             return (-1, 1);
         }
-        return (5, 2); // postbyte selects source/dest registers
+        return (2, 2); // postbyte selects source/dest registers
     }
 
     // ─── SEX (sign extend): 0xB7 is TFR, but SEX is a special case ───
@@ -919,7 +963,7 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x1A => {
             // LEAX
@@ -927,7 +971,7 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         0x19 => {
             // LEAY
@@ -935,7 +979,7 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (5, 1 + plen);
+            return (2, 1 + plen);
         }
         _ => {}
     }
@@ -948,14 +992,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (4, 1 + plen);
+            return (1, 1 + plen);
         }
         0x79 => {
             // CLR extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (4, 3);
+            return (1, 3);
         }
         0x62 => {
             // INC indexed
@@ -963,14 +1007,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (4, 1 + plen);
+            return (1, 1 + plen);
         }
         0x72 => {
             // INC extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (4, 3);
+            return (1, 3);
         }
         0x63 => {
             // DEC indexed
@@ -978,14 +1022,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (4, 1 + plen);
+            return (1, 1 + plen);
         }
         0x73 => {
             // DEC extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (4, 3);
+            return (1, 3);
         }
         0xE7 => {
             // TST indexed
@@ -993,14 +1037,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (4, 1 + plen);
+            return (1, 1 + plen);
         }
         0xF7 => {
             // TST extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (4, 3);
+            return (1, 3);
         }
         0x61 => {
             // COM indexed
@@ -1008,14 +1052,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (4, 1 + plen);
+            return (1, 1 + plen);
         }
         0x71 => {
             // COM extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (4, 3);
+            return (1, 3);
         }
         0x60 => {
             // NEG indexed
@@ -1023,14 +1067,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (4, 1 + plen);
+            return (1, 1 + plen);
         }
         0x70 => {
             // NEG extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (4, 3);
+            return (1, 3);
         }
         _ => {}
     }
@@ -1043,14 +1087,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (3, 1 + plen);
+            return (1, 1 + plen);
         }
         0x74 => {
             // LSR extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (3, 3);
+            return (1, 3);
         }
         0x65 => {
             // ROL indexed
@@ -1058,14 +1102,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (3, 1 + plen);
+            return (1, 1 + plen);
         }
         0x75 => {
             // ROL extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (3, 3);
+            return (1, 3);
         }
         0x66 => {
             // ROR indexed
@@ -1073,14 +1117,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (3, 1 + plen);
+            return (1, 1 + plen);
         }
         0x76 => {
             // ROR extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (3, 3);
+            return (1, 3);
         }
         0x67 => {
             // ASR indexed
@@ -1088,14 +1132,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (3, 1 + plen);
+            return (1, 1 + plen);
         }
         0x77 => {
             // ASR extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (3, 3);
+            return (1, 3);
         }
         0x68 => {
             // ASL/LSL indexed
@@ -1103,14 +1147,14 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
                 return (-1, 1);
             }
             let (_, plen) = decode_index_postbyte(data, i + 1);
-            return (3, 1 + plen);
+            return (1, 1 + plen);
         }
         0x78 => {
             // ASL/LSL extended
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (3, 3);
+            return (1, 3);
         }
         _ => {}
     }
@@ -1122,28 +1166,28 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x0D => {
             // BCLR (direct page) — 3 bytes: opcode, addr, mask
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (5, 3);
+            return (2, 3);
         }
         0x0E => {
             // BRSET (direct page) — 4 bytes: opcode, addr, mask, rel
             if i + 3 >= data.len() {
                 return (-1, 1);
             }
-            return (6, 4);
+            return (3, 4);
         }
         0x0F => {
             // BRCLR (direct page) — 4 bytes: opcode, addr, mask, rel
             if i + 3 >= data.len() {
                 return (-1, 1);
             }
-            return (6, 4);
+            return (3, 4);
         }
         _ => {}
     }
@@ -1156,7 +1200,7 @@ fn score_instruction(opcode: u8, data: &[u8], i: usize) -> (i64, usize) {
             if i + 2 >= data.len() {
                 return (-1, 1);
             }
-            return (4, 3);
+            return (1, 3);
         }
         _ => {}
     }
@@ -1178,55 +1222,55 @@ fn score_page2_instruction(page2_op: u8, data: &[u8], i: usize) -> (i64, usize) 
                 return (2, 2);
             }
             if page2_op == 0x20 {
-                return (8, 4); // LBRA — long unconditional branch
+                return (4, 4); // LBRA — long unconditional branch
             }
             if page2_op == 0x21 {
                 return (3, 4); // LBRN — long branch never
             }
             // Long conditional branches (LBNE, LBEQ, etc.)
-            return (7, 4);
+            return (3, 4);
         }
         // ─── Inter-register operations (2 bytes total) ───
-        0x06 => return (6, 2), // ABA (A + B → A)
-        0x07 => return (5, 2), // DAA (decimal adjust A)
-        0x0E => return (6, 2), // TAB (A → B)
-        0x0F => return (6, 2), // TBA (B → A)
-        0x10 => return (5, 2), // IDIVS
-        0x11 => return (5, 2), // FDIV
-        0x12 => return (5, 2), // EMULS
-        0x13 => return (5, 2), // EMUL
-        0x14 => return (5, 2), // EDIVS
-        0x16 => return (6, 2), // SBA (A - B → A)
-        0x17 => return (5, 2), // CBA (compare A with B)
+        0x06 => return (3, 2), // ABA (A + B → A)
+        0x07 => return (2, 2), // DAA (decimal adjust A)
+        0x0E => return (3, 2), // TAB (A → B)
+        0x0F => return (3, 2), // TBA (B → A)
+        0x10 => return (2, 2), // IDIVS
+        0x11 => return (2, 2), // FDIV
+        0x12 => return (2, 2), // EMULS
+        0x13 => return (2, 2), // EMUL
+        0x14 => return (2, 2), // EDIVS
+        0x16 => return (3, 2), // SBA (A - B → A)
+        0x17 => return (2, 2), // CBA (compare A with B)
         // ─── MOVB/MOVW — memory-to-memory moves ───
         // These are highly distinctive: firmware often uses MOVW to init I/O ports.
         0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x05 => {
             // MOVB/MOVW variants — 4-6 bytes total depending on addressing modes
             if i + 3 >= data.len() {
-                return (3, 2);
+                return (1, 2);
             }
             // Simplified: most MOVB/MOVW are 4-6 bytes total including the 0x18 prefix
-            return (8, 5); // Conservative estimate
+            return (4, 5); // Conservative estimate
         }
         // ─── MAXA/MINA/MAXD/MIND/MAXM/MINM ───
         0x18 | 0x19 | 0x1C | 0x1D | 0x1E | 0x1F => {
             if i + 2 >= data.len() {
                 return (2, 2);
             }
-            return (5, 3);
+            return (2, 3);
         }
         // ─── Fuzzy logic: REV, REVW, WAV, TBL, ETBL ───
-        0x3A => return (6, 2), // REV
-        0x3B => return (6, 2), // REVW
-        0x3C => return (6, 2), // WAV
+        0x3A => return (3, 2), // REV
+        0x3B => return (3, 2), // REVW
+        0x3C => return (3, 2), // WAV
         // ─── STOP, WAI ───
-        0x3E => return (4, 2), // WAI
+        0x3E => return (1, 2), // WAI
         // ─── EMACS ───
         0x12 => {
             if i + 5 >= data.len() {
                 return (2, 2);
             }
-            return (5, 6); // EMACS — 6 bytes total
+            return (2, 6); // EMACS — 6 bytes total
         }
         // ─── Other page 2 opcodes ───
         _ => {
@@ -2016,6 +2060,345 @@ mod tests {
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
             .collect()
+    }
+}
+
+/// Detect ARM32/AArch64 code and penalize HCS12.
+fn detect_arm_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut arm32_cond_e: u32 = 0;
+    let mut aarch64_ret: u32 = 0;
+    let mut arm_bx_lr: u32 = 0;
+    let mut thumb_bx_lr: u32 = 0;
+    let mut thumb_push_lr: u32 = 0;
+    let mut thumb_pop_pc: u32 = 0;
+
+    // Check 32-bit ARM patterns
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if (w >> 28) == 0xE {
+            arm32_cond_e += 1;
+        }
+        if w == 0xE12FFF1E {
+            arm_bx_lr += 1;
+        }
+        if w == 0xD65F03C0 {
+            aarch64_ret += 1;
+        }
+        i += 4;
+    }
+
+    // Check 16-bit Thumb patterns
+    i = 0;
+    while i + 1 < check_len {
+        let hw = u16::from_le_bytes([data[i], data[i + 1]]);
+        if hw == 0x4770 {
+            thumb_bx_lr += 1;
+        } // Thumb BX LR
+        if (hw & 0xFF00) == 0xB500 {
+            thumb_push_lr += 1;
+        } // Thumb PUSH {.., LR}
+        if (hw & 0xFF00) == 0xBD00 {
+            thumb_pop_pc += 1;
+        } // Thumb POP {.., PC}
+        i += 2;
+    }
+
+    let total_words = (check_len / 4) as f64;
+    let mut evidence: u32 = 0;
+    if arm32_cond_e as f64 / total_words > 0.25 {
+        evidence += 3;
+    } else if arm32_cond_e as f64 / total_words > 0.15 {
+        evidence += 2;
+    }
+    if arm_bx_lr >= 3 {
+        evidence += 2;
+    } else if arm_bx_lr >= 1 {
+        evidence += 1;
+    }
+    if aarch64_ret >= 3 {
+        evidence += 3;
+    } else if aarch64_ret >= 1 {
+        evidence += 2;
+    }
+    // Thumb evidence
+    if thumb_bx_lr >= 1 {
+        evidence += 2;
+    }
+    if thumb_push_lr >= 2 {
+        evidence += 2;
+    } else if thumb_push_lr >= 1 {
+        evidence += 1;
+    }
+    if thumb_pop_pc >= 2 {
+        evidence += 2;
+    } else if thumb_pop_pc >= 1 {
+        evidence += 1;
+    }
+
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect big-endian RISC architectures (MIPS, PPC, SPARC, s390x).
+fn detect_big_endian_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut mips_jr_ra: u32 = 0;
+    let mut mips_lui: u32 = 0;
+    let mut ppc_blr: u32 = 0;
+    let mut sparc_ret: u32 = 0;
+    let mut sparc_save: u32 = 0;
+    let mut s390_bcr: u32 = 0;
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if w == 0x03E00008 {
+            mips_jr_ra += 1;
+        }
+        if (w >> 26) == 0x0F {
+            mips_lui += 1;
+        }
+        if w == 0x4E800020 {
+            ppc_blr += 1;
+        }
+        if w == 0x81C7E008 {
+            sparc_ret += 1;
+        }
+        if (w >> 22) == 0x277 {
+            sparc_save += 1;
+        }
+        if i + 1 < check_len {
+            let hw = u16::from_be_bytes([data[i], data[i + 1]]);
+            if hw == 0x07FE {
+                s390_bcr += 1;
+            }
+        }
+        i += 4;
+    }
+    let mut evidence: u32 = 0;
+    if mips_jr_ra >= 3 {
+        evidence += 3;
+    } else if mips_jr_ra >= 1 {
+        evidence += 2;
+    }
+    if mips_lui >= 10 {
+        evidence += 2;
+    } else if mips_lui >= 3 {
+        evidence += 1;
+    }
+    if ppc_blr >= 3 {
+        evidence += 3;
+    } else if ppc_blr >= 1 {
+        evidence += 2;
+    }
+    if sparc_ret >= 2 {
+        evidence += 3;
+    } else if sparc_ret >= 1 {
+        evidence += 2;
+    }
+    if sparc_save >= 2 {
+        evidence += 1;
+    }
+    if s390_bcr >= 5 {
+        evidence += 3;
+    } else if s390_bcr >= 2 {
+        evidence += 2;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect x86/x86_64 code and penalize HCS12.
+fn detect_x86_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut x86_ret: u32 = 0;
+    let mut x86_push_ebp: u32 = 0;
+    let mut x86_call: u32 = 0;
+    let mut x86_mov_rsp: u32 = 0;
+    let mut i = 0;
+    while i < check_len {
+        let b = data[i];
+        match b {
+            0xC3 => x86_ret += 1,
+            0x55 => x86_push_ebp += 1,
+            0xE8 => x86_call += 1,
+            0x89 if i + 1 < check_len && data[i + 1] == 0xE5 => x86_mov_rsp += 1,
+            0x48 if i + 2 < check_len && data[i + 1] == 0x89 && data[i + 2] == 0xE5 => {
+                x86_mov_rsp += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let byte_count = check_len as f64;
+    let mut evidence: u32 = 0;
+    if x86_ret as f64 / byte_count > 0.005 && x86_ret >= 3 {
+        evidence += 2;
+    } else if x86_ret >= 2 {
+        evidence += 1;
+    }
+    if x86_push_ebp >= 3 && x86_mov_rsp >= 2 {
+        evidence += 3;
+    } else if x86_push_ebp >= 2 && x86_mov_rsp >= 1 {
+        evidence += 2;
+    }
+    if x86_call as f64 / byte_count > 0.005 && x86_call >= 5 {
+        evidence += 2;
+    } else if x86_call >= 3 {
+        evidence += 1;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect RISC-V code and penalize HCS12.
+fn detect_riscv_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut rv_ret: u32 = 0;
+    let mut rv_auipc: u32 = 0;
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if w == 0x00008067 {
+            rv_ret += 1;
+        }
+        if (w & 0x7F) == 0x17 {
+            rv_auipc += 1;
+        }
+        i += 4;
+    }
+    let total_words = (check_len / 4) as f64;
+    let mut evidence: u32 = 0;
+    if rv_ret >= 3 {
+        evidence += 3;
+    } else if rv_ret >= 1 {
+        evidence += 2;
+    }
+    if rv_auipc as f64 / total_words > 0.03 && rv_auipc >= 5 {
+        evidence += 2;
+    } else if rv_auipc >= 3 {
+        evidence += 1;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect AVR code and penalize HCS12.
+fn detect_avr_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 64 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut avr_ret: u32 = 0;
+    let mut avr_reti: u32 = 0;
+    let mut avr_rjmp: u32 = 0;
+    let mut avr_rcall: u32 = 0;
+    let mut i = 0;
+    while i + 1 < check_len {
+        let hw = u16::from_le_bytes([data[i], data[i + 1]]);
+        if hw == 0x9508 {
+            avr_ret += 1;
+        }
+        if hw == 0x9518 {
+            avr_reti += 1;
+        }
+        if (hw >> 12) == 0xC {
+            avr_rjmp += 1;
+        }
+        if (hw >> 12) == 0xD {
+            avr_rcall += 1;
+        }
+        i += 2;
+    }
+    let mut evidence: u32 = 0;
+    if avr_ret >= 3 {
+        evidence += 3;
+    } else if avr_ret >= 1 {
+        evidence += 2;
+    }
+    if avr_reti >= 1 {
+        evidence += 1;
+    }
+    let total_halfwords = (check_len / 2) as f64;
+    let rcall_density = avr_rcall as f64 / total_halfwords;
+    if rcall_density > 0.02 && avr_rcall >= 5 {
+        evidence += 2;
+    } else if avr_rcall >= 3 {
+        evidence += 1;
+    }
+    if evidence >= 4 {
+        0.05
+    } else if evidence >= 3 {
+        0.10
+    } else if evidence >= 2 {
+        0.25
+    } else {
+        1.0
+    }
+}
+
+/// Detect Hexagon (QDSP6) code and penalize HCS12.
+fn detect_hexagon_cross_arch_penalty(data: &[u8]) -> f64 {
+    if data.len() < 128 {
+        return 1.0;
+    }
+    let check_len = data.len().min(8192);
+    let mut eop: u32 = 0;
+    let mut i = 0;
+    while i + 3 < check_len {
+        let w = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
+        if (w >> 14) & 3 == 3 {
+            eop += 1;
+        }
+        i += 4;
+    }
+    let total_words = (check_len / 4) as f64;
+    let eop_density = eop as f64 / total_words;
+    if eop_density > 0.15 && eop_density < 0.45 {
+        0.10
+    } else {
+        1.0
     }
 }
 
