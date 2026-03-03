@@ -186,6 +186,67 @@ fn has_marker(data: &[u8], marker: &[u8]) -> bool {
     data.windows(marker.len()).any(|w| w == marker)
 }
 
+/// Damp known high-frequency confusers only in low-evidence situations.
+///
+/// These ISAs (x86_64, parisc, hcs12, rl78) can over-score on short/noisy
+/// blobs. We only apply this when the global confidence estimate is below the
+/// normal acceptance floor, so strong/decisive classifications are unaffected.
+fn apply_low_evidence_confuser_penalties(scores: &mut [ArchitectureScore]) {
+    let mut best = 0i64;
+    let mut second = 0i64;
+    let mut total_positive = 0i64;
+
+    for score in scores.iter() {
+        let raw = score.raw_score.max(0);
+        total_positive += raw;
+
+        if raw > best {
+            second = best;
+            best = raw;
+        } else if raw > second {
+            second = raw;
+        }
+    }
+
+    if best <= 0 || total_positive <= 0 {
+        return;
+    }
+
+    let share_confidence = best as f64 / total_positive as f64;
+    let margin_confidence = if second > 0 {
+        let margin = (best - second) as f64 / second as f64;
+        (margin / (margin + 0.25)).min(0.95)
+    } else {
+        0.95
+    };
+    let estimated_confidence = share_confidence.max(margin_confidence * 0.8);
+
+    // Only penalize in low-evidence regimes (default threshold floor).
+    if estimated_confidence >= 0.30 {
+        return;
+    }
+
+    let near_top_cutoff = ((best as f64) * 0.85) as i64;
+
+    for score in scores.iter_mut() {
+        if score.raw_score < near_top_cutoff {
+            continue;
+        }
+
+        let damp = match score.isa {
+            Isa::X86_64 => 0.88,
+            Isa::Parisc => 0.82,
+            Isa::Hcs12 => 0.78,
+            Isa::Rl78 => 0.78,
+            _ => continue,
+        };
+
+        if score.raw_score > 0 {
+            score.raw_score = ((score.raw_score as f64) * damp).round() as i64;
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 enum ConfidenceFamily {
     X86,
@@ -968,6 +1029,8 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
             bitwidth,
         });
     }
+
+    apply_low_evidence_confuser_penalties(&mut final_scores);
 
     // Sort by score to find winner and runner-up
     final_scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
@@ -1894,6 +1957,89 @@ mod tests {
         };
 
         assert!(try_variant_family_confidence_boost(&sorted, &options).is_none());
+    }
+
+    #[test]
+    fn test_low_evidence_confuser_penalty_damps_near_top_confusers() {
+        let mut scores = vec![
+            ArchitectureScore {
+                isa: Isa::X86_64,
+                raw_score: 420,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 64,
+            },
+            ArchitectureScore {
+                isa: Isa::Parisc,
+                raw_score: 360,
+                confidence: 0.0,
+                endianness: Endianness::Big,
+                bitwidth: 32,
+            },
+            ArchitectureScore {
+                isa: Isa::RiscV64,
+                raw_score: 410,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 64,
+            },
+            ArchitectureScore {
+                isa: Isa::Arm,
+                raw_score: 320,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 32,
+            },
+        ];
+
+        apply_low_evidence_confuser_penalties(&mut scores);
+
+        let x86_64 = scores.iter().find(|s| s.isa == Isa::X86_64).unwrap();
+        let parisc = scores.iter().find(|s| s.isa == Isa::Parisc).unwrap();
+        let riscv = scores.iter().find(|s| s.isa == Isa::RiscV64).unwrap();
+
+        assert!(x86_64.raw_score < 420);
+        assert!(parisc.raw_score < 360);
+        assert_eq!(riscv.raw_score, 410);
+    }
+
+    #[test]
+    fn test_low_evidence_confuser_penalty_skips_non_near_top_confusers() {
+        let mut scores = vec![
+            ArchitectureScore {
+                isa: Isa::RiscV64,
+                raw_score: 259,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 64,
+            },
+            ArchitectureScore {
+                isa: Isa::RiscV32,
+                raw_score: 259,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 32,
+            },
+            ArchitectureScore {
+                isa: Isa::Rl78,
+                raw_score: 204,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 16,
+            },
+            ArchitectureScore {
+                isa: Isa::Arm,
+                raw_score: 102,
+                confidence: 0.0,
+                endianness: Endianness::Little,
+                bitwidth: 32,
+            },
+        ];
+
+        apply_low_evidence_confuser_penalties(&mut scores);
+
+        let rl78 = scores.iter().find(|s| s.isa == Isa::Rl78).unwrap();
+        assert_eq!(rl78.raw_score, 204);
     }
 
     #[test]

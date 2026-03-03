@@ -278,6 +278,13 @@ pub fn score(data: &[u8]) -> i64 {
     let mut bl_count = 0u32;
     let mut stp_fp_lr_count = 0u32;
     let mut extra_distinctive = 0u32; // barriers, system calls, BTI, PAC, CSEL, MADD, etc.
+    let mut stp_count = 0u32;
+    let mut ldp_count = 0u32;
+    let mut ldr_str_imm_count = 0u32;
+    let mut mov_wide_count = 0u32;
+    let mut add_sub_reg_count = 0u32;
+    let mut add_sub_imm_count = 0u32;
+    let mut fp_scalar_count = 0u32;
 
     // AArch64 instructions are 4 bytes, aligned
     let num_words = data.len() / 4;
@@ -499,6 +506,7 @@ pub fn score(data: &[u8]) -> i64 {
         // STP (store pair - common in prologue)
         if is_stp(word) {
             score += 10;
+            stp_count += 1;
             // Track STP involving x29 (FP) and x30 (LR) - very distinctive prologue marker
             let rt = word & 0x1F;
             let rt2 = (word >> 10) & 0x1F;
@@ -510,6 +518,7 @@ pub fn score(data: &[u8]) -> i64 {
         // LDP (load pair - common in epilogue)
         if is_ldp(word) {
             score += 10;
+            ldp_count += 1;
             let rt = word & 0x1F;
             let rt2 = (word >> 10) & 0x1F;
             if rt == 29 && rt2 == 30 {
@@ -550,6 +559,7 @@ pub fn score(data: &[u8]) -> i64 {
         // LDR/STR immediate - common load/store patterns
         if is_ldr_str_imm(word) {
             score += 3;
+            ldr_str_imm_count += 1;
         }
 
         // CMP/CMN/TST - comparison and test instructions
@@ -560,6 +570,7 @@ pub fn score(data: &[u8]) -> i64 {
         // MOV wide (MOVZ/MOVK/MOVN)
         if is_mov_wide(word) {
             score += 5;
+            mov_wide_count += 1;
         }
 
         // BR/BLR (indirect branch) - distinctive
@@ -575,6 +586,7 @@ pub fn score(data: &[u8]) -> i64 {
         // ADD/SUB register
         if is_add_sub_reg(word) {
             score += 3;
+            add_sub_reg_count += 1;
         }
 
         // Logical immediate (AND/ORR/EOR with immediate)
@@ -597,6 +609,7 @@ pub fn score(data: &[u8]) -> i64 {
         // ADD/SUB immediate
         if (word >> 24) & 0x1F == 0x11 {
             score += 3;
+            add_sub_imm_count += 1;
         }
 
         // Floating-point data processing (scalar): 0x1Exxxxxx
@@ -604,6 +617,7 @@ pub fn score(data: &[u8]) -> i64 {
         // Very distinctive AArch64 encoding range
         if (word >> 24) as u8 == 0x1E {
             score += 6;
+            fp_scalar_count += 1;
         }
 
         // FP/SIMD load/store (different from integer LDR/STR encodings)
@@ -640,6 +654,27 @@ pub fn score(data: &[u8]) -> i64 {
         // Heavy penalty for all-ones (very unlikely in valid code)
         if word == 0xFFFFFFFF {
             score -= 15;
+        }
+    }
+
+    // Minimal AArch64 functions often have a light prologue/epilogue plus a dense
+    // core of register-immediate arithmetic. Those patterns are underweighted by
+    // per-instruction scoring and can be outranked by common cross-ISA confusers.
+    // Add a late aggregate bonus when this signature is present.
+    if ret_count > 0 && stp_count > 0 && ldp_count > 0 {
+        let core_mix = mov_wide_count + add_sub_reg_count + add_sub_imm_count;
+
+        if core_mix >= 8 {
+            score += 280;
+        }
+        if ldr_str_imm_count >= 60 {
+            score += 620;
+        }
+        if core_mix >= 24 {
+            score += 220;
+        }
+        if fp_scalar_count >= 24 && mov_wide_count >= 12 {
+            score += 420;
         }
     }
 
