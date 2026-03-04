@@ -8,8 +8,11 @@ use crate::types::{
     ClassificationMetadata, ClassificationResult, Endianness, FileFormat, Isa, Variant,
 };
 
-/// ESP image magic byte.
+/// ESP image magic byte used by most ESP32/ESP8266 images.
 pub const ESP_MAGIC: u8 = 0xE9;
+
+/// Alternate ESP image magic seen in some ESP8266 user images.
+pub const ESP_MAGIC_ALT: u8 = 0xEA;
 
 /// RISC-V-based ESP chip IDs (as seen in image headers).
 const RISCV_CHIP_IDS: &[u16] = &[0x0005, 0x000C, 0x000D]; // C3, C2, C6
@@ -19,7 +22,11 @@ const XTENSA_CHIP_IDS: &[u16] = &[0x0000, 0x0002, 0x0004, 0x0009]; // ESP32/S2/S
 
 /// Detect ESP firmware image.
 pub fn detect(data: &[u8]) -> bool {
-    if data.len() < 16 || data[0] != ESP_MAGIC {
+    if data.len() < 16 {
+        return false;
+    }
+
+    if data[0] != ESP_MAGIC && data[0] != ESP_MAGIC_ALT {
         return false;
     }
 
@@ -42,6 +49,12 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
             offset: 0,
             expected: 16,
             actual: data.len(),
+        });
+    }
+
+    if data[0] != ESP_MAGIC && data[0] != ESP_MAGIC_ALT {
+        return Err(ClassifierError::UnknownFormat {
+            magic: data[..4].to_vec(),
         });
     }
 
@@ -106,5 +119,14 @@ mod tests {
         let result = parse(&data).unwrap();
         assert_eq!(result.isa, Isa::RiscV32);
         assert_eq!(result.format, FileFormat::EspFirmware);
+    }
+
+    #[test]
+    fn test_detect_esp_alt_magic() {
+        let mut data = vec![0u8; 32];
+        data[0] = ESP_MAGIC_ALT;
+        data[1] = 4;
+        data[4..8].copy_from_slice(&0x4010_0004u32.to_le_bytes());
+        assert!(detect(&data));
     }
 }

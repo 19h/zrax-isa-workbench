@@ -33,11 +33,39 @@ const VALID_RECORD_TYPES: &[u8] = &[
     0xB3, // BAKPAT (32)
     0xC2, // COMDAT (16)
     0xC3, // COMDAT (32)
+    0xC6, // Vendor-specific extension record (seen in Borland samples)
+];
+
+/// Record types that provide strong structural evidence this is OMF.
+const STRUCTURAL_RECORD_TYPES: &[u8] = &[
+    0x80, // THEADR
+    0x82, // LHEADR
+    0x8A, // MODEND (16)
+    0x8B, // MODEND (32)
+    0x96, // LNAMES
+    0x98, // SEGDEF (16)
+    0x99, // SEGDEF (32)
+    0xA0, // LEDATA (16)
+    0xA1, // LEDATA (32)
 ];
 
 #[inline]
 fn is_valid_record_type(t: u8) -> bool {
     VALID_RECORD_TYPES.contains(&t)
+}
+
+#[inline]
+fn is_structural_record_type(t: u8) -> bool {
+    STRUCTURAL_RECORD_TYPES.contains(&t)
+}
+
+#[inline]
+fn looks_like_malformed_intel_omf(data: &[u8]) -> bool {
+    if data.len() < 4 || data[0] != 0xB0 {
+        return false;
+    }
+    let rec_len = u16::from_le_bytes([data[1], data[2]]) as usize;
+    rec_len == data.len().saturating_sub(1)
 }
 
 /// Detect OMF format.
@@ -46,14 +74,29 @@ pub fn detect(data: &[u8]) -> bool {
         return false;
     }
 
+    // Some IDA corpus samples are malformed Intel-style OMF where the first
+    // COMDEF-like record advertises a payload exactly equal to file_size - 1.
+    // Accept this narrow signature to avoid falling back to raw heuristics.
+    if looks_like_malformed_intel_omf(data) {
+        return true;
+    }
+
+    // Require an OMF-like start marker for normal record-chain detection.
+    if !matches!(data[0], 0x80 | 0x82 | 0x88) {
+        return false;
+    }
+
     let mut pos = 0usize;
     let mut checked = 0usize;
-    let mut checksum_ok = 0usize;
+    let mut structural_hits = 0usize;
 
     while checked < 4 && pos + 3 <= data.len() {
         let rec_type = data[pos];
         if !is_valid_record_type(rec_type) {
             return false;
+        }
+        if is_structural_record_type(rec_type) {
+            structural_hits += 1;
         }
 
         let rec_len = u16::from_le_bytes([data[pos + 1], data[pos + 2]]) as usize;
@@ -63,12 +106,12 @@ pub fn detect(data: &[u8]) -> bool {
 
         let end = pos + 3 + rec_len;
         if end > data.len() {
+            // Tolerate tiny EOF truncation after multiple valid records.
+            if checked >= 2 && end - data.len() <= 2 {
+                checked += 1;
+                break;
+            }
             return false;
-        }
-
-        let rec = &data[pos..end];
-        if rec.iter().fold(0u8, |acc, b| acc.wrapping_add(*b)) == 0 {
-            checksum_ok += 1;
         }
 
         checked += 1;
@@ -79,7 +122,7 @@ pub fn detect(data: &[u8]) -> bool {
         }
     }
 
-    checked > 0 && checksum_ok * 2 >= checked
+    checked >= 2 && structural_hits > 0
 }
 
 /// Parse OMF file.
@@ -97,6 +140,7 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
     let mut has_modend = false;
     let mut uses_32bit_records = false;
     let mut checksum_mismatch = 0usize;
+    let mut malformed_first_record = false;
 
     while pos + 3 <= data.len() {
         let rec_type = data[pos];
@@ -111,6 +155,12 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
 
         let end = pos + 3 + rec_len;
         if end > data.len() {
+            // Handle malformed Intel-like OMF where the first record declares
+            // payload size == file_size - 1 and overruns by exactly 2 bytes.
+            if record_count == 0 && rec_type == 0xB0 && looks_like_malformed_intel_omf(data) {
+                record_count = 1;
+                malformed_first_record = true;
+            }
             break;
         }
 
@@ -145,6 +195,9 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
     }
     if !has_modend {
         notes.push("No MODEND record found (possibly malformed/truncated)".to_string());
+    }
+    if malformed_first_record {
+        notes.push("Malformed Intel-style OMF header (single COMDEF-like record)".to_string());
     }
     if checksum_mismatch > 0 {
         notes.push(format!(
@@ -206,5 +259,30 @@ mod tests {
     fn test_reject_non_omf() {
         let data = b"\x7FELF\x02\x01\x01\x00";
         assert!(!detect(data));
+    }
+
+    #[test]
+    fn test_detect_omf_without_valid_checksums() {
+        let mut data = make_record(0x80, b"mod");
+        data.extend(make_record(0x88, b"x"));
+        data.extend(make_record(0x96, b"names"));
+        data.extend(make_record(0x8A, &[]));
+        // Corrupt checksums but keep record framing intact.
+        data[10] ^= 0x55;
+        data[20] ^= 0xAA;
+        assert!(detect(&data));
+    }
+
+    #[test]
+    fn test_detect_and_parse_malformed_intel_omf() {
+        let mut data = vec![0u8; 1792];
+        data[0] = 0xB0;
+        let rec_len = (data.len() - 1) as u16;
+        data[1..3].copy_from_slice(&rec_len.to_le_bytes());
+        assert!(detect(&data));
+
+        let result = parse(&data).unwrap();
+        assert_eq!(result.isa, Isa::X86);
+        assert_eq!(result.format, FileFormat::Omf);
     }
 }

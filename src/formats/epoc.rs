@@ -20,6 +20,9 @@ const KNOWN_UID1: &[u32] = &[
     0x1000_1351,
 ];
 
+/// Known Symbian UID2 values that appear in SIS/E32 images.
+const KNOWN_UID2: &[u32] = &[0x1000_3A12];
+
 /// Detect EPOC format.
 pub fn detect(data: &[u8]) -> bool {
     if data.len() < 0x20 {
@@ -27,6 +30,8 @@ pub fn detect(data: &[u8]) -> bool {
     }
 
     let uid1 = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    let uid2 = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+    let uid3 = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
     let marker = u32::from_le_bytes([data[0x10], data[0x11], data[0x12], data[0x13]]);
 
     if marker == EPOC_MARKER_LE {
@@ -35,8 +40,8 @@ pub fn detect(data: &[u8]) -> bool {
 
     // Fallback for partially-corrupted headers that still preserve UID layout.
     KNOWN_UID1.contains(&uid1)
-        || ((uid1 & 0xFFF0_0000) == 0x1000_0000
-            && u32::from_le_bytes([data[4], data[5], data[6], data[7]]) != 0)
+        || ((uid1 & 0xFFF0_0000) == 0x1000_0000 && uid2 != 0)
+        || (KNOWN_UID2.contains(&uid2) && (uid3 & 0xFFF0_0000) == 0x1000_0000)
 }
 
 /// Parse EPOC file.
@@ -99,5 +104,14 @@ mod tests {
         let result = parse(&data).unwrap();
         assert_eq!(result.isa, Isa::Arm);
         assert_eq!(result.format, FileFormat::Epoc);
+    }
+
+    #[test]
+    fn test_detect_epoc_with_uid2_uid3_fallback() {
+        let mut data = vec![0u8; 0x40];
+        data[0..4].copy_from_slice(&0x2000_4B2Eu32.to_le_bytes());
+        data[4..8].copy_from_slice(&0x1000_3A12u32.to_le_bytes());
+        data[8..12].copy_from_slice(&0x1000_0419u32.to_le_bytes());
+        assert!(detect(&data));
     }
 }
