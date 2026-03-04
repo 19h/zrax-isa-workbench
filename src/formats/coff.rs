@@ -49,6 +49,18 @@ pub mod machine {
     pub const M32R: u16 = 0x9041;
     pub const ARM64: u16 = 0xAA64;
 
+    // Legacy / vendor COFF machine values seen in IDA reference corpus
+    pub const H8300_LEGACY: u16 = 0x0083;
+    pub const H8300S_LEGACY: u16 = 0x0283;
+    pub const TI_C54X: u16 = 0x00C1;
+    pub const TI_C6X: u16 = 0x00C2;
+    pub const ARM_THUMB_LEGACY: u16 = 0x0A00;
+    pub const M68K_LEGACY_BE: u16 = 0x5001;
+    pub const ADSP_21XX_LEGACY: u16 = 0x521C;
+    pub const MIPS_LEGACY_BE: u16 = 0x6001;
+    pub const Z8_LEGACY: u16 = 0x8000;
+    pub const TI_C6X_SWAPPED: u16 = 0xC200;
+
     /// Check if a machine type is valid/known.
     pub fn is_valid(machine: u16) -> bool {
         matches!(
@@ -84,6 +96,16 @@ pub mod machine {
                 | AMD64
                 | M32R
                 | ARM64
+                | H8300_LEGACY
+                | H8300S_LEGACY
+                | TI_C54X
+                | TI_C6X
+                | ARM_THUMB_LEGACY
+                | M68K_LEGACY_BE
+                | ADSP_21XX_LEGACY
+                | MIPS_LEGACY_BE
+                | Z8_LEGACY
+                | TI_C6X_SWAPPED
         )
     }
 }
@@ -126,10 +148,42 @@ pub mod characteristics {
 pub const COFF_HEADER_SIZE: usize = 20;
 
 /// Maximum reasonable number of sections for validation.
-pub const MAX_SECTIONS: u16 = 96;
+///
+/// Some COFF variants (notably Microsoft bigobj) can legitimately exceed 96.
+pub const MAX_SECTIONS: u16 = 4096;
 
 /// Section header size in bytes.
 pub const SECTION_HEADER_SIZE: usize = 40;
+
+/// COFF bigobj signature constants (Microsoft anonymous object header v2).
+pub const BIGOBJ_SIG1: u16 = 0x0000;
+pub const BIGOBJ_SIG2: u16 = 0xFFFF;
+pub const BIGOBJ_HEADER_SIZE: usize = 56;
+
+/// Check if data starts with a COFF bigobj header.
+fn is_bigobj_header(data: &[u8]) -> bool {
+    if data.len() < BIGOBJ_HEADER_SIZE {
+        return false;
+    }
+    let sig1 = u16::from_le_bytes([data[0], data[1]]);
+    let sig2 = u16::from_le_bytes([data[2], data[3]]);
+    sig1 == BIGOBJ_SIG1 && sig2 == BIGOBJ_SIG2
+}
+
+/// Extract machine type from either standard COFF or bigobj header.
+fn extract_machine(data: &[u8]) -> Option<u16> {
+    if data.len() < 2 {
+        return None;
+    }
+    if is_bigobj_header(data) {
+        // Bigobj stores machine at offset 6 (2 bytes, little-endian)
+        if data.len() < 8 {
+            return None;
+        }
+        return Some(u16::from_le_bytes([data[6], data[7]]));
+    }
+    Some(u16::from_le_bytes([data[0], data[1]]))
+}
 
 /// Map COFF machine type to ISA.
 pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str>) {
@@ -167,6 +221,17 @@ pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str
         machine::AMD64 => (Isa::X86_64, 64, Endianness::Little, None),
         machine::M32R => (Isa::Unknown(0x9041), 32, Endianness::Little, Some("M32R")),
         machine::ARM64 => (Isa::AArch64, 64, Endianness::Little, None),
+        machine::H8300_LEGACY => (Isa::Sh, 32, Endianness::Big, Some("H8/300")),
+        machine::H8300S_LEGACY => (Isa::Sh, 32, Endianness::Big, Some("H8S")),
+        machine::TI_C54X => (Isa::TiC5500, 32, Endianness::Little, Some("TMS320C54x")),
+        machine::TI_C6X | machine::TI_C6X_SWAPPED => {
+            (Isa::TiC6000, 32, Endianness::Little, Some("TMS320C6x"))
+        }
+        machine::ARM_THUMB_LEGACY => (Isa::Arm, 32, Endianness::Little, Some("Thumb")),
+        machine::M68K_LEGACY_BE => (Isa::M68k, 32, Endianness::Big, Some("68k COFF")),
+        machine::ADSP_21XX_LEGACY => (Isa::Sharc, 32, Endianness::Little, Some("ADSP-21xx")),
+        machine::MIPS_LEGACY_BE => (Isa::Mips, 32, Endianness::Big, Some("MIPS BE COFF")),
+        machine::Z8_LEGACY => (Isa::Z80, 16, Endianness::Little, Some("Z8")),
         other => (Isa::Unknown(other as u32), 32, Endianness::Little, None),
     }
 }
@@ -189,7 +254,13 @@ pub fn detect(data: &[u8]) -> Option<u16> {
         return None;
     }
 
-    let machine = u16::from_le_bytes([data[0], data[1]]);
+    // Microsoft bigobj has a different header layout.
+    if is_bigobj_header(data) {
+        let machine = extract_machine(data)?;
+        return machine::is_valid(machine).then_some(machine);
+    }
+
+    let machine = extract_machine(data)?;
 
     // Must be a known machine type
     if !machine::is_valid(machine) {
@@ -208,38 +279,30 @@ pub fn detect(data: &[u8]) -> Option<u16> {
         return None;
     }
 
-    // Optional header size should be 0 for object files, or a reasonable value
-    if size_opt_header > 512 {
+    // Optional header size should be reasonable.
+    // Keep permissive to handle malformed-but-identifiable corpus files.
+    if size_opt_header > 8192 {
         return None;
     }
 
-    // For object files (not executables), characteristics shouldn't have EXECUTABLE_IMAGE
-    // but this isn't strictly required
-
-    // Symbol table pointer should be 0 or point within the file
-    if ptr_symbol_table > 0 && ptr_symbol_table as usize > data.len() {
+    // Reject obviously empty/random headers.
+    if num_sections == 0
+        && ptr_symbol_table == 0
+        && num_symbols == 0
+        && size_opt_header == 0
+        && characteristics == 0
+    {
         return None;
     }
 
-    // If there's a symbol table, there should be symbols
-    if ptr_symbol_table > 0 && num_symbols == 0 {
-        return None;
-    }
-
-    // If sections exist, verify the section header table fits
+    // If sections exist, the section table start should be representable in the file.
+    // Don't require full table fit: malformed/truncated COFF files are still useful
+    // for architecture identification by machine type.
     if num_sections > 0 {
         let section_table_start = COFF_HEADER_SIZE + size_opt_header as usize;
-        let section_table_size = num_sections as usize * SECTION_HEADER_SIZE;
-        if section_table_start + section_table_size > data.len() {
+        if section_table_start > data.len() {
             return None;
         }
-    }
-
-    // Additional heuristic: check that the characteristics field has valid bits
-    // The high bits (0x8000) are obsolete but sometimes set
-    let valid_characteristics_mask: u16 = 0xFFFF;
-    if characteristics & !valid_characteristics_mask != 0 {
-        return None;
     }
 
     Some(machine)
@@ -255,13 +318,28 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
         });
     }
 
-    let machine = read_u16(data, 0, true)?;
-    let num_sections = read_u16(data, 2, true)?;
-    let _timestamp = read_u32(data, 4, true)?;
-    let _ptr_symbol_table = read_u32(data, 8, true)?;
-    let num_symbols = read_u32(data, 12, true)?;
-    let _size_opt_header = read_u16(data, 16, true)?;
-    let characteristics = read_u16(data, 18, true)?;
+    let is_bigobj = is_bigobj_header(data);
+    if is_bigobj && data.len() < BIGOBJ_HEADER_SIZE {
+        return Err(ClassifierError::TruncatedData {
+            offset: 0,
+            expected: BIGOBJ_HEADER_SIZE,
+            actual: data.len(),
+        });
+    }
+
+    let machine = extract_machine(data).unwrap_or(read_u16(data, 0, true)?);
+
+    let (num_sections, num_symbols, characteristics) = if is_bigobj {
+        // Bigobj stores these as 32-bit fields.
+        let sec32 = read_u32(data, 44, true).unwrap_or(0);
+        let syms = read_u32(data, 52, true).unwrap_or(0);
+        (sec32.min(u16::MAX as u32) as u16, syms, 0u16)
+    } else {
+        let num_sections = read_u16(data, 2, true)?;
+        let num_symbols = read_u32(data, 12, true)?;
+        let characteristics = read_u16(data, 18, true)?;
+        (num_sections, num_symbols, characteristics)
+    };
 
     let (isa, bitwidth, endianness, variant_note) = machine_to_isa(machine);
 
@@ -272,7 +350,11 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
     };
 
     // Collect notes
-    let mut notes = vec!["Standalone COFF object file".to_string()];
+    let mut notes = if is_bigobj {
+        vec!["Standalone COFF bigobj object file".to_string()]
+    } else {
+        vec!["Standalone COFF object file".to_string()]
+    };
 
     if characteristics & characteristics::MACHINE_32BIT != 0 {
         notes.push("32-bit machine".to_string());
@@ -339,6 +421,16 @@ pub fn machine_description(machine: u16) -> &'static str {
         machine::AMD64 => "AMD64 / x86-64",
         machine::M32R => "Mitsubishi M32R",
         machine::ARM64 => "ARM64 / AArch64",
+        machine::H8300_LEGACY => "Hitachi H8/300 (legacy)",
+        machine::H8300S_LEGACY => "Hitachi H8S (legacy)",
+        machine::TI_C54X => "Texas Instruments TMS320C54x",
+        machine::TI_C6X => "Texas Instruments TMS320C6x",
+        machine::ARM_THUMB_LEGACY => "ARM Thumb (legacy)",
+        machine::M68K_LEGACY_BE => "Motorola 68k (legacy COFF)",
+        machine::ADSP_21XX_LEGACY => "Analog Devices ADSP-21xx",
+        machine::MIPS_LEGACY_BE => "MIPS (legacy big-endian COFF)",
+        machine::Z8_LEGACY => "Zilog Z8",
+        machine::TI_C6X_SWAPPED => "Texas Instruments TMS320C6x (swapped)",
         _ => "Unknown machine type",
     }
 }
