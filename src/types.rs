@@ -506,6 +506,22 @@ pub enum FileFormat {
     Com,
     /// OMF (Object Module Format)
     Omf,
+    /// TDS (Turbo Debugger Symbols)
+    Tds,
+
+    // Embedded/Legacy Structured Containers
+    /// ARM Object Format (AOF/AXF)
+    Aof,
+    /// Symbian E32 image container (EPOC)
+    Epoc,
+    /// Espressif firmware image (ESP)
+    EspFirmware,
+    /// Palm database/resource container (PDB/PRC)
+    PalmPdb,
+    /// Amiga Hunk executable/object format
+    AmigaHunk,
+    /// OS-9 module container
+    Os9,
 
     // Apple Formats
     /// PEF (Preferred Executable Format) - Classic Mac OS
@@ -625,6 +641,13 @@ impl fmt::Display for FileFormat {
             FileFormat::Lx => write!(f, "LX"),
             FileFormat::Com => write!(f, "COM"),
             FileFormat::Omf => write!(f, "OMF"),
+            FileFormat::Tds => write!(f, "TDS"),
+            FileFormat::Aof => write!(f, "AOF/AXF"),
+            FileFormat::Epoc => write!(f, "EPOC"),
+            FileFormat::EspFirmware => write!(f, "ESP Firmware"),
+            FileFormat::PalmPdb => write!(f, "Palm PDB/PRC"),
+            FileFormat::AmigaHunk => write!(f, "Amiga Hunk"),
+            FileFormat::Os9 => write!(f, "OS-9"),
             // Apple
             FileFormat::Pef => write!(f, "PEF"),
             // Hex formats

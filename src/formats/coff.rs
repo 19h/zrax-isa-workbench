@@ -473,6 +473,23 @@ mod tests {
         data
     }
 
+    fn make_bigobj_header(machine: u16, num_sections: u32) -> Vec<u8> {
+        let mut data = vec![0u8; BIGOBJ_HEADER_SIZE + 256];
+
+        // Bigobj signature
+        data[0..2].copy_from_slice(&BIGOBJ_SIG1.to_le_bytes());
+        data[2..4].copy_from_slice(&BIGOBJ_SIG2.to_le_bytes());
+        data[4..6].copy_from_slice(&2u16.to_le_bytes()); // version
+        data[6..8].copy_from_slice(&machine.to_le_bytes());
+
+        // NumberOfSections, PointerToSymbolTable, NumberOfSymbols
+        data[44..48].copy_from_slice(&num_sections.to_le_bytes());
+        data[48..52].copy_from_slice(&(BIGOBJ_HEADER_SIZE as u32).to_le_bytes());
+        data[52..56].copy_from_slice(&10u32.to_le_bytes());
+
+        data
+    }
+
     #[test]
     fn test_detect_x86_coff() {
         let data = make_coff_header(machine::I386, 3);
@@ -489,6 +506,29 @@ mod tests {
     fn test_detect_arm64_coff() {
         let data = make_coff_header(machine::ARM64, 2);
         assert_eq!(detect(&data), Some(machine::ARM64));
+    }
+
+    #[test]
+    fn test_detect_bigobj_x86() {
+        let data = make_bigobj_header(machine::I386, 512);
+        assert_eq!(detect(&data), Some(machine::I386));
+    }
+
+    #[test]
+    fn test_parse_bigobj_x86() {
+        let data = make_bigobj_header(machine::I386, 1024);
+        let result = parse(&data).unwrap();
+        assert_eq!(result.isa, Isa::X86);
+        assert_eq!(result.format, FileFormat::Coff);
+        assert_eq!(result.metadata.raw_machine, Some(machine::I386 as u32));
+    }
+
+    #[test]
+    fn test_detect_legacy_arm_thumb_machine() {
+        let data = make_coff_header(machine::ARM_THUMB_LEGACY, 3);
+        assert_eq!(detect(&data), Some(machine::ARM_THUMB_LEGACY));
+        let result = parse(&data).unwrap();
+        assert_eq!(result.isa, Isa::Arm);
     }
 
     #[test]

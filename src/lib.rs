@@ -202,6 +202,15 @@ pub fn classify_bytes_with_options(
         formats::DetectedFormat::Kernel { variant } => formats::kernel::parse(data, variant)?,
         formats::DetectedFormat::Ar { variant } => formats::ar::parse(data, variant)?,
         formats::DetectedFormat::Hex { variant } => formats::hex::parse(data, variant)?,
+        formats::DetectedFormat::Omf => formats::omf::parse(data)?,
+        formats::DetectedFormat::Som => formats::som::parse(data)?,
+        formats::DetectedFormat::Aof => formats::aof::parse(data)?,
+        formats::DetectedFormat::Epoc => formats::epoc::parse(data)?,
+        formats::DetectedFormat::Esp => formats::esp::parse(data)?,
+        formats::DetectedFormat::Palm => formats::palm::parse(data)?,
+        formats::DetectedFormat::AmigaHunk => formats::amiga_hunk::parse(data)?,
+        formats::DetectedFormat::Tds => formats::tds::parse(data)?,
+        formats::DetectedFormat::Os9 => formats::os9::parse(data)?,
         formats::DetectedFormat::Goff => formats::goff::parse(data)?,
         formats::DetectedFormat::LlvmBc { variant } => formats::llvm_bc::parse(data, variant)?,
         formats::DetectedFormat::FatElf => formats::fatelf::parse(data)?,
@@ -527,6 +536,78 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
         }
         formats::DetectedFormat::Hex { variant } => {
             let result = formats::hex::parse(data, variant)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Omf => {
+            let result = formats::omf::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Som => {
+            let result = formats::som::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Aof => {
+            let result = formats::aof::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Epoc => {
+            let result = formats::epoc::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Esp => {
+            let result = formats::esp::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Palm => {
+            let result = formats::palm::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::AmigaHunk => {
+            let result = formats::amiga_hunk::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Tds => {
+            let result = formats::tds::parse(data)?;
+            (
+                IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
+                vec![],
+                extract_metadata(&result),
+            )
+        }
+        formats::DetectedFormat::Os9 => {
+            let result = formats::os9::parse(data)?;
             (
                 IsaClassification::from_format(result.isa, result.bitwidth, result.endianness),
                 vec![],
@@ -987,6 +1068,15 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::Hex { variant } => {
             FormatDetection::with_variant(format_for_hex(variant), format!("{:?}", variant))
         }
+        DetectedFormat::Omf => FormatDetection::new(FileFormat::Omf),
+        DetectedFormat::Som => FormatDetection::new(FileFormat::Som),
+        DetectedFormat::Aof => FormatDetection::new(FileFormat::Aof),
+        DetectedFormat::Epoc => FormatDetection::new(FileFormat::Epoc),
+        DetectedFormat::Esp => FormatDetection::new(FileFormat::EspFirmware),
+        DetectedFormat::Palm => FormatDetection::new(FileFormat::PalmPdb),
+        DetectedFormat::AmigaHunk => FormatDetection::new(FileFormat::AmigaHunk),
+        DetectedFormat::Tds => FormatDetection::new(FileFormat::Tds),
+        DetectedFormat::Os9 => FormatDetection::new(FileFormat::Os9),
         DetectedFormat::Goff => FormatDetection::new(FileFormat::Goff),
         DetectedFormat::LlvmBc { .. } => FormatDetection::new(FileFormat::LlvmBc),
         DetectedFormat::FatElf => FormatDetection::new(FileFormat::FatElf),

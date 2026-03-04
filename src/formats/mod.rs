@@ -19,6 +19,8 @@
 //! - Archive formats (ar)
 //! - Raw binary analysis
 
+pub mod amiga_hunk;
+pub mod aof;
 pub mod aout;
 pub mod ar;
 pub mod bcf;
@@ -28,7 +30,9 @@ pub mod console;
 pub mod dex;
 pub mod ecoff;
 pub mod elf;
+pub mod epoc;
 pub mod epr;
+pub mod esp;
 pub mod fatelf;
 pub mod frf;
 pub mod goff;
@@ -39,11 +43,16 @@ pub mod llvm_bc;
 pub mod macho;
 pub mod mz;
 pub mod ols;
+pub mod omf;
+pub mod os9;
+pub mod palm;
 pub mod pe;
 pub mod pef;
 pub mod raw;
 pub mod sgo;
+pub mod som;
 pub mod sox;
+pub mod tds;
 pub mod vbf;
 pub mod wasm;
 pub mod xcoff;
@@ -186,6 +195,24 @@ pub enum DetectedFormat {
     Ar { variant: ar::ArVariant },
     /// Intel HEX / S-record / TI-TXT
     Hex { variant: hex::HexVariant },
+    /// OMF object module
+    Omf,
+    /// HP-UX SOM
+    Som,
+    /// ARM AOF/AXF container
+    Aof,
+    /// Symbian EPOC/E32 image
+    Epoc,
+    /// Espressif firmware image
+    Esp,
+    /// Palm PDB/PRC container
+    Palm,
+    /// Amiga Hunk format
+    AmigaHunk,
+    /// Turbo Debugger Symbols
+    Tds,
+    /// OS-9 module
+    Os9,
     /// GOFF (IBM z/Architecture)
     Goff,
     /// LLVM bitcode
@@ -430,6 +457,51 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Coff { machine };
     }
 
+    // OMF object modules
+    if omf::detect(data) {
+        return DetectedFormat::Omf;
+    }
+
+    // Turbo Debugger symbols
+    if tds::detect(data) {
+        return DetectedFormat::Tds;
+    }
+
+    // HP-UX SOM
+    if som::detect(data) {
+        return DetectedFormat::Som;
+    }
+
+    // ARM AOF/AXF
+    if aof::detect(data) {
+        return DetectedFormat::Aof;
+    }
+
+    // Amiga Hunk
+    if amiga_hunk::detect(data) {
+        return DetectedFormat::AmigaHunk;
+    }
+
+    // OS-9 modules
+    if os9::detect(data) {
+        return DetectedFormat::Os9;
+    }
+
+    // Espressif firmware image
+    if esp::detect(data) {
+        return DetectedFormat::Esp;
+    }
+
+    // Palm containers
+    if palm::detect(data) {
+        return DetectedFormat::Palm;
+    }
+
+    // Symbian EPOC/E32 images
+    if epoc::detect(data) {
+        return DetectedFormat::Epoc;
+    }
+
     // WinOLS Project File
     if ols::detect(data) {
         return DetectedFormat::Ols;
@@ -470,6 +542,15 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::Kernel { variant } => kernel::parse(data, variant),
         DetectedFormat::Ar { variant } => ar::parse(data, variant),
         DetectedFormat::Hex { variant } => hex::parse(data, variant),
+        DetectedFormat::Omf => omf::parse(data),
+        DetectedFormat::Som => som::parse(data),
+        DetectedFormat::Aof => aof::parse(data),
+        DetectedFormat::Epoc => epoc::parse(data),
+        DetectedFormat::Esp => esp::parse(data),
+        DetectedFormat::Palm => palm::parse(data),
+        DetectedFormat::AmigaHunk => amiga_hunk::parse(data),
+        DetectedFormat::Tds => tds::parse(data),
+        DetectedFormat::Os9 => os9::parse(data),
         DetectedFormat::Goff => goff::parse(data),
         DetectedFormat::LlvmBc { variant } => llvm_bc::parse(data, variant),
         DetectedFormat::FatElf => fatelf::parse(data),
