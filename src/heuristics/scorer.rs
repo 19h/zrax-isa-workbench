@@ -9,9 +9,10 @@
 //! The actual scoring logic is implemented in `crate::architectures::*::score()`.
 
 use crate::architectures::{
-    aarch64, alpha, arc, arm, avr, blackfin, c166, cellspu, dalvik, fr30, hc11, hcs12, hexagon,
-    i860, ia64, jvm, lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc, parisc,
-    ppc, ppcvle, riscv, rl78, s12z, s390x, sparc, superh, tricore, v850, vax, wasm, x86, xtensa,
+    aarch64, alpha, arc, arm, avr, blackfin, c166, cellspu, csky, dalvik, fr30, hc11, hcs12,
+    hexagon, i860, ia64, jvm, lanai, loongarch, m68k, microblaze, mips, msp430, nios2, openrisc,
+    parisc, ppc, ppcvle, riscv, rl78, s12z, s390x, sparc, superh, tic6000, tricore, v850, vax,
+    wasm, x86, xtensa,
 };
 
 // =============================================================================
@@ -312,6 +313,14 @@ pub fn score_c166(data: &[u8]) -> i64 {
     c166::score(data)
 }
 
+/// Score likelihood of C-SKY code.
+///
+/// Delegates to `crate::architectures::csky::score()`.
+#[inline]
+pub fn score_csky(data: &[u8]) -> i64 {
+    csky::score(data)
+}
+
 /// Score likelihood of Renesas RL78 (successor to NEC 78K) code.
 ///
 /// Delegates to `crate::architectures::rl78::score()`.
@@ -605,4 +614,12 @@ pub fn score_s12z(data: &[u8]) -> i64 {
 #[inline]
 pub fn score_ppcvle(data: &[u8]) -> i64 {
     ppcvle::score(data)
+}
+
+/// Score likelihood of TI TMS320C6000 code.
+///
+/// Delegates to `crate::architectures::tic6000::score()`.
+#[inline]
+pub fn score_tic6000(data: &[u8]) -> i64 {
+    tic6000::score(data)
 }

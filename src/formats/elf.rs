@@ -108,8 +108,8 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // TRW RH-32
         0x26 => (Isa::Unknown(0x26), 32),
 
-        // Motorola RCE
-        0x27 => (Isa::Unknown(0x27), 32),
+        // Motorola RCE (historically reused by some C-SKY toolchains)
+        0x27 => (Isa::Csky, 32),
 
         // ARM 32-bit
         0x28 => (Isa::Arm, 32),
@@ -595,8 +595,14 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // Graphcore IPU
         0xF8 => (Isa::Unknown(0xF8), 32),
 
-        // Imagination GPU
-        0xF9 => (Isa::Unknown(0xF9), 32),
+        // nanoMIPS (EM_NANOMIPS)
+        0xF9 => {
+            if is_64 {
+                (Isa::Mips64, 64)
+            } else {
+                (Isa::Mips, 32)
+            }
+        }
 
         // Netronome NFP
         0xFA => (Isa::Unknown(0xFA), 32),
@@ -1181,6 +1187,8 @@ mod tests {
         assert_eq!(e_machine_to_isa(0xC7, 1).0, Isa::K78k0r);
         assert_eq!(e_machine_to_isa(0xA4, 1).0, Isa::Hexagon);
         assert_eq!(e_machine_to_isa(0xF4, 1).0, Isa::Lanai);
+        assert_eq!(e_machine_to_isa(0x27, 1).0, Isa::Csky);
+        assert_eq!(e_machine_to_isa(0xF9, 1).0, Isa::Mips);
         assert_eq!(e_machine_to_isa(0x102, 2).0, Isa::LoongArch64);
     }
 }

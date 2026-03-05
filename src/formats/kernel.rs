@@ -229,6 +229,8 @@ fn uimage_arch_to_isa(arch: u8) -> (Isa, u8) {
         uimage_arch::MICROBLAZE => (Isa::MicroBlaze, 32),
         uimage_arch::NIOS2 => (Isa::Nios2, 32),
         uimage_arch::BLACKFIN => (Isa::Blackfin, 32),
+        // Some vendor uImage builders set SANDBOX for C-SKY payloads.
+        uimage_arch::SANDBOX => (Isa::Csky, 32),
         uimage_arch::XTENSA => (Isa::Xtensa, 32),
         uimage_arch::ARC => (Isa::Arc, 32),
         uimage_arch::OPENRISC => (Isa::OpenRisc, 32),
@@ -270,6 +272,7 @@ fn uimage_arch_name(arch: u8) -> &'static str {
         uimage_arch::SPARC64 => "SPARC64",
         uimage_arch::RISCV => "RISC-V",
         uimage_arch::MICROBLAZE => "MicroBlaze",
+        uimage_arch::SANDBOX => "Sandbox/C-SKY",
         _ => "Unknown",
     }
 }
@@ -531,6 +534,15 @@ mod tests {
         let format = detect(&data).unwrap();
         let result = parse(&data, format).unwrap();
         assert_eq!(result.isa, Isa::RiscV64);
+        assert_eq!(result.format, FileFormat::UImage);
+    }
+
+    #[test]
+    fn test_parse_uimage_sandbox_csky() {
+        let data = make_uimage_header(uimage_arch::SANDBOX, uimage_os::LINUX);
+        let format = detect(&data).unwrap();
+        let result = parse(&data, format).unwrap();
+        assert_eq!(result.isa, Isa::Csky);
         assert_eq!(result.format, FileFormat::UImage);
     }
 }

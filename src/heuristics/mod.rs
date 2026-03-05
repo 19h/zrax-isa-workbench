@@ -56,6 +56,7 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::Hcs12, "Freescale/NXP HCS12"),
     (Isa::Hc11, "Motorola 68HC11"),
     (Isa::C166, "Infineon/Siemens C166"),
+    (Isa::Csky, "C-SKY"),
     (Isa::V850, "Renesas/NEC V850"),
     (Isa::Rl78, "Renesas RL78"),
     (Isa::Rh850, "Renesas RH850"),
@@ -64,6 +65,7 @@ pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
     (Isa::Fr30, "Fujitsu FR30"),
     (Isa::Fr80, "Fujitsu FR80"),
     (Isa::PpcVle, "PowerPC VLE"),
+    (Isa::TiC6000, "TI TMS320C6000"),
 ];
 
 /// Result of heuristic scoring for a single architecture.
@@ -104,8 +106,36 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
     let mut sorted_scores: Vec<_> = scores.iter().collect();
     sorted_scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
 
-    let best = sorted_scores[0];
-    let second_best = sorted_scores.get(1);
+    let mut best = sorted_scores[0];
+
+    if matches!(best.isa, Isa::RiscV32 | Isa::RiscV64)
+        && sorted_scores
+            .get(1)
+            .is_some_and(|s| matches!(s.isa, Isa::RiscV32 | Isa::RiscV64))
+    {
+        if let Some(ti) = sorted_scores
+            .iter()
+            .copied()
+            .find(|s| s.isa == Isa::TiC6000)
+        {
+            let best_raw = best.raw_score.max(0);
+            let ti_raw = ti.raw_score.max(0);
+            if best_raw >= 200_000
+                && ti_raw >= 200_000
+                && (ti_raw as f64) >= (best_raw as f64) * 0.90
+            {
+                best = ti;
+            }
+        }
+    }
+
+    let second_best = sorted_scores
+        .iter()
+        .copied()
+        .filter(|s| {
+            !(s.isa == best.isa && s.bitwidth == best.bitwidth && s.endianness == best.endianness)
+        })
+        .next();
 
     // Calculate confidence using multiple factors:
     // 1. Share of total (original method)
@@ -139,6 +169,10 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
     let mut confidence = share_confidence.max(margin_confidence * 0.8);
 
     if confidence < options.min_confidence {
+        if let Some(subregion) = try_wrapper_subregion_fallback(data, options) {
+            return Ok(subregion);
+        }
+
         if let Some(fallback) = try_anchor_window_fallback(data, options) {
             return Ok(fallback);
         }
@@ -152,6 +186,12 @@ pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<Classificatio
                 confidence: confidence * 100.0,
                 threshold: options.min_confidence * 100.0,
             });
+        }
+    }
+
+    if let Some(subregion) = try_wrapper_subregion_fallback(data, options) {
+        if subregion.confidence >= confidence + 0.10 {
+            return Ok(subregion);
         }
     }
 
@@ -184,6 +224,359 @@ fn has_marker(data: &[u8], marker: &[u8]) -> bool {
         return false;
     }
     data.windows(marker.len()).any(|w| w == marker)
+}
+
+fn has_wrapper_hint(data: &[u8]) -> bool {
+    if data.len() < 256 * 1024 {
+        return false;
+    }
+
+    let head = &data[..data.len().min(4096)];
+    let printable_ratio = head_printable_ratio(head);
+
+    if printable_ratio >= 0.75 {
+        return true;
+    }
+
+    const MARKERS: [&[u8]; 8] = [
+        b"FIRM",
+        b"FIRMWARE",
+        b"UPGRADE",
+        b"BOOT",
+        b"EPSON",
+        b"INTELLIGENT",
+        b"CFF-",
+        b"U-Boot",
+    ];
+
+    MARKERS
+        .iter()
+        .any(|m| head.windows(m.len()).any(|w| w == *m))
+}
+
+#[inline]
+fn head_printable_ratio(head: &[u8]) -> f64 {
+    if head.is_empty() {
+        return 0.0;
+    }
+
+    let printable = head
+        .iter()
+        .filter(|&&b| {
+            b == 0 || b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b)
+        })
+        .count();
+
+    printable as f64 / head.len() as f64
+}
+
+#[inline]
+fn wrapper_subregion_allowed_isa(isa: Isa) -> bool {
+    matches!(
+        isa,
+        Isa::X86
+            | Isa::X86_64
+            | Isa::Arm
+            | Isa::AArch64
+            | Isa::RiscV32
+            | Isa::RiscV64
+            | Isa::Mips
+            | Isa::Mips64
+            | Isa::Ppc
+            | Isa::Ppc64
+            | Isa::Sparc
+            | Isa::Sparc64
+            | Isa::S390x
+            | Isa::M68k
+            | Isa::Sh
+            | Isa::Arc
+            | Isa::Xtensa
+            | Isa::MicroBlaze
+            | Isa::Nios2
+            | Isa::OpenRisc
+            | Isa::V850
+            | Isa::Rh850
+            | Isa::Csky
+            | Isa::TiC6000
+    )
+}
+
+#[inline]
+fn is_wrapper_noise_window(data: &[u8]) -> bool {
+    if data.len() < 256 {
+        return false;
+    }
+
+    let mut seen = [false; 256];
+    for &b in data {
+        seen[b as usize] = true;
+    }
+    let distinct = seen.iter().filter(|&&v| v).count();
+
+    distinct >= 210
+}
+
+fn score_wrapper_architectures(data: &[u8]) -> Vec<ArchitectureScore> {
+    let mut scores = Vec::with_capacity(16);
+
+    let x86_64 = scorer::score_x86(data, 64);
+    scores.push(ArchitectureScore {
+        isa: Isa::X86_64,
+        raw_score: x86_64,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 64,
+    });
+
+    let x86_32 = scorer::score_x86(data, 32);
+    scores.push(ArchitectureScore {
+        isa: Isa::X86,
+        raw_score: x86_32,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
+    scores.push(ArchitectureScore {
+        isa: Isa::Arm,
+        raw_score: scorer::score_arm(data),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+    scores.push(ArchitectureScore {
+        isa: Isa::AArch64,
+        raw_score: scorer::score_aarch64(data),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 64,
+    });
+
+    scores.push(ArchitectureScore {
+        isa: Isa::RiscV64,
+        raw_score: scorer::score_riscv(data, 64),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 64,
+    });
+    scores.push(ArchitectureScore {
+        isa: Isa::RiscV32,
+        raw_score: scorer::score_riscv(data, 32),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
+    let (mips_be, mips_le) = scorer::score_mips(data, false);
+    let (mips_raw, mips_endian) = if mips_be >= mips_le {
+        (mips_be, Endianness::Big)
+    } else {
+        (mips_le, Endianness::Little)
+    };
+    scores.push(ArchitectureScore {
+        isa: Isa::Mips,
+        raw_score: mips_raw,
+        confidence: 0.0,
+        endianness: mips_endian,
+        bitwidth: 32,
+    });
+
+    let (mips64_be, mips64_le) = scorer::score_mips(data, true);
+    let (mips64_raw, mips64_endian) = if mips64_be >= mips64_le {
+        (mips64_be, Endianness::Big)
+    } else {
+        (mips64_le, Endianness::Little)
+    };
+    scores.push(ArchitectureScore {
+        isa: Isa::Mips64,
+        raw_score: mips64_raw,
+        confidence: 0.0,
+        endianness: mips64_endian,
+        bitwidth: 64,
+    });
+
+    let (sh_be, sh_le) = scorer::score_superh(data);
+    let (sh_raw, sh_endian) = if sh_be >= sh_le {
+        (sh_be, Endianness::Big)
+    } else {
+        (sh_le, Endianness::Little)
+    };
+    scores.push(ArchitectureScore {
+        isa: Isa::Sh,
+        raw_score: sh_raw,
+        confidence: 0.0,
+        endianness: sh_endian,
+        bitwidth: 32,
+    });
+
+    scores.push(ArchitectureScore {
+        isa: Isa::Arc,
+        raw_score: scorer::score_arc(data),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+    scores.push(ArchitectureScore {
+        isa: Isa::Xtensa,
+        raw_score: scorer::score_xtensa(data),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+    scores.push(ArchitectureScore {
+        isa: Isa::V850,
+        raw_score: scorer::score_v850(data),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+    scores.push(ArchitectureScore {
+        isa: Isa::Csky,
+        raw_score: scorer::score_csky(data),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+    scores.push(ArchitectureScore {
+        isa: Isa::TiC6000,
+        raw_score: scorer::score_tic6000(data),
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
+    scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
+    let total_positive: i64 = scores.iter().map(|s| s.raw_score.max(0)).sum();
+    if total_positive > 0 {
+        let best = scores[0].raw_score.max(0);
+        let second = scores.get(1).map(|s| s.raw_score.max(0)).unwrap_or(0);
+        let margin_conf = if second > 0 {
+            let margin = (best - second) as f64 / second as f64;
+            (margin / (margin + 0.25)).min(0.95)
+        } else {
+            0.95
+        };
+        for (idx, score) in scores.iter_mut().enumerate() {
+            let share = score.raw_score.max(0) as f64 / total_positive as f64;
+            score.confidence = if idx == 0 {
+                share.max(margin_conf * 0.8)
+            } else {
+                share
+            };
+        }
+    }
+
+    scores
+}
+
+fn try_wrapper_subregion_fallback(
+    data: &[u8],
+    options: &ClassifierOptions,
+) -> Option<ClassificationResult> {
+    if options.fast_mode || !has_wrapper_hint(data) {
+        return None;
+    }
+
+    if head_printable_ratio(&data[..data.len().min(4096)]) > 0.95 {
+        return None;
+    }
+
+    let scan_len = data.len().min(32 * 1024 * 1024);
+    let scan = &data[..scan_len];
+
+    let window_size = 8 * 1024;
+    let max_windows = 4usize;
+    let step = ((scan.len().saturating_sub(window_size)) / max_windows).max(4 * 1024);
+
+    let mut by_isa: HashMap<(Isa, u8, Endianness), (u32, i64, f64)> = HashMap::new();
+    let mut informative_windows = 0u32;
+    let mut examined_windows = 0u32;
+
+    let mut off = 0usize;
+    while off + window_size <= scan.len() {
+        let window = &scan[off..off + window_size];
+        off += step;
+        examined_windows += 1;
+
+        if examined_windows > max_windows as u32 {
+            break;
+        }
+
+        if is_padding_or_empty(window)
+            || is_string_data(window)
+            || is_high_entropy(window)
+            || is_wrapper_noise_window(window)
+        {
+            continue;
+        }
+
+        let scores = score_wrapper_architectures(window);
+        let Some(best) = scores.first() else {
+            continue;
+        };
+
+        if best.raw_score <= 0 || best.confidence < 0.22 {
+            continue;
+        }
+
+        if !wrapper_subregion_allowed_isa(best.isa) {
+            continue;
+        }
+
+        informative_windows += 1;
+        let key = (best.isa, best.bitwidth, best.endianness);
+        let entry = by_isa.entry(key).or_insert((0, 0, 0.0));
+        entry.0 += 1;
+        entry.1 += best.raw_score;
+        entry.2 += best.confidence;
+
+        if informative_windows >= 64 {
+            break;
+        }
+    }
+
+    if informative_windows < 6 || by_isa.is_empty() {
+        return None;
+    }
+
+    let mut ranked: Vec<((Isa, u8, Endianness), (u32, i64, f64))> = by_isa.into_iter().collect();
+    ranked.sort_by(|a, b| {
+        b.1 .0
+            .cmp(&a.1 .0)
+            .then_with(|| b.1 .1.cmp(&a.1 .1))
+            .then_with(|| {
+                b.1 .2
+                    .partial_cmp(&a.1 .2)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    let ((isa, bitwidth, endianness), (wins, _raw_sum, conf_sum)) = ranked[0];
+    let second_wins = ranked.get(1).map(|r| r.1 .0).unwrap_or(0);
+    let dominance = if second_wins > 0 {
+        wins as f64 / second_wins as f64
+    } else {
+        10.0
+    };
+
+    let coverage = wins as f64 / informative_windows as f64;
+    let avg_conf = conf_sum / wins as f64;
+
+    if wins < 3 || coverage < 0.25 || avg_conf < 0.28 || dominance < 1.35 {
+        return None;
+    }
+
+    let confidence =
+        (avg_conf * 0.70 + coverage * 0.30).clamp(options.min_confidence.max(0.30), 0.93);
+    let mut result = ClassificationResult::from_heuristics(isa, bitwidth, endianness, confidence);
+    result.source = ClassificationSource::Heuristic;
+    result.format = FileFormat::Raw;
+
+    if options.detect_extensions {
+        result.extensions = crate::extensions::detect_from_code(data, isa, endianness);
+    }
+
+    Some(result)
 }
 
 /// Damp known high-frequency confusers only in low-evidence situations.
@@ -262,6 +655,8 @@ enum ConfidenceFamily {
     LoongArch,
     Arc,
     V850,
+    Csky,
+    TiC6000,
     Other(Isa),
 }
 
@@ -281,6 +676,8 @@ fn confidence_family(isa: Isa) -> ConfidenceFamily {
         Isa::LoongArch32 | Isa::LoongArch64 => ConfidenceFamily::LoongArch,
         Isa::Arc | Isa::ArcCompact | Isa::ArcCompact2 => ConfidenceFamily::Arc,
         Isa::V850 | Isa::Rh850 => ConfidenceFamily::V850,
+        Isa::Csky => ConfidenceFamily::Csky,
+        Isa::TiC6000 => ConfidenceFamily::TiC6000,
         _ => ConfidenceFamily::Other(isa),
     }
 }
@@ -1475,6 +1872,16 @@ fn score_all_architectures_raw(data: &[u8], options: &ClassifierOptions) -> Vec<
         bitwidth: 16,
     });
 
+    // C-SKY
+    let csky_score = scorer::score_csky(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::Csky,
+        raw_score: csky_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
     // Renesas RL78 (successor to NEC 78K) — 8/16-bit little-endian MCU
     let rl78_score = scorer::score_rl78(scan_data);
     scores.push(ArchitectureScore {
@@ -1514,6 +1921,16 @@ fn score_all_architectures_raw(data: &[u8], options: &ClassifierOptions) -> Vec<
         endianness: Endianness::Big,
         bitwidth: 32,
     });
+
+    let tic6000_score = scorer::score_tic6000(scan_data);
+    scores.push(ArchitectureScore {
+        isa: Isa::TiC6000,
+        raw_score: tic6000_score,
+        confidence: 0.0,
+        endianness: Endianness::Little,
+        bitwidth: 32,
+    });
+
     scores.push(ArchitectureScore {
         isa: Isa::V850,
         raw_score: v850_score,
@@ -2122,6 +2539,40 @@ mod tests {
         let result = analyze(&data, &options).expect("fallback should classify sparse MIPS island");
         assert!(matches!(result.isa, Isa::Mips | Isa::Mips64));
         assert_eq!(result.endianness, Endianness::Little);
+        assert!(result.confidence >= options.min_confidence);
+    }
+
+    #[test]
+    fn test_wrapper_subregion_fallback_prefers_embedded_code_region() {
+        let mut data = vec![0xFFu8; 700 * 1024];
+
+        // Firmware-style ASCII wrapper header.
+        let header = b"FIRMWARE UPDATE IMAGE\0EPSON IPLF\0";
+        data[..header.len()].copy_from_slice(header);
+
+        // Embed a dense C-SKY-like code island away from the header.
+        let base = 260 * 1024;
+        let pattern: [u8; 14] = [
+            0x1C, 0x07, 0x07, 0x87, // 0x071C, 0x8707 pair
+            0x3C, 0x78, // 0x783C
+            0x66, 0x12, 0x80, 0x12, // 0x1266, 0x1280
+            0x07, 0xA7, 0x60, 0x07, // 0xA707, 0x0760
+        ];
+        for n in 0..4096usize {
+            let off = base + n * pattern.len();
+            if off + pattern.len() > data.len() {
+                break;
+            }
+            data[off..off + pattern.len()].copy_from_slice(&pattern);
+        }
+
+        let options = ClassifierOptions {
+            min_confidence: 0.30,
+            ..ClassifierOptions::new()
+        };
+
+        let result = analyze(&data, &options).expect("wrapper fallback should classify subregion");
+        assert_eq!(result.isa, Isa::Csky);
         assert!(result.confidence >= options.min_confidence);
     }
 

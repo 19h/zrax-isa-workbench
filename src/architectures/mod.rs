@@ -11,6 +11,7 @@ pub mod arm;
 pub mod avr;
 pub mod blackfin;
 pub mod c166;
+pub mod csky;
 pub mod cellspu;
 pub mod dalvik;
 pub mod fr30;
@@ -37,6 +38,7 @@ pub mod s12z;
 pub mod s390x;
 pub mod sparc;
 pub mod superh;
+pub mod tic6000;
 pub mod tricore;
 pub mod v850;
 pub mod vax;
@@ -60,6 +62,7 @@ pub fn default_endianness(isa: Isa) -> Endianness {
         Isa::Hcs12 => Endianness::Big, // Motorola architecture — big-endian
         Isa::Hc11 => Endianness::Big,  // Motorola 68HC11 — big-endian
         Isa::C166 => Endianness::Little, // Infineon/Siemens C166 — little-endian
+        Isa::Csky => Endianness::Little, // C-SKY — little-endian
         Isa::Rl78 => Endianness::Little, // Renesas RL78 — little-endian
         Isa::V850 => Endianness::Little, // Renesas/NEC V850 — little-endian
         Isa::Rh850 => Endianness::Little, // Renesas RH850 — little-endian
@@ -134,6 +137,7 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::Ia64 => 16,   // IA-64 bundles are 128-bit (16-byte) aligned
         Isa::LoongArch32 | Isa::LoongArch64 => 4,
         Isa::Hexagon => 4,
+        Isa::TiC6000 => 4,
 
         // Mixed (compressed instructions)
         Isa::RiscV32 | Isa::RiscV64 | Isa::RiscV128 => 2, // 2-byte for C extension
@@ -150,6 +154,7 @@ pub fn instruction_alignment(isa: Isa) -> usize {
         Isa::V850 => 2,    // V850 has 16-bit and 32-bit instructions, 2-byte aligned
         Isa::Rh850 => 2,   // RH850 inherits V850-style 16/32-bit alignment
         Isa::PpcVle => 2,  // VLE supports 16-bit and 32-bit encodings
+        Isa::Csky => 2,    // C-SKY has 16/32-bit encodings
 
         _ => 4,
     }
@@ -186,6 +191,7 @@ pub fn supports_compressed(isa: Isa) -> bool {
             | Isa::Rh850 // RH850 has 16/32-bit instructions
             | Isa::K78k0r // 78K0R has variable-length instructions
             | Isa::PpcVle // PowerPC VLE has 16/32-bit instructions
+            | Isa::Csky // C-SKY supports 16/32-bit mixed encodings
     )
 }
 
