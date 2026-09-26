@@ -131,6 +131,26 @@ fn plan9_magic_to_isa(magic: u32) -> (Isa, u8, Endianness) {
 }
 
 /// Detect a.out variant from raw bytes.
+/// The 32-byte a.out exec header must describe the file it heads: a two-byte
+/// magic alone matches ~1 in 10,000 random files and plenty of raw code.
+/// Fields after the magic word: text, data, bss, syms, entry, trsize, drsize.
+fn exec_header_plausible(data: &[u8], big_endian: bool) -> bool {
+    if data.len() < 32 {
+        return false;
+    }
+    let f = |i: usize| {
+        let b = [data[4 * i], data[4 * i + 1], data[4 * i + 2], data[4 * i + 3]];
+        u64::from(if big_endian { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) })
+    };
+    let (text, dat, syms, trsize, drsize) = (f(1), f(2), f(4), f(6), f(7));
+    let len = data.len() as u64 + 32;
+    text > 0
+        && text % 4 == 0
+        && dat % 4 == 0
+        && text + dat <= len
+        && text + dat + syms + trsize + drsize <= len + 4096
+}
+
 pub fn detect(data: &[u8]) -> Option<AoutVariant> {
     if data.len() < 4 {
         return None;
@@ -152,7 +172,8 @@ pub fn detect(data: &[u8]) -> Option<AoutVariant> {
             | plan9_magic::U_MAGIC
             | plan9_magic::S_MAGIC
             | plan9_magic::R_MAGIC
-    ) {
+    ) && exec_header_plausible(data, true)
+    {
         return Some(AoutVariant::Plan9 { magic: magic_be });
     }
 
@@ -174,16 +195,32 @@ pub fn detect(data: &[u8]) -> Option<AoutVariant> {
     if matches!(
         bsd_magic,
         magic::OMAGIC | magic::NMAGIC | magic::ZMAGIC | magic::QMAGIC
-    ) {
+    ) && (exec_header_plausible(data, false) || exec_header_plausible(data, true))
+    {
         return Some(AoutVariant::Bsd {
             mid,
             magic: bsd_magic,
         });
     }
 
+    // SunOS / big-endian "network order" midmag: dynamic flag + toolversion
+    // in byte 0, machine type in byte 1, magic in bytes 2..4.
+    let sun_magic = u16::from_be_bytes([data[2], data[3]]);
+    if matches!(sun_magic, magic::OMAGIC | magic::NMAGIC | magic::ZMAGIC) && exec_header_plausible(data, true) {
+        let mid = match data[1] {
+            1 => mid::SUN010,
+            2 => mid::SUN020,
+            3 => mid::SPARC,
+            other => other,
+        };
+        return Some(AoutVariant::Bsd { mid, magic: sun_magic });
+    }
+
     // Also check big-endian BSD (some m68k systems)
     let bsd_magic_be = u16::from_be_bytes([data[0], data[1]]);
-    if matches!(bsd_magic_be, magic::OMAGIC | magic::NMAGIC | magic::ZMAGIC) {
+    if matches!(bsd_magic_be, magic::OMAGIC | magic::NMAGIC | magic::ZMAGIC)
+        && exec_header_plausible(data, true)
+    {
         let mid_be = data[3];
         return Some(AoutVariant::Bsd {
             mid: mid_be,
@@ -389,7 +426,8 @@ mod tests {
     use super::*;
 
     fn make_bsd_aout(magic: u16, mid: u8) -> Vec<u8> {
-        let mut data = vec![0u8; 64];
+        // Header + text + data, so the header describes the file it heads.
+        let mut data = vec![0u8; 32 + 1024 + 512];
         // a_midmag (little-endian: magic in first 2 bytes, mid in 3rd)
         data[0] = (magic & 0xFF) as u8;
         data[1] = (magic >> 8) as u8;
@@ -411,7 +449,7 @@ mod tests {
     }
 
     fn make_plan9_aout(magic: u32) -> Vec<u8> {
-        let mut data = vec![0u8; 64];
+        let mut data = vec![0u8; 32 + 2048 + 1024];
         // Magic (big-endian)
         data[0..4].copy_from_slice(&magic.to_be_bytes());
         // Text size
@@ -426,6 +464,15 @@ mod tests {
         data[20..24].copy_from_slice(&0x200000u32.to_be_bytes());
 
         data
+    }
+
+    #[test]
+    fn test_reject_bare_magic() {
+        // Raw code that happens to start with 0x010B: header sizes are garbage.
+        let mut data = vec![0xE5u8; 256];
+        data[0] = 0x0B;
+        data[1] = 0x01;
+        assert!(detect(&data).is_none());
     }
 
     #[test]

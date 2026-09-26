@@ -342,10 +342,21 @@ pub fn run_pipeline(
                     let source = payload.primary.source;
                     let variant = payload.primary.variant.clone();
 
-                    // Get runner-up score for margin calculation
+                    // Margin against the best candidate of a *different* ISA
+                    // family: MIPS32 vs MIPS64 (or x86 vs x86-64) sharing
+                    // evidence is not ambiguity about the architecture.
                     let winner_score = payload.candidates.first().map(|c| c.raw_score).unwrap_or(0);
-                    let runner_up_score =
-                        payload.candidates.get(1).map(|c| c.raw_score).unwrap_or(0);
+                    let winner_family = payload
+                        .candidates
+                        .first()
+                        .and_then(|c| crate::heuristics::family_of(c.isa));
+                    let runner_up_score = payload
+                        .candidates
+                        .iter()
+                        .skip(1)
+                        .find(|c| crate::heuristics::family_of(c.isa) != winner_family)
+                        .map(|c| c.raw_score)
+                        .unwrap_or(0);
 
                     // Make routing decision
                     let routing_input = RoutingInput {

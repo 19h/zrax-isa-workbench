@@ -44,21 +44,15 @@ pub fn detect(data: &[u8]) -> bool {
         return false;
     }
 
-    // First record: marker + valid record type + version byte 0x00
-    if data[0] != GOFF_MARKER || data[2] != 0x00 {
+    // A GOFF module starts with a HDR record (type nibble 0xF), and every
+    // 80-byte record starts with the 0x03 marker and a known record type.
+    if data[0] != GOFF_MARKER || data[1] & 0xF0 != 0xF0 || data[2] != 0x00 {
         return false;
     }
-    let rec_type1 = data[1] & 0xF0;
-    if !matches!(rec_type1, 0x00 | 0x10 | 0x20 | 0x30 | 0x40 | 0xF0) {
-        return false;
-    }
-
-    // Second record at offset 80 must also start with GOFF marker + valid type
-    if data[GOFF_RECORD_SIZE] != GOFF_MARKER {
-        return false;
-    }
-    let rec_type2 = data[GOFF_RECORD_SIZE + 1] & 0xF0;
-    matches!(rec_type2, 0x00 | 0x10 | 0x20 | 0x30 | 0x40 | 0xF0)
+    (1..4)
+        .map(|i| i * GOFF_RECORD_SIZE)
+        .take_while(|&off| off + 2 <= data.len())
+        .all(|off| data[off] == GOFF_MARKER && matches!(data[off + 1] & 0xF0, 0x00 | 0x10 | 0x20 | 0x30 | 0x40 | 0xF0))
 }
 
 /// Parse GOFF file.

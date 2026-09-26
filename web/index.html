@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ISA Classifier</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:          #0c0c0e;
+    --bg-raised:   #131316;
+    --bg-surface:  #18181c;
+    --bg-hover:    #1e1e23;
+    --border:      #27272d;
+    --border-dim:  #1f1f24;
+    --text:        #e4e4e8;
+    --text-2:      #a0a0ab;
+    --text-3:      #65656f;
+    --accent:      #6d9eff;
+    --accent-dim:  rgba(109, 158, 255, 0.10);
+    --accent-med:  rgba(109, 158, 255, 0.18);
+    --green:       #34d399;
+    --green-dim:   rgba(52, 211, 153, 0.12);
+    --yellow:      #fbbf24;
+    --yellow-dim:  rgba(251, 191, 36, 0.12);
+    --red:         #f87171;
+    --red-dim:     rgba(248, 113, 113, 0.12);
+    --orange:      #fb923c;
+    --mono:        'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    --sans:        'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --radius:      8px;
+    --radius-lg:   12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ---- Layout ---- */
+  .app {
+    flex: 1;
+    width: 100%;
+    max-width: 840px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 2rem;
+  }
+
+  /* ---- Header ---- */
+  .header {
+    margin-bottom: 2.5rem;
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    margin-bottom: 0.375rem;
+  }
+  .header-mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent) 0%, #4f7de8 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .header-mark svg {
+    width: 16px;
+    height: 16px;
+    fill: #fff;
+  }
+  .header h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .header-sub {
+    font-size: 0.8125rem;
+    color: var(--text-3);
+    line-height: 1.5;
+  }
+  .header-sub .ver {
+    color: var(--text-2);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+
+  /* ---- Dropzone ---- */
+  .dropzone {
+    position: relative;
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius-lg);
+    padding: 2.75rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--bg-raised);
+  }
+  .dropzone:hover {
+    border-color: var(--text-3);
+    background: var(--bg-surface);
+  }
+  .dropzone.dragover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .dropzone-icon {
+    margin: 0 auto 0.875rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dropzone.dragover .dropzone-icon {
+    background: var(--accent-dim);
+    border-color: rgba(109, 158, 255, 0.25);
+  }
+  .dropzone-icon svg {
+    width: 18px;
+    height: 18px;
+    color: var(--text-3);
+    transition: color 0.15s;
+  }
+  .dropzone.dragover .dropzone-icon svg {
+    color: var(--accent);
+  }
+  .dropzone-text {
+    font-size: 0.875rem;
+    color: var(--text-2);
+    line-height: 1.6;
+  }
+  .dropzone-text strong {
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .dropzone-hint {
+    font-size: 0.75rem;
+    color: var(--text-3);
+    margin-top: 0.25rem;
+  }
+  .dropzone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  /* ---- Loading ---- */
+  .loading {
+    display: none;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 2rem 0;
+    font-size: 0.8125rem;
+    color: var(--text-3);
+  }
+  .loading.active { display: flex; }
+  .loading-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .loading-dot:nth-child(2) { animation-delay: 0.15s; }
+  .loading-dot:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes pulse {
+    0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1); }
+  }
+
+  /* ---- Error ---- */
+  .error-banner {
+    display: none;
+    background: var(--red-dim);
+    border: 1px solid rgba(248, 113, 113, 0.2);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin-top: 1.25rem;
+    font-size: 0.8125rem;
+    color: var(--red);
+    font-family: var(--mono);
+    line-height: 1.5;
+  }
+  .error-banner.visible { display: block; }
+
+  /* ---- Results ---- */
+  .results {
+    display: none;
+    margin-top: 1.5rem;
+  }
+  .results.visible { display: block; }
+
+  /* File banner */
+  .file-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 1.25rem;
+  }
+  .file-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: var(--accent-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .file-icon svg {
+    width: 16px;
+    height: 16px;
+    color: var(--accent);
+  }
+  .file-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .file-name {
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file-meta {
+    font-size: 0.6875rem;
+    color: var(--text-3);
+    margin-top: 0.125rem;
+  }
+  .file-meta span + span::before {
+    content: "\00b7";
+    margin: 0 0.375rem;
+    color: var(--border);
+  }
+
+  /* Primary result hero */
+  .hero {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .hero-isa {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    line-height: 1.25;
+  }
+  .hero-isa-sub {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-3);
+    margin-top: 0.125rem;
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 1rem;
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border-dim);
+  }
+  .hero-field {}
+  .hero-field-label {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    margin-bottom: 0.25rem;
+  }
+  .hero-field-value {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .hero-field-value.mono {
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+  }
+
+  /* Confidence meter */
+  .confidence-meter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .confidence-track {
+    flex: 1;
+    height: 4px;
+    background: var(--border-dim);
+    border-radius: 2px;
+    overflow: hidden;
+    max-width: 80px;
+  }
+  .confidence-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .conf-high { background: var(--green); }
+  .conf-mid  { background: var(--yellow); }
+  .conf-low  { background: var(--red); }
+
+  /* Variant tag */
+  .variant-tag {
+    display: inline-block;
+    margin-top: 0.75rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 4px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(109, 158, 255, 0.15);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--accent);
+  }
+
+  /* ---- Sections ---- */
+  .section {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 0.625rem;
+    overflow: hidden;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s;
+  }
+  .section-header:hover {
+    background: var(--bg-hover);
+  }
+  .section-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .section-count {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: var(--text-3);
+    background: var(--bg-surface);
+    padding: 0.0625rem 0.4375rem;
+    border-radius: 10px;
+    font-family: var(--mono);
+  }
+  .section-chevron {
+    width: 16px;
+    height: 16px;
+    color: var(--text-3);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  .section.collapsed .section-chevron {
+    transform: rotate(-90deg);
+  }
+  .section-body {
+    padding: 0 1rem 0.875rem;
+  }
+  .section.collapsed .section-body {
+    display: none;
+  }
+
+  /* ---- Format card (inline in section) ---- */
+  .format-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+  }
+  .fmt-field-label {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+    margin-bottom: 0.1875rem;
+  }
+  .fmt-field-value {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text);
+    font-family: var(--mono);
+  }
+
+  /* ---- Metadata table ---- */
+  .meta-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .meta-table tr + tr td {
+    border-top: 1px solid var(--border-dim);
+  }
+  .meta-table td {
+    padding: 0.4375rem 0;
+    font-size: 0.8125rem;
+    vertical-align: baseline;
+  }
+  .meta-table .mk {
+    color: var(--text-3);
+    font-weight: 500;
+    width: 140px;
+    padding-right: 1rem;
+    white-space: nowrap;
+  }
+  .meta-table .mv {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-2);
+    word-break: break-all;
+  }
+
+  /* ---- Extensions ---- */
+  .ext-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+  .ext-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.1875rem 0.5rem;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: default;
+    transition: background 0.1s;
+  }
+  .ext-chip.cat-simd         { background: rgba(109,158,255,0.1); color: #8bb4ff; border: 1px solid rgba(109,158,255,0.15); }
+  .ext-chip.cat-crypto       { background: rgba(168,85,247,0.1); color: #c4a5f7; border: 1px solid rgba(168,85,247,0.15); }
+  .ext-chip.cat-atomic       { background: rgba(251,191,36,0.1); color: #fcd34d; border: 1px solid rgba(251,191,36,0.15); }
+  .ext-chip.cat-floating_point { background: rgba(52,211,153,0.1); color: #6ee7b7; border: 1px solid rgba(52,211,153,0.15); }
+  .ext-chip.cat-bit_manip    { background: rgba(251,146,60,0.1); color: #fdba74; border: 1px solid rgba(251,146,60,0.15); }
+  .ext-chip.cat-security     { background: rgba(248,113,113,0.1); color: #fca5a5; border: 1px solid rgba(248,113,113,0.15); }
+  .ext-chip.cat-virtualization { background: rgba(45,212,191,0.1); color: #5eead4; border: 1px solid rgba(45,212,191,0.15); }
+  .ext-chip.cat-machine_learning { background: rgba(232,121,249,0.1); color: #e879f9; border: 1px solid rgba(232,121,249,0.15); }
+  .ext-chip.cat-compressed   { background: rgba(163,163,163,0.1); color: #d4d4d4; border: 1px solid rgba(163,163,163,0.15); }
+  .ext-chip.cat-transactional { background: rgba(34,211,238,0.1); color: #67e8f9; border: 1px solid rgba(34,211,238,0.15); }
+  .ext-chip.cat-system       { background: rgba(163,163,163,0.08); color: #a3a3a3; border: 1px solid rgba(163,163,163,0.12); }
+  .ext-chip.cat-other        { background: rgba(163,163,163,0.08); color: #a3a3a3; border: 1px solid rgba(163,163,163,0.12); }
+  .ext-chip:hover { filter: brightness(1.1); }
+  .ext-conf {
+    font-size: 0.625rem;
+    opacity: 0.6;
+  }
+
+  /* ---- Candidates bar chart ---- */
+  .cand-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+  .cand-row {
+    display: grid;
+    grid-template-columns: 160px 1fr 64px;
+    gap: 0.625rem;
+    align-items: center;
+    font-size: 0.8125rem;
+  }
+  .cand-name {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cand-bar-track {
+    height: 6px;
+    background: var(--border-dim);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .cand-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .cand-bar-fill.rank-0 { background: var(--accent); }
+  .cand-bar-fill.rank-1 { background: rgba(109, 158, 255, 0.6); }
+  .cand-bar-fill.rank-2 { background: rgba(109, 158, 255, 0.35); }
+  .cand-bar-fill.rank-n { background: rgba(109, 158, 255, 0.2); }
+  .cand-score {
+    text-align: right;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--text-3);
+  }
+  .cand-detail {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 1rem;
+    padding: 0 0 0.25rem 0.125rem;
+    font-size: 0.6875rem;
+    color: var(--text-3);
+  }
+
+  /* ---- Slices (multi-arch containers) ---- */
+  .slice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .slice-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-dim);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.25rem 1rem;
+    align-items: baseline;
+  }
+  .slice-isa {
+    font-family: var(--mono);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .slice-meta {
+    font-size: 0.6875rem;
+    color: var(--text-3);
+    text-align: right;
+    font-family: var(--mono);
+  }
+  .slice-detail {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    margin-top: 0.125rem;
+  }
+  .slice-detail-item {
+    font-size: 0.6875rem;
+    color: var(--text-2);
+  }
+  .slice-detail-item + .slice-detail-item::before {
+    content: "\00b7";
+    margin-right: 0.375rem;
+    color: var(--border);
+  }
+  .slice-ext {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.0625rem 0.375rem;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    font-weight: 500;
+    background: rgba(109,158,255,0.08);
+    color: var(--text-3);
+    border: 1px solid rgba(109,158,255,0.1);
+  }
+
+  /* ---- Notes ---- */
+  .note-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.4375rem 0;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .note-item + .note-item {
+    border-top: 1px solid var(--border-dim);
+  }
+  .note-badge {
+    flex-shrink: 0;
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.125rem 0.375rem;
+    border-radius: 3px;
+    margin-top: 0.125rem;
+  }
+  .note-badge.info    { background: var(--accent-dim); color: var(--accent); }
+  .note-badge.warning { background: var(--yellow-dim); color: var(--yellow); }
+  .note-badge.error   { background: var(--red-dim);    color: var(--red); }
+  .note-msg {
+    color: var(--text-2);
+  }
+  .note-ctx {
+    color: var(--text-3);
+    font-size: 0.75rem;
+  }
+
+  /* ---- JSON panel ---- */
+  .json-section {
+    margin-top: 0.625rem;
+  }
+  .json-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    padding: 0.375rem 0.75rem;
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    font-family: var(--mono);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .json-btn:hover {
+    border-color: var(--text-3);
+    color: var(--text-2);
+  }
+  .json-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+  .json-panel {
+    display: none;
+    margin-top: 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    line-height: 1.65;
+    overflow: auto;
+    max-height: 420px;
+    color: var(--text-3);
+    white-space: pre;
+    tab-size: 2;
+  }
+  .json-panel.visible { display: block; }
+
+  /* ---- Footer ---- */
+  .footer-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-dim);
+    font-size: 0.6875rem;
+    color: var(--text-3);
+  }
+  .footer-bar .timing {
+    font-family: var(--mono);
+  }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 600px) {
+    .app { padding: 1.5rem 1rem 1.5rem; }
+    .hero-isa { font-size: 1.25rem; }
+    .hero-grid { grid-template-columns: 1fr 1fr; }
+    .cand-row { grid-template-columns: 120px 1fr 56px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-row">
+      <div class="header-mark">
+        <svg viewBox="0 0 16 16"><path d="M2 4a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V4zm3 1a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 005 5zm3 0a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 008 5zm3 0a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 0011 5zM5 9a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 005 9zm3 0a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 008 9zm3 0a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 0011 9z"/></svg>
+      </div>
+      <h1>ISA Classifier</h1>
+    </div>
+    <p class="header-sub">Identify processor architectures from binary files <span class="ver" id="version"></span></p>
+  </header>
+
+  <!-- Drop zone -->
+  <div class="dropzone" id="dropzone">
+    <div class="dropzone-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+    </div>
+    <div class="dropzone-text">Drop a binary file here, or <strong>browse</strong></div>
+    <div class="dropzone-hint">ELF, PE, Mach-O, raw firmware, or any binary blob</div>
+    <input type="file" id="fileinput">
+  </div>
+
+  <!-- Loading -->
+  <div class="loading" id="loading">
+    <div class="loading-dot"></div>
+    <div class="loading-dot"></div>
+    <div class="loading-dot"></div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-banner" id="error"></div>
+
+  <!-- Results -->
+  <div class="results" id="results"></div>
+</div>
+
+<script type="module">
+import init, { classify, classifier_version } from '../pkg/isa_classifier.js';
+
+let wasmReady = false;
+
+async function boot() {
+  try {
+    await init();
+    wasmReady = true;
+    const ver = classifier_version();
+    document.getElementById('version').textContent = `v${ver}`;
+  } catch (e) {
+    showError(`Failed to load WASM module: ${e.message || e}`);
+  }
+}
+boot();
+
+const dropzone  = document.getElementById('dropzone');
+const fileinput = document.getElementById('fileinput');
+const loading   = document.getElementById('loading');
+const errorEl   = document.getElementById('error');
+const resultsEl = document.getElementById('results');
+
+['dragenter', 'dragover'].forEach(ev =>
+  dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('dragover'); })
+);
+['dragleave', 'drop'].forEach(ev =>
+  dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('dragover'); })
+);
+dropzone.addEventListener('drop', e => {
+  const file = e.dataTransfer?.files?.[0];
+  if (file) analyzeFile(file);
+});
+fileinput.addEventListener('change', e => {
+  const file = e.target.files?.[0];
+  if (file) analyzeFile(file);
+  fileinput.value = '';
+});
+
+async function analyzeFile(file) {
+  if (!wasmReady) { showError('WASM module not loaded yet.'); return; }
+
+  errorEl.classList.remove('visible');
+  resultsEl.classList.remove('visible');
+  resultsEl.innerHTML = '';
+  loading.classList.add('active');
+
+  try {
+    const buf  = await file.arrayBuffer();
+    const data = new Uint8Array(buf);
+
+    const t0 = performance.now();
+    const jsonStr = classify(data);
+    const elapsed = performance.now() - t0;
+
+    const payload = JSON.parse(jsonStr);
+    if (payload.error) { showError(payload.error); return; }
+
+    render(payload, file.name, data.length, elapsed, jsonStr);
+  } catch (e) {
+    showError(`Analysis failed: ${e.message || e}`);
+  } finally {
+    loading.classList.remove('active');
+  }
+}
+
+function showError(msg) {
+  loading.classList.remove('active');
+  errorEl.textContent = msg;
+  errorEl.classList.add('visible');
+}
+
+// ==== Rendering ====
+
+function render(p, filename, size, elapsed, rawJson) {
+  let html = '';
+
+  // -- File banner
+  html += `<div class="file-banner">
+    <div class="file-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+      </svg>
+    </div>
+    <div class="file-info">
+      <div class="file-name">${esc(filename)}</div>
+      <div class="file-meta">
+        <span>${fmtSize(size)}</span>
+        <span>${esc(fmtFormat(p.format))}</span>
+      </div>
+    </div>
+  </div>`;
+
+  // -- Hero: primary classification
+  const pr = p.primary;
+  const conf = pr.confidence;
+  const confPct = (conf * 100).toFixed(1);
+  const confCls = conf >= 0.8 ? 'conf-high' : conf >= 0.4 ? 'conf-mid' : 'conf-low';
+
+  const hasSlices = p.slices && p.slices.length > 1;
+  const heroTitle = hasSlices
+    ? p.slices.map(s => isaName(s.isa)).join(' + ')
+    : isaName(pr.isa);
+  const heroSub = hasSlices
+    ? `Universal binary &middot; ${p.slices.length} architectures &middot; ${esc(fmtSource(pr.source))}`
+    : `${pr.bitwidth}-bit ${esc(fmtEndian(pr.endianness))} &middot; ${esc(fmtSource(pr.source))}`;
+
+  html += `<div class="hero">
+    <div class="hero-isa">${esc(heroTitle)}</div>
+    <div class="hero-isa-sub">${heroSub}</div>`;
+
+  if (pr.variant) {
+    html += `<span class="variant-tag">${esc(fmtVariant(pr.variant))}</span>`;
+  }
+
+  html += `<div class="hero-grid">
+      <div class="hero-field">
+        <div class="hero-field-label">Confidence</div>
+        <div class="confidence-meter">
+          <span class="hero-field-value">${confPct}%</span>
+          <div class="confidence-track"><div class="confidence-fill ${confCls}" style="width:${confPct}%"></div></div>
+        </div>
+      </div>
+      <div class="hero-field">
+        <div class="hero-field-label">Bitwidth</div>
+        <div class="hero-field-value mono">${pr.bitwidth}-bit</div>
+      </div>
+      <div class="hero-field">
+        <div class="hero-field-label">Endianness</div>
+        <div class="hero-field-value mono">${esc(fmtEndian(pr.endianness))}</div>
+      </div>
+      <div class="hero-field">
+        <div class="hero-field-label">Source</div>
+        <div class="hero-field-value">${esc(fmtSource(pr.source))}</div>
+      </div>
+    </div>
+  </div>`;
+
+  // -- Format section
+  const fmt = p.format;
+  html += collapsible('File Format', null, `
+    <div class="format-grid">
+      <div>
+        <div class="fmt-field-label">Format</div>
+        <div class="fmt-field-value">${esc(fmtFormatName(fmt.format))}</div>
+      </div>
+      <div>
+        <div class="fmt-field-label">Confidence</div>
+        <div class="fmt-field-value">${(fmt.confidence * 100).toFixed(0)}%</div>
+      </div>
+      ${fmt.magic_offset != null ? `<div>
+        <div class="fmt-field-label">Magic Offset</div>
+        <div class="fmt-field-value">0x${fmt.magic_offset.toString(16).toUpperCase()}</div>
+      </div>` : ''}
+      ${fmt.variant_name ? `<div>
+        <div class="fmt-field-label">Variant</div>
+        <div class="fmt-field-value">${esc(fmt.variant_name)}</div>
+      </div>` : ''}
+    </div>
+  `);
+
+  // -- Slices (multi-arch containers like fat Mach-O)
+  if (p.slices && p.slices.length > 0) {
+    let cards = '';
+    for (const s of p.slices) {
+      const extChips = (s.extensions || [])
+        .map(e => `<span class="slice-ext">${esc(e.name)}</span>`)
+        .join('');
+      const variantStr = s.variant ? ` <span style="color:var(--text-3)">${esc(fmtVariant(s.variant))}</span>` : '';
+      cards += `<div class="slice-card">
+        <div class="slice-isa">${esc(isaName(s.isa))}${variantStr}</div>
+        <div class="slice-meta">${fmtSize(s.size)}</div>
+        <div class="slice-detail">
+          <span class="slice-detail-item">${s.bitwidth}-bit</span>
+          <span class="slice-detail-item">${esc(fmtEndian(s.endianness))}</span>
+          <span class="slice-detail-item">offset 0x${s.offset.toString(16).toUpperCase()}</span>
+          ${extChips}
+        </div>
+      </div>`;
+    }
+    html += collapsible('Contained Architectures', p.slices.length, `<div class="slice-list">${cards}</div>`);
+  }
+
+  // -- Metadata
+  if (p.metadata && p.metadata.length > 0) {
+    let rows = '';
+    for (const m of p.metadata) {
+      rows += `<tr><td class="mk">${esc(m.label)}</td><td class="mv">${esc(fmtMetaValue(m))}</td></tr>`;
+    }
+    html += collapsible('Metadata', p.metadata.length, `<table class="meta-table">${rows}</table>`);
+  }
+
+  // -- Extensions
+  if (p.extensions && p.extensions.length > 0) {
+    let chips = '';
+    for (const e of p.extensions) {
+      const cat = (e.category || 'other').replace(/([A-Z])/g, '_$1').toLowerCase();
+      const confStr = (e.confidence * 100).toFixed(0);
+      const title = `${fmtCat(e.category)} \u00b7 ${confStr}% \u00b7 ${fmtExtSrc(e.source)}`;
+      chips += `<span class="ext-chip cat-${esc(cat)}" title="${esc(title)}">${esc(e.name)}<span class="ext-conf">${confStr}%</span></span>`;
+    }
+    html += collapsible('ISA Extensions', p.extensions.length, `<div class="ext-grid">${chips}</div>`);
+  }
+
+  // -- Candidates
+  if (p.candidates && p.candidates.length > 0) {
+    const maxScore = Math.max(...p.candidates.map(c => Math.abs(c.raw_score)), 1);
+    let rows = '';
+    for (let i = 0; i < p.candidates.length; i++) {
+      const c = p.candidates[i];
+      const pct = Math.max((Math.abs(c.raw_score) / maxScore) * 100, 2);
+      const rank = i === 0 ? 'rank-0' : i === 1 ? 'rank-1' : i === 2 ? 'rank-2' : 'rank-n';
+      rows += `<div class="cand-row">
+        <div class="cand-name">${esc(isaName(c.isa))}</div>
+        <div class="cand-bar-track"><div class="cand-bar-fill ${rank}" style="width:${pct.toFixed(1)}%"></div></div>
+        <div class="cand-score" title="evidence: bits by which this ISA explains the code better than any non-code model">${c.raw_score.toLocaleString()} bits</div>
+      </div>
+      <div class="cand-detail">${c.bitwidth}-bit &middot; ${esc(fmtEndian(c.endianness))} &middot; ${(c.confidence * 100).toFixed(1)}%</div>`;
+    }
+    html += collapsible('Heuristic Candidates', p.candidates.length, `<div class="cand-list">${rows}</div>`);
+  }
+
+  // -- Notes
+  if (p.notes && p.notes.length > 0) {
+    let items = '';
+    for (const n of p.notes) {
+      items += `<div class="note-item">
+        <span class="note-badge ${n.level}">${n.level}</span>
+        <span class="note-msg">${esc(n.message)}${n.context ? ` <span class="note-ctx">(${esc(n.context)})</span>` : ''}</span>
+      </div>`;
+    }
+    html += collapsible('Notes', p.notes.length, items);
+  }
+
+  // -- JSON
+  html += `<div class="json-section">
+    <button class="json-btn" id="jsonToggle">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+      </svg>
+      Raw JSON
+    </button>
+    <div class="json-panel" id="jsonRaw">${esc(JSON.stringify(JSON.parse(rawJson), null, 2))}</div>
+  </div>`;
+
+  // -- Footer
+  html += `<div class="footer-bar">
+    <span>Analyzed ${fmtSize(size)}</span>
+    <span class="timing">${elapsed.toFixed(1)} ms</span>
+  </div>`;
+
+  resultsEl.innerHTML = html;
+  resultsEl.classList.add('visible');
+
+  // Wire collapsibles
+  resultsEl.querySelectorAll('.section-header').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      hdr.closest('.section').classList.toggle('collapsed');
+    });
+  });
+
+  // Wire JSON toggle
+  document.getElementById('jsonToggle').addEventListener('click', () => {
+    const raw = document.getElementById('jsonRaw');
+    const btn = document.getElementById('jsonToggle');
+    const isVis = raw.classList.toggle('visible');
+    btn.querySelector('svg').style.color = isVis ? 'var(--accent)' : '';
+  });
+}
+
+// ==== Components ====
+
+function collapsible(title, count, body) {
+  const badge = count != null ? `<span class="section-count">${count}</span>` : '';
+  return `<div class="section">
+    <div class="section-header">
+      <span class="section-title">${esc(title)}${badge}</span>
+      <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="section-body">${body}</div>
+  </div>`;
+}
+
+// ==== Helpers ====
+
+function esc(s) {
+  if (s == null) return '';
+  const el = document.createElement('span');
+  el.textContent = String(s);
+  return el.innerHTML;
+}
+
+function fmtSize(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1048576).toFixed(2)} MB`;
+}
+
+const ISA_NAMES = {
+  x86: 'x86', x86_64: 'x86-64', arm: 'ARM', aarch64: 'AArch64', a_arch64: 'AArch64',
+  risc_v32: 'RISC-V 32', risc_v64: 'RISC-V 64', risc_v128: 'RISC-V 128',
+  mips: 'MIPS', mips64: 'MIPS64', ppc: 'PowerPC', ppc64: 'PowerPC 64',
+  s390: 'S/390', s390x: 'z/Architecture', sparc: 'SPARC', sparc64: 'SPARC64',
+  m68k: 'Motorola 68K', cold_fire: 'ColdFire', sh: 'SuperH', sh4: 'SH-4',
+  ia64: 'Itanium', alpha: 'Alpha', parisc: 'PA-RISC',
+  loong_arch32: 'LoongArch 32', loong_arch64: 'LoongArch 64',
+  hexagon: 'Hexagon', arc: 'ARC', arc_compact: 'ARC Compact', arc_compact2: 'ARCv2 Compact',
+  xtensa: 'Xtensa', micro_blaze: 'MicroBlaze', nios2: 'Nios II', open_risc: 'OpenRISC',
+  lanai: 'Lanai', csky: 'C-SKY', v850: 'V850', rh850: 'RH850',
+  k78k0r: '78K0R', rx: 'RX',
+  ti_c6000: 'TI C6000', ti_c2000: 'TI C2000', ti_c28x: 'TI C28x', ti_c5500: 'TI C5500', ti_pru: 'TI PRU',
+  blackfin: 'Blackfin', sharc: 'SHARC',
+  avr: 'AVR', avr32: 'AVR32', msp430: 'MSP430', pic: 'PIC', stm8: 'STM8',
+  tricore: 'TriCore', hcs12: 'HCS12', s12z: 'S12Z', hc11: '68HC11', c166: 'C166', rl78: 'RL78',
+  amd_gpu: 'AMD GPU', cuda: 'CUDA', bpf: 'BPF',
+  i860: 'i860', i960: 'i960', vax: 'VAX', pdp11: 'PDP-11',
+  z80: 'Z80', mcs6502: '6502',
+  wasm: 'WebAssembly', jvm: 'JVM', dalvik: 'Dalvik',
+  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU',
+};
+
+function isaName(tag) {
+  if (typeof tag === 'object') {
+    const id = tag.unknown ?? tag.Unknown;
+    if (id != null) return `Unknown (0x${Number(id).toString(16).toUpperCase()})`;
+    return JSON.stringify(tag);
+  }
+  return ISA_NAMES[tag] || String(tag).replace(/_/g, ' ');
+}
+
+function fmtEndian(e) {
+  if (e === 'little') return 'Little-endian';
+  if (e === 'big') return 'Big-endian';
+  if (e === 'bi_endian') return 'Bi-endian';
+  return String(e);
+}
+
+function fmtSource(s) {
+  const m = { file_format: 'File format', heuristic: 'Heuristic', combined: 'Combined', user_specified: 'User specified' };
+  return m[s] || String(s);
+}
+
+const FORMAT_NAMES = {
+  elf: 'ELF', pe: 'PE', mach_o: 'Mach-O', macho: 'Mach-O', mach_o_fat: 'Mach-O Fat', machofat: 'Mach-O Fat',
+  coff: 'COFF', xcoff: 'XCOFF', ecoff: 'ECOFF',
+  ols: 'OLS Project', epr: 'EPR Dump', sgo: 'SGO', vbf: 'VBF', frf: 'FRF', bcf: 'BCF', sox: 'SOX',
+  raw: 'Raw Binary',
+  aout: 'a.out', plan9_aout: 'Plan 9 a.out', plan9aout: 'Plan 9 a.out', minix_aout: 'Minix a.out', minixaout: 'Minix a.out',
+  mz: 'MZ/DOS', ne: 'NE', le: 'LE', lx: 'LX', com: 'COM', omf: 'OMF', pef: 'PEF',
+  intel_hex: 'Intel HEX', intelhex: 'Intel HEX', srec: 'S-record', ti_txt: 'TI-TXT', titxt: 'TI-TXT',
+  bflt: 'bFLT', dxe: 'DXE', goff: 'GOFF', mvs_load: 'MVS Load', mvsload: 'MVS Load', som: 'SOM',
+  rsx11: 'RSX-11', vms: 'VMS',
+};
+
+function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }
+
+function fmtFormat(fmt) {
+  let s = fmtFormatName(fmt.format);
+  if (fmt.variant_name) s += ` (${fmt.variant_name})`;
+  return s;
+}
+
+function fmtVariant(v) {
+  if (!v) return '';
+  let s = v.name || '';
+  if (v.profile) s += ` / ${v.profile}`;
+  if (v.abi) s += ` [${v.abi}]`;
+  return s;
+}
+
+function fmtMetaValue(m) {
+  const v = m.value;
+  if (typeof v === 'number') {
+    const hexKeys = ['entry_point', 'flags', 'raw_machine'];
+    if (hexKeys.includes(m.key)) return '0x' + v.toString(16).toUpperCase();
+    return v.toLocaleString();
+  }
+  if (typeof v === 'string') return v;
+  return JSON.stringify(v);
+}
+
+function fmtCat(c) {
+  const m = {
+    simd: 'SIMD', crypto: 'Crypto', atomic: 'Atomic', floating_point: 'FP',
+    bit_manip: 'Bit manip', virtualization: 'Virt', security: 'Security',
+    transactional: 'Transactional', machine_learning: 'ML',
+    compressed: 'Compressed', system: 'System', other: 'Other',
+  };
+  return m[c] || String(c);
+}
+
+function fmtExtSrc(s) {
+  const m = { code_pattern: 'code pattern', format_attribute: 'format attr', variant_implied: 'variant implied' };
+  return m[s] || String(s);
+}
+</script>
+</body>
+</html>

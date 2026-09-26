@@ -21,14 +21,14 @@ use crate::{detect_payload, version};
 pub fn classify(data: &[u8]) -> String {
     let options = ClassifierOptions::new();
     match detect_payload(data, &options) {
-        Ok(payload) => serde_json::to_string(&payload)
-            .unwrap_or_else(|e| format!("{{\"error\": \"serialization failed: {}\"}}", e)),
-        Err(e) => {
-            // Return a valid JSON error object so JS can always JSON.parse()
-            let msg = format!("{}", e).replace('\"', "\\\"");
-            format!("{{\"error\": \"{}\"}}", msg)
-        }
+        Ok(payload) => serde_json::to_string(&payload).unwrap_or_else(|e| error_json(&format!("serialization failed: {e}"))),
+        // Always a valid JSON object, so JS can JSON.parse() unconditionally.
+        Err(e) => error_json(&e.to_string()),
     }
+}
+
+fn error_json(message: &str) -> String {
+    serde_json::json!({ "error": message }).to_string()
 }
 
 /// Return the library version string.

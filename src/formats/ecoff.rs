@@ -21,8 +21,8 @@ pub mod magic {
     pub const MIPS_BE: u16 = 0x0160;
     /// MIPS big-endian magic as it appears in file
     pub const MIPS_BE_RAW: [u8; 2] = [0x01, 0x60];
-    /// MIPS little-endian magic as it appears in file
-    pub const MIPS_LE_RAW: [u8; 2] = [0x60, 0x01];
+    /// MIPS little-endian (MIPSELMAGIC 0x0162) as it appears in file
+    pub const MIPS_LE_RAW: [u8; 2] = [0x62, 0x01];
     /// Alpha (ALPHAMAGIC)
     pub const ALPHA: u16 = 0x0183;
 }
@@ -158,20 +158,30 @@ pub fn detect(data: &[u8]) -> Option<EcoffVariant> {
         return None;
     }
 
-    // Check magic bytes
-    if data[0] == 0x60 && data[1] == 0x01 {
-        // Little-endian MIPS: 0x0160 stored as [0x60, 0x01]
-        return Some(EcoffVariant::MipsLe);
+    // The magic is stored in the file's own byte order (binutils coff/mips.h,
+    // coff/alpha.h). A little-endian 0x0160/0x0161 is *not* MIPS: it is the
+    // Intel i960 COFF magic, handled by the generic COFF parser.
+    let variant = match (data[0], data[1]) {
+        // MIPS_MAGIC_BIG / BIG2 / BIG3
+        (0x01, 0x60 | 0x63 | 0x40) => EcoffVariant::MipsBe,
+        // MIPS_MAGIC_LITTLE / LITTLE2 / LITTLE3
+        (0x62 | 0x66 | 0x42, 0x01) => EcoffVariant::MipsLe,
+        // ALPHA_MAGIC / ALPHA_MAGIC_BSD
+        (0x83 | 0x85, 0x01) => EcoffVariant::Alpha,
+        _ => return None,
+    };
+    // A two-byte magic is not enough (raw code starts with these bytes often
+    // enough): the file header must be consistent too.
+    if data.len() < 20 {
+        return None;
     }
-
-    if data[0] == 0x01 && data[1] == 0x60 {
-        // Big-endian MIPS: 0x0160 stored as [0x01, 0x60]
-        return Some(EcoffVariant::MipsBe);
-    }
-
-    if data[0] == 0x83 && data[1] == 0x01 {
-        // Alpha: 0x0183 stored as [0x83, 0x01] (little-endian)
-        return Some(EcoffVariant::Alpha);
+    let le = variant.is_little_endian();
+    let u16_at = |o: usize| if le { u16::from_le_bytes([data[o], data[o + 1]]) } else { u16::from_be_bytes([data[o], data[o + 1]]) };
+    let nsections = u16_at(2);
+    let opthdr = u16_at(if variant == EcoffVariant::Alpha { 20 } else { 16 });
+    let plausible_opthdr = matches!(opthdr, 0 | 0x38 | 0x50);
+    if (1..=64).contains(&nsections) && plausible_opthdr {
+        return Some(variant);
     }
 
     None
@@ -323,7 +333,7 @@ mod tests {
         // Magic
         match variant {
             EcoffVariant::MipsLe => {
-                data[0] = 0x60;
+                data[0] = 0x62;
                 data[1] = 0x01;
             }
             EcoffVariant::MipsBe => {
@@ -389,6 +399,15 @@ mod tests {
     fn test_detect_mips_le() {
         let data = make_ecoff_header(EcoffVariant::MipsLe, 3, 0);
         assert_eq!(detect(&data), Some(EcoffVariant::MipsLe));
+    }
+
+    #[test]
+    fn test_little_endian_0x0160_is_not_mips() {
+        // 0x0160 stored little-endian is the i960 COFF magic, not MIPS.
+        let mut data = vec![0u8; 64];
+        data[0] = 0x60;
+        data[1] = 0x01;
+        assert_eq!(detect(&data), None);
     }
 
     #[test]

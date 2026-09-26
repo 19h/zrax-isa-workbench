@@ -1,0 +1,39 @@
+x86|i686-none-elf|
+x86_64|x86_64-none-elf|
+arm|armv7a-none-eabi|-marm
+arm|armv5te-none-eabi|-marm
+arm|armv7r-none-eabi|-marm
+thumb|thumbv7m-none-eabi|
+thumb|thumbv7em-none-eabihf|-mfpu=fpv4-sp-d16
+thumb|thumbv6m-none-eabi|
+thumb|thumbv8m.main-none-eabi|
+armeb|armebv5te-none-eabi|-marm
+armeb|armebv7a-none-eabi|-marm
+thumbeb|thumbebv7m-none-eabi|
+aarch64|aarch64-none-elf|
+mips|mips-none-elf|-mips32r2
+mipsel|mipsel-none-elf|-mips32r2
+mips64|mips64-none-elf|-mips64r2 -mabi=64
+mips64el|mips64el-none-elf|-mips64r2 -mabi=64
+micromipsel|mipsel-none-elf|-mmicromips -mips32r2
+micromips|mips-none-elf|-mmicromips -mips32r2
+ppc|powerpc-none-eabi|
+ppc|powerpc-none-eabi|-mcpu=e500
+ppc64|powerpc64-unknown-linux-gnu|
+ppc64le|powerpc64le-unknown-linux-gnu|
+sparc|sparc-none-elf|
+sparc64|sparcv9-none-elf|
+s390x|s390x-unknown-linux-gnu|
+riscv32|riscv32-none-elf|-march=rv32imac
+riscv32|riscv32-none-elf|-march=rv32imafc
+riscv64|riscv64-none-elf|-march=rv64gc
+loongarch64|loongarch64-unknown-linux-gnu|
+loongarch32|loongarch32-none-elf|
+hexagon|hexagon-none-elf|
+avr|avr-none-elf|-mmcu=atmega328p
+avr|avr-none-elf|-mmcu=atmega2560
+msp430|msp430-none-elf|
+msp430|msp430-none-elf|-mcpu=msp430x
+lanai|lanai-none-elf|
+bpf|bpfel-none-elf|
+wasm|wasm32-unknown-unknown|

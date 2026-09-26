@@ -48,7 +48,6 @@ pub mod os9;
 pub mod palm;
 pub mod pe;
 pub mod pef;
-pub mod raw;
 pub mod sgo;
 pub mod som;
 pub mod sox;
@@ -101,8 +100,8 @@ pub mod magic {
     /// XCOFF 64-bit (AIX)
     pub const XCOFF_64: [u8; 2] = [0x01, 0xF7];
 
-    /// ECOFF MIPS little-endian (magic 0x0160 stored as LE)
-    pub const ECOFF_MIPS_LE: [u8; 2] = [0x60, 0x01];
+    /// ECOFF MIPS little-endian (MIPSELMAGIC 0x0162 stored as LE)
+    pub const ECOFF_MIPS_LE: [u8; 2] = [0x62, 0x01];
 
     /// ECOFF MIPS big-endian (magic 0x0160 stored as BE)
     pub const ECOFF_MIPS_BE: [u8; 2] = [0x01, 0x60];
@@ -516,19 +515,18 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     DetectedFormat::Raw
 }
 
-/// Parse a binary file and return classification result.
-pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
-    let format = detect_format(data);
-
-    match format {
+/// Parse a binary with a recognised container format.
+///
+/// This is the single format dispatch of the crate. [`DetectedFormat::Raw`]
+/// has no container to parse and returns an error; raw data goes through
+/// [`crate::heuristics`].
+pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<ClassificationResult> {
+    match *format {
         DetectedFormat::Elf { class, endian } => elf::parse(data, class, endian),
         DetectedFormat::Pe { pe_offset } => pe::parse(data, pe_offset),
         DetectedFormat::MachO { bits, big_endian } => macho::parse(data, bits, big_endian),
-        DetectedFormat::MachOFat {
-            big_endian,
-            fat64: _,
-        } => macho::parse_fat(data, big_endian),
-        DetectedFormat::Coff { machine: _ } => coff::parse(data),
+        DetectedFormat::MachOFat { big_endian, .. } => macho::parse_fat(data, big_endian),
+        DetectedFormat::Coff { .. } => coff::parse(data),
         DetectedFormat::Xcoff { bits } => xcoff::parse(data, bits),
         DetectedFormat::Ecoff { variant } => ecoff::parse(data, variant),
         DetectedFormat::Aout { variant } => aout::parse(data, variant),
@@ -561,7 +559,9 @@ pub fn parse_binary(data: &[u8]) -> Result<ClassificationResult> {
         DetectedFormat::Frf => frf::parse(data),
         DetectedFormat::Bcf => bcf::parse(data),
         DetectedFormat::Sox => sox::parse(data),
-        DetectedFormat::Raw => raw::analyze(data),
+        DetectedFormat::Raw => Err(crate::error::ClassifierError::UnknownFormat {
+            magic: data.iter().take(4).copied().collect(),
+        }),
     }
 }
 

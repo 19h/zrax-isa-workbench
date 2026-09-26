@@ -50,16 +50,27 @@ pub mod machine {
     pub const ARM64: u16 = 0xAA64;
 
     // Legacy / vendor COFF machine values seen in IDA reference corpus
+    /// Intel i860 COFF.
+    pub const I860: u16 = 0x014D;
+    /// Intel i960 COFF, read-only text.
+    pub const I960_RO: u16 = 0x0160;
+    /// Intel i960 COFF, writable text.
+    pub const I960_RW: u16 = 0x0161;
     pub const H8300_LEGACY: u16 = 0x0083;
     pub const H8300S_LEGACY: u16 = 0x0283;
-    pub const TI_C54X: u16 = 0x00C1;
-    pub const TI_C6X: u16 = 0x00C2;
+    /// TI COFF version 1 header magic (the target is in the header, not here).
+    pub const TI_COFF1: u16 = 0x00C1;
+    /// TI COFF version 2 header magic (the target is in the header, not here).
+    pub const TI_COFF2: u16 = 0x00C2;
     pub const ARM_THUMB_LEGACY: u16 = 0x0A00;
     pub const M68K_LEGACY_BE: u16 = 0x5001;
     pub const ADSP_21XX_LEGACY: u16 = 0x521C;
     pub const MIPS_LEGACY_BE: u16 = 0x6001;
     pub const Z8_LEGACY: u16 = 0x8000;
-    pub const TI_C6X_SWAPPED: u16 = 0xC200;
+    /// TI COFF2 magic written by a big-endian target.
+    pub const TI_COFF2_BE: u16 = 0xC200;
+    /// TI COFF1 magic written by a big-endian target.
+    pub const TI_COFF1_BE: u16 = 0xC100;
 
     /// Check if a machine type is valid/known.
     pub fn is_valid(machine: u16) -> bool {
@@ -97,15 +108,19 @@ pub mod machine {
                 | M32R
                 | ARM64
                 | H8300_LEGACY
+                | I960_RO
+                | I960_RW
+                | I860
                 | H8300S_LEGACY
-                | TI_C54X
-                | TI_C6X
+                | TI_COFF1
+                | TI_COFF2
+                | TI_COFF1_BE
                 | ARM_THUMB_LEGACY
                 | M68K_LEGACY_BE
                 | ADSP_21XX_LEGACY
                 | MIPS_LEGACY_BE
                 | Z8_LEGACY
-                | TI_C6X_SWAPPED
+                | TI_COFF2_BE
         )
     }
 }
@@ -219,21 +234,112 @@ pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str
         machine::LOONGARCH32 => (Isa::LoongArch32, 32, Endianness::Little, None),
         machine::LOONGARCH64 => (Isa::LoongArch64, 64, Endianness::Little, None),
         machine::AMD64 => (Isa::X86_64, 64, Endianness::Little, None),
-        machine::M32R => (Isa::Unknown(0x9041), 32, Endianness::Little, Some("M32R")),
+        machine::M32R => (Isa::M32r, 32, Endianness::Little, None),
         machine::ARM64 => (Isa::AArch64, 64, Endianness::Little, None),
-        machine::H8300_LEGACY => (Isa::Sh, 32, Endianness::Big, Some("H8/300")),
-        machine::H8300S_LEGACY => (Isa::Sh, 32, Endianness::Big, Some("H8S")),
-        machine::TI_C54X => (Isa::TiC5500, 32, Endianness::Little, Some("TMS320C54x")),
-        machine::TI_C6X | machine::TI_C6X_SWAPPED => {
-            (Isa::TiC6000, 32, Endianness::Little, Some("TMS320C6x"))
+        machine::I960_RO | machine::I960_RW => (Isa::I960, 32, Endianness::Little, None),
+        machine::I860 => (Isa::I860, 32, Endianness::Little, None),
+        machine::H8300_LEGACY => (Isa::H8300, 16, Endianness::Big, Some("H8/300")),
+        machine::H8300S_LEGACY => (Isa::H8300, 16, Endianness::Big, Some("H8S")),
+        // TI COFF: the real target is the target ID in the header, see ti_target().
+        machine::TI_COFF1 | machine::TI_COFF2 | machine::TI_COFF1_BE | machine::TI_COFF2_BE => {
+            (Isa::Unknown(machine as u32), 32, Endianness::Little, Some("TI COFF"))
         }
         machine::ARM_THUMB_LEGACY => (Isa::Arm, 32, Endianness::Little, Some("Thumb")),
         machine::M68K_LEGACY_BE => (Isa::M68k, 32, Endianness::Big, Some("68k COFF")),
         machine::ADSP_21XX_LEGACY => (Isa::Sharc, 32, Endianness::Little, Some("ADSP-21xx")),
         machine::MIPS_LEGACY_BE => (Isa::Mips, 32, Endianness::Big, Some("MIPS BE COFF")),
-        machine::Z8_LEGACY => (Isa::Z80, 16, Endianness::Little, Some("Z8")),
+        // Zilog Z8 is not a Z80; there is no Isa variant for it.
+        machine::Z8_LEGACY => (Isa::Unknown(0x8000), 8, Endianness::Big, Some("Zilog Z8")),
         other => (Isa::Unknown(other as u32), 32, Endianness::Little, None),
     }
+}
+
+/// Map a TI COFF target ID (header offset 20) to an ISA.
+///
+/// See TI SPRAAO8 "Common Object File Format". The magic at offset 0 of a
+/// TI COFF file is only the COFF *version* (0x00C1/0x00C2); the processor is
+/// identified here.
+pub fn ti_target(target_id: u16) -> Option<(Isa, u8, &'static str)> {
+    Some(match target_id {
+        0x0097 => (Isa::Arm, 32, "TMS470"),
+        0x0098 => (Isa::TiC5500, 16, "TMS320C54x"),
+        0x0099 => (Isa::TiC6000, 32, "TMS320C6000"),
+        0x009C => (Isa::TiC5500, 16, "TMS320C55x"),
+        0x009D => (Isa::TiC28x, 32, "TMS320C28x"),
+        0x00A0 => (Isa::Msp430, 16, "MSP430"),
+        0x00A1 => (Isa::TiC5500, 16, "TMS320C55x+"),
+        _ => return None,
+    })
+}
+
+/// Header layout of a COFF flavour: (big-endian, file header size, section header size).
+fn layout(data: &[u8], machine: u16) -> (bool, usize, usize) {
+    match machine {
+        // Big-endian legacy COFF whose magic reads byte-swapped as little-endian.
+        machine::M68K_LEGACY_BE
+        | machine::MIPS_LEGACY_BE
+        | machine::H8300_LEGACY
+        | machine::H8300S_LEGACY
+        | machine::Z8_LEGACY => (true, COFF_HEADER_SIZE, SECTION_HEADER_SIZE),
+        // TI COFF: 22-byte file header (target ID at 20); COFF2 sections are 48 bytes.
+        // GNU i960 COFF section headers carry an extra s_align word.
+        machine::I960_RO | machine::I960_RW => (false, COFF_HEADER_SIZE, SECTION_HEADER_SIZE + 4),
+        machine::TI_COFF2 => (false, COFF_HEADER_SIZE + 2, 48),
+        machine::TI_COFF1 => (false, COFF_HEADER_SIZE + 2, SECTION_HEADER_SIZE),
+        machine::TI_COFF2_BE => (true, COFF_HEADER_SIZE + 2, 48),
+        machine::TI_COFF1_BE => (true, COFF_HEADER_SIZE + 2, SECTION_HEADER_SIZE),
+        _ => {
+            let _ = data;
+            (false, COFF_HEADER_SIZE, SECTION_HEADER_SIZE)
+        }
+    }
+}
+
+/// Whether the file header and section table are consistent with the file.
+fn header_is_plausible(data: &[u8], machine: u16) -> bool {
+    let (be, header_size, section_size) = layout(data, machine);
+    if data.len() < header_size {
+        return false;
+    }
+    let u16_at = |o: usize| {
+        let b = [data[o], data[o + 1]];
+        if be { u16::from_be_bytes(b) } else { u16::from_le_bytes(b) }
+    };
+    let u32_at = |o: usize| {
+        let b = [data[o], data[o + 1], data[o + 2], data[o + 3]];
+        if be { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) }
+    };
+    let num_sections = u16_at(2) as usize;
+    let ptr_symbol_table = u64::from(u32_at(8));
+    let num_symbols = u64::from(u32_at(12));
+    let opt_size = u16_at(16) as usize;
+    let file_len = data.len() as u64;
+
+    if num_sections == 0 || num_sections > 1024 {
+        return false;
+    }
+    if opt_size != 0 && !(28..=512).contains(&opt_size) {
+        return false;
+    }
+    if ptr_symbol_table != 0 && ptr_symbol_table + num_symbols * 18 > file_len {
+        return false;
+    }
+    let table = header_size + opt_size;
+    if table + num_sections * section_size > data.len() {
+        return false;
+    }
+    (0..num_sections).all(|i| {
+        let sh = table + i * section_size;
+        let name = &data[sh..sh + 8];
+        let name_len = name.iter().position(|&b| b == 0).unwrap_or(8);
+        // TI COFF2 and long-name COFF store a string-table offset (first
+        // four bytes zero) instead of an inline name.
+        let named = name_len > 0 && name[..name_len].iter().all(u8::is_ascii_graphic);
+        let offset_name = name[..4] == [0, 0, 0, 0];
+        let raw_size = u64::from(u32_at(sh + 16));
+        let raw_ptr = u64::from(u32_at(sh + 20));
+        (named || offset_name) && (raw_ptr == 0 || raw_ptr + raw_size <= file_len)
+    })
 }
 
 /// Check if data looks like a valid standalone COFF file.
@@ -273,36 +379,12 @@ pub fn detect(data: &[u8]) -> Option<u16> {
     let size_opt_header = u16::from_le_bytes([data[16], data[17]]);
     let characteristics = u16::from_le_bytes([data[18], data[19]]);
 
-    // Sanity checks
-    // Number of sections should be reasonable
-    if num_sections > MAX_SECTIONS {
+    // The machine field is only two bytes, and raw firmware (vector tables,
+    // literal pools) produces "valid" machine values all the time, so the rest
+    // of the header must hold together before we call this COFF.
+    let _ = (num_sections, ptr_symbol_table, num_symbols, size_opt_header, characteristics);
+    if !header_is_plausible(data, machine) {
         return None;
-    }
-
-    // Optional header size should be reasonable.
-    // Keep permissive to handle malformed-but-identifiable corpus files.
-    if size_opt_header > 8192 {
-        return None;
-    }
-
-    // Reject obviously empty/random headers.
-    if num_sections == 0
-        && ptr_symbol_table == 0
-        && num_symbols == 0
-        && size_opt_header == 0
-        && characteristics == 0
-    {
-        return None;
-    }
-
-    // If sections exist, the section table start should be representable in the file.
-    // Don't require full table fit: malformed/truncated COFF files are still useful
-    // for architecture identification by machine type.
-    if num_sections > 0 {
-        let section_table_start = COFF_HEADER_SIZE + size_opt_header as usize;
-        if section_table_start > data.len() {
-            return None;
-        }
     }
 
     Some(machine)
@@ -341,7 +423,23 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
         (num_sections, num_symbols, characteristics)
     };
 
-    let (isa, bitwidth, endianness, variant_note) = machine_to_isa(machine);
+    let (mut isa, mut bitwidth, mut endianness, mut variant_note) = machine_to_isa(machine);
+    if matches!(
+        machine,
+        machine::TI_COFF1 | machine::TI_COFF2 | machine::TI_COFF1_BE | machine::TI_COFF2_BE
+    ) {
+        let big = matches!(machine, machine::TI_COFF1_BE | machine::TI_COFF2_BE);
+        if let Ok(target) = read_u16(data, 20, !big) {
+            if let Some((t_isa, t_bits, t_name)) = ti_target(target) {
+                isa = t_isa;
+                bitwidth = t_bits;
+                variant_note = Some(t_name);
+            } else {
+                isa = Isa::Unknown(u32::from(target));
+            }
+        }
+        endianness = if big { Endianness::Big } else { Endianness::Little };
+    }
 
     // Build variant
     let variant = match variant_note {
@@ -423,14 +521,15 @@ pub fn machine_description(machine: u16) -> &'static str {
         machine::ARM64 => "ARM64 / AArch64",
         machine::H8300_LEGACY => "Hitachi H8/300 (legacy)",
         machine::H8300S_LEGACY => "Hitachi H8S (legacy)",
-        machine::TI_C54X => "Texas Instruments TMS320C54x",
-        machine::TI_C6X => "Texas Instruments TMS320C6x",
+        machine::TI_COFF1 => "Texas Instruments COFF v1",
+        machine::TI_COFF2 => "Texas Instruments COFF v2",
+        machine::TI_COFF1_BE => "Texas Instruments COFF v1 (big-endian)",
         machine::ARM_THUMB_LEGACY => "ARM Thumb (legacy)",
         machine::M68K_LEGACY_BE => "Motorola 68k (legacy COFF)",
         machine::ADSP_21XX_LEGACY => "Analog Devices ADSP-21xx",
         machine::MIPS_LEGACY_BE => "MIPS (legacy big-endian COFF)",
         machine::Z8_LEGACY => "Zilog Z8",
-        machine::TI_C6X_SWAPPED => "Texas Instruments TMS320C6x (swapped)",
+        machine::TI_COFF2_BE => "Texas Instruments COFF v2 (big-endian)",
         _ => "Unknown machine type",
     }
 }
@@ -465,6 +564,12 @@ mod tests {
         // Size of optional header (0 for object files)
         data[16] = 0;
         data[17] = 0;
+
+        // Section names, so the header passes the plausibility check.
+        for i in 0..num_sections as usize {
+            let sh = COFF_HEADER_SIZE + i * SECTION_HEADER_SIZE;
+            data[sh..sh + 5].copy_from_slice(b".text");
+        }
 
         // Characteristics
         data[18] = characteristics::MACHINE_32BIT as u8;

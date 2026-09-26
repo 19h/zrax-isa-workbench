@@ -101,6 +101,18 @@ pub enum Isa {
 
     // Renesas RX
     Rx,
+    // Renesas (Hitachi) H8/300, H8/300H, H8S, H8SX
+    H8300,
+    // Renesas (Mitsubishi) M32R
+    M32r,
+    // Renesas M16C / M32C
+    M16c,
+    // Andes NDS32
+    Nds32,
+    // ST Microelectronics ST9+
+    St9,
+    // Motorola 6809
+    M6809,
 
     // TI DSP
     TiC6000,
@@ -244,6 +256,12 @@ impl Isa {
             Isa::Rh850 => "Renesas RH850",
             Isa::K78k0r => "NEC 78K0R",
             Isa::Rx => "Renesas RX",
+            Isa::H8300 => "Renesas H8/300",
+            Isa::M32r => "Renesas M32R",
+            Isa::M16c => "Renesas M16C/M32C",
+            Isa::Nds32 => "Andes NDS32",
+            Isa::St9 => "ST9",
+            Isa::M6809 => "Motorola 6809",
             Isa::TiC6000 => "TI TMS320C6000",
             Isa::TiC2000 => "TI TMS320C2000",
             Isa::TiC28x => "TI TMS320C28x",
@@ -322,6 +340,8 @@ impl Isa {
             | Isa::V850
             | Isa::Rh850
             | Isa::Rx
+            | Isa::M32r
+            | Isa::Nds32
             | Isa::TiC6000
             | Isa::TiC2000
             | Isa::TiC28x
@@ -366,7 +386,11 @@ impl Isa {
             | Isa::Hc11
             | Isa::C166
             | Isa::Rl78
-            | Isa::K78k0r => 16,
+            | Isa::K78k0r
+            | Isa::H8300
+            | Isa::M16c
+            | Isa::St9 => 16,
+            Isa::M6809 => 8,
 
             Isa::Pdp11 => 16,
             Isa::Vax => 32,
@@ -1295,9 +1319,11 @@ pub struct IsaCandidate {
     pub bitwidth: u8,
     /// Byte ordering
     pub endianness: Endianness,
-    /// Raw score from pattern matching
+    /// Evidence in bits: how much better this ISA explains the input's code
+    /// windows than the best non-code model (negative: worse).
     pub raw_score: i64,
-    /// Normalized confidence (0.0 - 1.0)
+    /// Share of the positive evidence of all candidates (0.0 - 1.0). The
+    /// calibrated confidence of the decision is `IsaClassification::confidence`.
     pub confidence: f64,
 }
 

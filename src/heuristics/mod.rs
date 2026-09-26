@@ -1,2590 +1,727 @@
-//! Heuristic analysis for ISA identification.
+//! Heuristic ISA identification for headerless data (raw firmware, dumps,
+//! extracted sections).
 //!
-//! This module provides pattern-based analysis of raw binary data
-//! to identify the instruction set architecture when no file format
-//! header is present.
+//! # How it works
+//!
+//! The input is cut into windows. Every window is scored against every class
+//! of the byte-bigram [`Model`]: the score of a class is the number of bits
+//! the window costs to encode under that class's model. Code classes compete
+//! with *data* classes (read-only data, text, media, numeric tables) and with
+//! the uniform distribution, so a window is only called code when some ISA
+//! explains it better than every non-code hypothesis, and by a clear margin
+//! over every other ISA family.
+//!
+//! The primary ISA is the family that wins the most code bytes; the variant
+//! within the family (endianness, 32/64-bit, Thumb vs A32, ...) is the class
+//! with the lowest total cost over that family's windows. Confidence is the
+//! family's share of code windows scaled by the strength of its evidence.
+//!
+//! There are no per-ISA hand-written rules in here: everything ISA-specific
+//! lives in the trained model, which is rebuilt from ground-truth code with
+//! `scripts/build_corpus.py` + `examples/train_model.rs`.
 
-pub mod scorer;
+pub mod model;
 
 use std::collections::HashMap;
+
+pub use model::{class_info, ClassInfo, ClassKind, Model, ModelBuilder, ModelError, CLASSES};
 
 use crate::error::{ClassifierError, Result};
 use crate::types::{
     ClassificationResult, ClassificationSource, ClassifierOptions, Endianness, FileFormat, Isa,
+    Variant,
 };
 
-pub use scorer::*;
+/// Default analysis window.
+pub const DEFAULT_WINDOW: usize = 1024;
+/// Inputs up to this size are scored as a single window.
+const SINGLE_WINDOW_MAX: usize = 2 * DEFAULT_WINDOW;
+/// Smallest window (tail or whole input) worth scoring.
+const MIN_WINDOW: usize = 24;
+/// Minimum per-byte margin (bits) of the winning family over every other
+/// hypothesis, code or data, for a window to count as code.
+///
+/// Measured on held-out code: at this margin, windows of 128 bytes and more
+/// are wrong well under 0.2% of the time, while ~95% of 1KB code windows pass.
+pub const MIN_MARGIN_BITS_PER_BYTE: f64 = 0.4;
+/// Minimum total margin (bits) for a window, which only matters for tiny inputs.
+const MIN_MARGIN_BITS: f64 = 16.0;
+/// Confidence calibration (fitted on the held-out corpus split with
+/// `examples/calibrate.rs`).
+///
+/// Bigram bit counts are wildly overconfident as probabilities, so a window
+/// contributes a *weight* instead: a logistic in its per-byte margin, scaled
+/// down for windows shorter than 1 KB.
+///
+/// Data windows occasionally slip past the margin gate (~0.2% of windows),
+/// but never with a margin of `STRONG_MARGIN` or more. Strong windows
+/// therefore count in full, while the summed weight of weak windows is
+/// reduced by `FALSE_ALARM_PER_WINDOW` for every non-padding window scanned:
+/// a handful of weak hits in a large data blob cancels out, a small function
+/// on its own still gets through. Evidence `E` maps to `1 - exp(-E / EVIDENCE_SCALE)`.
+const WEIGHT_MIDPOINT: f64 = 0.6;
+const WEIGHT_WIDTH: f64 = 0.15;
+const STRONG_MARGIN: f64 = 1.0;
+const FALSE_ALARM_PER_WINDOW: f64 = 0.05;
+const EVIDENCE_SCALE: f64 = 0.5;
 
-/// All supported architectures for heuristic analysis.
-pub const SUPPORTED_ARCHITECTURES: &[(Isa, &str)] = &[
-    (Isa::X86, "x86 (32-bit)"),
-    (Isa::X86_64, "x86-64 (64-bit)"),
-    (Isa::Arm, "ARM (32-bit)"),
-    (Isa::AArch64, "AArch64 (64-bit)"),
-    (Isa::RiscV32, "RISC-V (32-bit)"),
-    (Isa::RiscV64, "RISC-V (64-bit)"),
-    (Isa::Mips, "MIPS (32-bit)"),
-    (Isa::Mips64, "MIPS (64-bit)"),
-    (Isa::Ppc, "PowerPC (32-bit)"),
-    (Isa::Ppc64, "PowerPC (64-bit)"),
-    (Isa::Sparc, "SPARC (32-bit)"),
-    (Isa::Sparc64, "SPARC (64-bit)"),
-    (Isa::S390x, "s390x (z/Architecture)"),
-    (Isa::M68k, "Motorola 68000"),
-    (Isa::Sh, "SuperH"),
-    (Isa::Alpha, "DEC Alpha"),
-    (Isa::LoongArch64, "LoongArch (64-bit)"),
-    (Isa::Hexagon, "Qualcomm Hexagon"),
-    (Isa::Avr, "Atmel AVR"),
-    (Isa::Msp430, "TI MSP430"),
-    (Isa::Parisc, "HP PA-RISC"),
-    (Isa::Arc, "Synopsys ARC"),
-    (Isa::Xtensa, "Tensilica Xtensa"),
-    (Isa::MicroBlaze, "Xilinx MicroBlaze"),
-    (Isa::Nios2, "Altera Nios II"),
-    (Isa::OpenRisc, "OpenRISC"),
-    (Isa::Lanai, "Lanai"),
-    (Isa::Jvm, "JVM Bytecode"),
-    (Isa::Wasm, "WebAssembly"),
-    (Isa::Dalvik, "Dalvik Bytecode"),
-    (Isa::Blackfin, "Blackfin DSP"),
-    (Isa::Ia64, "IA-64/Itanium"),
-    (Isa::Vax, "DEC VAX"),
-    (Isa::I860, "Intel i860"),
-    (Isa::CellSpu, "Cell SPU"),
-    (Isa::Tricore, "Infineon TriCore"),
-    (Isa::Hcs12, "Freescale/NXP HCS12"),
-    (Isa::Hc11, "Motorola 68HC11"),
-    (Isa::C166, "Infineon/Siemens C166"),
-    (Isa::Csky, "C-SKY"),
-    (Isa::V850, "Renesas/NEC V850"),
-    (Isa::Rl78, "Renesas RL78"),
-    (Isa::Rh850, "Renesas RH850"),
-    (Isa::K78k0r, "NEC 78K0R"),
-    (Isa::S12z, "NXP/Freescale S12Z"),
-    (Isa::Fr30, "Fujitsu FR30"),
-    (Isa::Fr80, "Fujitsu FR80"),
-    (Isa::PpcVle, "PowerPC VLE"),
-    (Isa::TiC6000, "TI TMS320C6000"),
-];
+/// Weight of one code window in the confidence estimate.
+fn window_weight(margin: f64, len: usize) -> f64 {
+    let size = (len as f64 / DEFAULT_WINDOW as f64).sqrt().min(1.0);
+    size / (1.0 + (-(margin - WEIGHT_MIDPOINT) / WEIGHT_WIDTH).exp())
+}
 
-/// Result of heuristic scoring for a single architecture.
+/// A window whose most common byte covers this fraction is padding.
+const PADDING_FRACTION: f64 = 0.90;
+/// A window this printable is text. The 99th percentile of real code
+/// windows is below 0.8 for every ISA in the corpus.
+const TEXT_FRACTION: f64 = 0.90;
+
+/// Aggregate score of one ISA variant over the analysed input.
 #[derive(Debug, Clone)]
 pub struct ArchitectureScore {
-    /// The ISA being scored
+    /// The ISA.
     pub isa: Isa,
-    /// Raw score (sum of pattern matches)
+    /// Evidence in bits: how much better this class explains the code
+    /// windows than the best non-code hypothesis (negative = worse).
     pub raw_score: i64,
-    /// Normalized confidence (0.0 - 1.0)
+    /// This candidate's share of the positive evidence of all candidates
+    /// (not a probability; the calibrated decision confidence is on the
+    /// classification result).
     pub confidence: f64,
-    /// Detected endianness
+    /// Byte order.
     pub endianness: Endianness,
-    /// Bitwidth
+    /// Register width.
     pub bitwidth: u8,
 }
 
-/// Analyze raw binary data and return the best classification.
-pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<ClassificationResult> {
-    if data.is_empty() {
-        return Err(ClassifierError::FileTooSmall {
-            expected: 4,
-            actual: 0,
-        });
+/// What a window turned out to be.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WindowKind {
+    /// Dominated by a single byte value (erased flash, zero fill).
+    Padding,
+    /// Best explained by a non-code model.
+    Data,
+    /// Some ISA is best, but not by enough to call it.
+    Ambiguous {
+        /// Model index of the best code class.
+        best: usize,
+    },
+    /// Code of the given model class.
+    Code {
+        /// Model index of the winning class.
+        class: usize,
+        /// Margin over the best other family / data hypothesis, bits per byte.
+        margin: f64,
+    },
+}
+
+/// Verdict for one window.
+#[derive(Debug, Clone, Copy)]
+pub struct WindowVerdict {
+    /// Offset of the window in the input.
+    pub offset: usize,
+    /// Length of the window.
+    pub len: usize,
+    /// Classification of the window.
+    pub kind: WindowKind,
+}
+
+/// Result of scanning an input with a model.
+#[derive(Debug, Clone)]
+pub struct Scan<'m> {
+    model: &'m Model<'m>,
+    /// Per-window verdicts in input order.
+    pub windows: Vec<WindowVerdict>,
+    /// For every code window (same order as they appear in `windows`), the
+    /// cost of each class in bits minus the cost of the best data hypothesis
+    /// (negative = the class explains the window better than data does).
+    code_costs: Vec<Vec<f64>>,
+}
+
+impl<'m> Scan<'m> {
+    /// The model used for the scan.
+    pub fn model(&self) -> &'m Model<'m> {
+        self.model
     }
 
-    // Score all architectures
-    let scores = score_all_architectures(data, options);
-
-    if scores.is_empty() {
-        return Err(ClassifierError::HeuristicInconclusive {
-            confidence: 0.0,
-            threshold: options.min_confidence * 100.0,
-        });
-    }
-
-    // Find the best and second-best matches
-    let mut sorted_scores: Vec<_> = scores.iter().collect();
-    sorted_scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-
-    let mut best = sorted_scores[0];
-
-    if matches!(best.isa, Isa::RiscV32 | Isa::RiscV64)
-        && sorted_scores
-            .get(1)
-            .is_some_and(|s| matches!(s.isa, Isa::RiscV32 | Isa::RiscV64))
-    {
-        if let Some(ti) = sorted_scores
+    /// Total bytes in code windows.
+    pub fn code_bytes(&self) -> usize {
+        self.windows
             .iter()
-            .copied()
-            .find(|s| s.isa == Isa::TiC6000)
-        {
-            let best_raw = best.raw_score.max(0);
-            let ti_raw = ti.raw_score.max(0);
-            if best_raw >= 200_000
-                && ti_raw >= 200_000
-                && (ti_raw as f64) >= (best_raw as f64) * 0.90
-            {
-                best = ti;
+            .filter(|w| matches!(w.kind, WindowKind::Code { .. }))
+            .map(|w| w.len)
+            .sum()
+    }
+
+    /// Total bytes scanned.
+    pub fn scanned_bytes(&self) -> usize {
+        self.windows.iter().map(|w| w.len).sum()
+    }
+
+    fn code_windows(&self) -> impl Iterator<Item = (&WindowVerdict, usize, f64, &Vec<f64>)> {
+        self.windows
+            .iter()
+            .filter_map(|w| match w.kind {
+                WindowKind::Code { class, margin } => Some((w, class, margin)),
+                _ => None,
+            })
+            .zip(self.code_costs.iter())
+            .map(|((w, c, m), costs)| (w, c, m, costs))
+    }
+
+    /// Per family: code bytes won and net evidence (see [`window_weight`]), strongest first.
+    pub fn family_votes(&self) -> Vec<(&'static str, usize, f64)> {
+        // (bytes, strong weight, weak weight)
+        let mut votes: HashMap<&'static str, (usize, f64, f64)> = HashMap::new();
+        for (w, class, margin, _) in self.code_windows() {
+            let e = votes.entry(self.model.class(class).family).or_default();
+            e.0 += w.len;
+            if margin >= STRONG_MARGIN {
+                e.1 += window_weight(margin, w.len);
+            } else {
+                e.2 += window_weight(margin, w.len);
             }
         }
+        let allowance = FALSE_ALARM_PER_WINDOW * self.informative_windows() as f64;
+        let mut v: Vec<_> = votes
+            .into_iter()
+            .map(|(f, (b, strong, weak))| (f, b, strong + (weak - allowance).max(0.0)))
+            .collect();
+        v.sort_by(|a, b| b.2.total_cmp(&a.2).then(b.1.cmp(&a.1)).then(a.0.cmp(b.0)));
+        v
     }
 
-    let second_best = sorted_scores
-        .iter()
-        .copied()
-        .filter(|s| {
-            !(s.isa == best.isa && s.bitwidth == best.bitwidth && s.endianness == best.endianness)
+    /// Number of windows that were not padding.
+    fn informative_windows(&self) -> usize {
+        self.windows.iter().filter(|w| w.kind != WindowKind::Padding).count()
+    }
+
+    /// Evidence (bits better than data) of every class, summed over the code
+    /// windows won by `family` (or all code windows when `family` is `None`).
+    pub fn class_evidence(&self, family: Option<&str>) -> Vec<f64> {
+        let mut ev = vec![0.0; self.model.len()];
+        for (_, class, _, costs) in self.code_windows() {
+            if family.is_some_and(|f| self.model.class(class).family != f) {
+                continue;
+            }
+            for (e, c) in ev.iter_mut().zip(costs) {
+                *e -= c;
+            }
+        }
+        ev
+    }
+
+    /// The decision: best class, confidence, and supporting numbers.
+    pub fn decide(&self) -> Option<Decision> {
+        let votes = self.family_votes();
+        let &(family, _, family_weight) = votes.first()?;
+        let code_bytes: usize = votes.iter().map(|v| v.1).sum();
+        let total_weight: f64 = votes.iter().map(|v| v.2).sum();
+        let evidence = self.class_evidence(Some(family));
+        let class = (0..self.model.len())
+            .filter(|&i| self.model.class(i).family == family)
+            .max_by(|&a, &b| evidence[a].total_cmp(&evidence[b]))?;
+        let share = if total_weight > 0.0 { family_weight / total_weight } else { 0.0 };
+        let strength = 1.0 - (-family_weight / EVIDENCE_SCALE).exp();
+        Some(Decision {
+            class,
+            info: self.model.class(class),
+            confidence: (share * strength).clamp(0.0, 0.99),
+            family_share: share,
+            code_bytes,
+            scanned_bytes: self.scanned_bytes(),
         })
-        .next();
-
-    // Calculate confidence using multiple factors:
-    // 1. Share of total (original method)
-    // 2. Margin over second place (how decisive is the win?)
-    // 3. Absolute score threshold (does it look like real code at all?)
-    let total_positive: i64 = scores.iter().map(|s| s.raw_score.max(0)).sum();
-
-    let share_confidence = if total_positive > 0 {
-        best.raw_score.max(0) as f64 / total_positive as f64
-    } else {
-        0.0
-    };
-
-    // Margin confidence: how much better is the winner than second place?
-    let margin_confidence = if let Some(second) = second_best {
-        if second.raw_score > 0 {
-            // Margin as a ratio: if winner is 50% higher than second, margin = 0.5
-            let margin = (best.raw_score - second.raw_score) as f64 / second.raw_score as f64;
-            // Scale margin to a confidence: margin of 0.2 (20% better) → ~0.5 confidence
-            // margin of 1.0 (100% better) → ~0.9 confidence
-            (margin / (margin + 0.25)).min(0.95)
-        } else {
-            0.95 // If second place has no score, winner is very confident
-        }
-    } else {
-        0.95
-    };
-
-    // Combined confidence: use the higher of share or margin-based confidence
-    // This helps when many architectures score but one clearly dominates
-    let mut confidence = share_confidence.max(margin_confidence * 0.8);
-
-    if confidence < options.min_confidence {
-        if let Some(subregion) = try_wrapper_subregion_fallback(data, options) {
-            return Ok(subregion);
-        }
-
-        if let Some(fallback) = try_anchor_window_fallback(data, options) {
-            return Ok(fallback);
-        }
-
-        if let Some(boosted_confidence) =
-            try_variant_family_confidence_boost(&sorted_scores, options)
-        {
-            confidence = boosted_confidence;
-        } else {
-            return Err(ClassifierError::HeuristicInconclusive {
-                confidence: confidence * 100.0,
-                threshold: options.min_confidence * 100.0,
-            });
-        }
     }
-
-    if let Some(subregion) = try_wrapper_subregion_fallback(data, options) {
-        if subregion.confidence >= confidence + 0.10 {
-            return Ok(subregion);
-        }
-    }
-
-    // Build result
-    let mut detected_isa = best.isa;
-    if detected_isa == Isa::V850 && has_marker(data, b"RH850") {
-        detected_isa = Isa::Rh850;
-    }
-
-    let mut result = ClassificationResult::from_heuristics(
-        detected_isa,
-        best.bitwidth,
-        best.endianness,
-        confidence,
-    );
-    result.source = ClassificationSource::Heuristic;
-    result.format = FileFormat::Raw;
-
-    // Add extensions if requested
-    if options.detect_extensions {
-        let extensions = crate::extensions::detect_from_code(data, best.isa, best.endianness);
-        result.extensions = extensions;
-    }
-
-    Ok(result)
 }
 
-fn has_marker(data: &[u8], marker: &[u8]) -> bool {
-    if marker.is_empty() || data.len() < marker.len() {
-        return false;
-    }
-    data.windows(marker.len()).any(|w| w == marker)
+/// Outcome of [`Scan::decide`].
+#[derive(Debug, Clone, Copy)]
+pub struct Decision {
+    /// Model index of the chosen class.
+    pub class: usize,
+    /// Description of the chosen class.
+    pub info: &'static ClassInfo,
+    /// Calibrated confidence (0-1).
+    pub confidence: f64,
+    /// Chosen family's share of the (weighted) code evidence.
+    pub family_share: f64,
+    /// Bytes in code windows.
+    pub code_bytes: usize,
+    /// Bytes scanned.
+    pub scanned_bytes: usize,
 }
 
-fn has_wrapper_hint(data: &[u8]) -> bool {
-    if data.len() < 256 * 1024 {
-        return false;
+/// Tile the input into windows (a single window for small inputs).
+fn tiles(len: usize, window: usize) -> Vec<(usize, usize)> {
+    if len <= SINGLE_WINDOW_MAX.max(window) {
+        return if len >= MIN_WINDOW { vec![(0, len)] } else { Vec::new() };
     }
-
-    let head = &data[..data.len().min(4096)];
-    let printable_ratio = head_printable_ratio(head);
-
-    if printable_ratio >= 0.75 {
-        return true;
+    let full = len / window;
+    let mut out: Vec<(usize, usize)> = (0..full).map(|i| (i * window, window)).collect();
+    let tail = len - full * window;
+    if tail >= MIN_WINDOW * 4 {
+        out.push((full * window, tail));
     }
+    out
+}
 
-    const MARKERS: [&[u8]; 8] = [
-        b"FIRM",
-        b"FIRMWARE",
-        b"UPGRADE",
-        b"BOOT",
-        b"EPSON",
-        b"INTELLIGENT",
-        b"CFF-",
-        b"U-Boot",
-    ];
+/// Pick at most `wanted` of `candidates`, evenly spread (code in a firmware
+/// image can be anywhere, and a prefix would miss it).
+fn spread(candidates: &[usize], wanted: usize) -> Vec<usize> {
+    if candidates.len() <= wanted {
+        return candidates.to_vec();
+    }
+    let wanted = wanted.max(1);
+    (0..wanted)
+        .map(|i| candidates[i * (candidates.len() - 1) / (wanted - 1).max(1)])
+        .collect()
+}
 
-    MARKERS
+fn is_padding(w: &[u8]) -> bool {
+    let mut hist = [0u32; 256];
+    for &b in w {
+        hist[b as usize] += 1;
+    }
+    let max = hist.iter().copied().max().unwrap_or(0);
+    max as f64 >= PADDING_FRACTION * w.len() as f64
+}
+
+fn is_text(w: &[u8]) -> bool {
+    let printable = w
         .iter()
-        .any(|m| head.windows(m.len()).any(|w| w == *m))
-}
-
-#[inline]
-fn head_printable_ratio(head: &[u8]) -> f64 {
-    if head.is_empty() {
-        return 0.0;
-    }
-
-    let printable = head
-        .iter()
-        .filter(|&&b| {
-            b == 0 || b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b)
-        })
+        .filter(|&&b| (0x20..0x7F).contains(&b) || matches!(b, b'\t' | b'\n' | b'\r'))
         .count();
-
-    printable as f64 / head.len() as f64
+    printable as f64 >= TEXT_FRACTION * w.len() as f64
 }
 
-#[inline]
-fn wrapper_subregion_allowed_isa(isa: Isa) -> bool {
-    matches!(
-        isa,
-        Isa::X86
-            | Isa::X86_64
-            | Isa::Arm
-            | Isa::AArch64
-            | Isa::RiscV32
-            | Isa::RiscV64
-            | Isa::Mips
-            | Isa::Mips64
-            | Isa::Ppc
-            | Isa::Ppc64
-            | Isa::Sparc
-            | Isa::Sparc64
-            | Isa::S390x
-            | Isa::M68k
-            | Isa::Sh
-            | Isa::Arc
-            | Isa::Xtensa
-            | Isa::MicroBlaze
-            | Isa::Nios2
-            | Isa::OpenRisc
-            | Isa::V850
-            | Isa::Rh850
-            | Isa::Csky
-            | Isa::TiC6000
-    )
+/// Score one window against every class; returns costs in model units.
+fn window_costs(model: &Model, w: &[u8], costs: &mut Vec<u64>) {
+    costs.clear();
+    let pairs: Vec<u16> = w.windows(2).map(|p| u16::from(p[0]) << 8 | u16::from(p[1])).collect();
+    for i in 0..model.len() {
+        let t = model.table(i);
+        costs.push(pairs.iter().map(|&p| u64::from(t[p as usize])).sum());
+    }
 }
 
-#[inline]
-fn is_wrapper_noise_window(data: &[u8]) -> bool {
-    if data.len() < 256 {
-        return false;
+/// Scan `data` with `model` using windows of `window` bytes, looking at no
+/// more than `budget` bytes in total.
+pub fn scan<'m>(data: &[u8], model: &'m Model<'m>, window: usize, budget: usize) -> Scan<'m> {
+    let window = window.max(MIN_WINDOW * 4);
+    let scale = f64::from(model.cost_scale());
+    let mut windows = Vec::new();
+    let mut code_costs = Vec::new();
+    let mut costs = Vec::with_capacity(model.len());
+
+    // Padding is cheap to recognise, so find it everywhere first and spend the
+    // scan budget only on the rest: an 8 MB image with 6 KB of code in it
+    // must not be sampled into nothing but erased flash.
+    let all = tiles(data.len(), window);
+    let padding: Vec<bool> = all.iter().map(|&(o, l)| is_padding(&data[o..o + l])).collect();
+    let informative: Vec<usize> = (0..all.len()).filter(|&i| !padding[i]).collect();
+    let mut chosen = vec![false; all.len()];
+    for i in spread(&informative, (budget / window).max(1)) {
+        chosen[i] = true;
     }
 
-    let mut seen = [false; 256];
-    for &b in data {
-        seen[b as usize] = true;
-    }
-    let distinct = seen.iter().filter(|&&v| v).count();
+    for (i, &(off, len)) in all.iter().enumerate() {
+        let w = &data[off..off + len];
+        if padding[i] {
+            windows.push(WindowVerdict { offset: off, len, kind: WindowKind::Padding });
+            continue;
+        }
+        if !chosen[i] {
+            continue;
+        }
+        if is_text(w) {
+            windows.push(WindowVerdict { offset: off, len, kind: WindowKind::Data });
+            continue;
+        }
+        window_costs(model, w, &mut costs);
+        let pairs = (len - 1) as f64;
+        let uniform = 8.0 * pairs * scale;
 
-    distinct >= 210
-}
+        let data_best = (0..model.len())
+            .filter(|&i| !model.class(i).is_code())
+            .map(|i| costs[i] as f64)
+            .fold(uniform, f64::min);
+        let best_code = (0..model.len())
+            .filter(|&i| model.class(i).is_code())
+            .min_by_key(|&i| costs[i]);
 
-fn score_wrapper_architectures(data: &[u8]) -> Vec<ArchitectureScore> {
-    let mut scores = Vec::with_capacity(16);
-
-    let x86_64 = scorer::score_x86(data, 64);
-    scores.push(ArchitectureScore {
-        isa: Isa::X86_64,
-        raw_score: x86_64,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-
-    let x86_32 = scorer::score_x86(data, 32);
-    scores.push(ArchitectureScore {
-        isa: Isa::X86,
-        raw_score: x86_32,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    scores.push(ArchitectureScore {
-        isa: Isa::Arm,
-        raw_score: scorer::score_arm(data),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-    scores.push(ArchitectureScore {
-        isa: Isa::AArch64,
-        raw_score: scorer::score_aarch64(data),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-
-    scores.push(ArchitectureScore {
-        isa: Isa::RiscV64,
-        raw_score: scorer::score_riscv(data, 64),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-    scores.push(ArchitectureScore {
-        isa: Isa::RiscV32,
-        raw_score: scorer::score_riscv(data, 32),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    let (mips_be, mips_le) = scorer::score_mips(data, false);
-    let (mips_raw, mips_endian) = if mips_be >= mips_le {
-        (mips_be, Endianness::Big)
-    } else {
-        (mips_le, Endianness::Little)
-    };
-    scores.push(ArchitectureScore {
-        isa: Isa::Mips,
-        raw_score: mips_raw,
-        confidence: 0.0,
-        endianness: mips_endian,
-        bitwidth: 32,
-    });
-
-    let (mips64_be, mips64_le) = scorer::score_mips(data, true);
-    let (mips64_raw, mips64_endian) = if mips64_be >= mips64_le {
-        (mips64_be, Endianness::Big)
-    } else {
-        (mips64_le, Endianness::Little)
-    };
-    scores.push(ArchitectureScore {
-        isa: Isa::Mips64,
-        raw_score: mips64_raw,
-        confidence: 0.0,
-        endianness: mips64_endian,
-        bitwidth: 64,
-    });
-
-    let (sh_be, sh_le) = scorer::score_superh(data);
-    let (sh_raw, sh_endian) = if sh_be >= sh_le {
-        (sh_be, Endianness::Big)
-    } else {
-        (sh_le, Endianness::Little)
-    };
-    scores.push(ArchitectureScore {
-        isa: Isa::Sh,
-        raw_score: sh_raw,
-        confidence: 0.0,
-        endianness: sh_endian,
-        bitwidth: 32,
-    });
-
-    scores.push(ArchitectureScore {
-        isa: Isa::Arc,
-        raw_score: scorer::score_arc(data),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-    scores.push(ArchitectureScore {
-        isa: Isa::Xtensa,
-        raw_score: scorer::score_xtensa(data),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-    scores.push(ArchitectureScore {
-        isa: Isa::V850,
-        raw_score: scorer::score_v850(data),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-    scores.push(ArchitectureScore {
-        isa: Isa::Csky,
-        raw_score: scorer::score_csky(data),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-    scores.push(ArchitectureScore {
-        isa: Isa::TiC6000,
-        raw_score: scorer::score_tic6000(data),
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-    let total_positive: i64 = scores.iter().map(|s| s.raw_score.max(0)).sum();
-    if total_positive > 0 {
-        let best = scores[0].raw_score.max(0);
-        let second = scores.get(1).map(|s| s.raw_score.max(0)).unwrap_or(0);
-        let margin_conf = if second > 0 {
-            let margin = (best - second) as f64 / second as f64;
-            (margin / (margin + 0.25)).min(0.95)
-        } else {
-            0.95
+        let kind = match best_code {
+            Some(best) if (costs[best] as f64) < data_best => {
+                let family = model.class(best).family;
+                let rival = (0..model.len())
+                    .filter(|&i| model.class(i).family != family)
+                    .map(|i| costs[i] as f64)
+                    .fold(uniform, f64::min);
+                let margin_bits = (rival - costs[best] as f64) / scale;
+                let margin = margin_bits / pairs;
+                if margin >= MIN_MARGIN_BITS_PER_BYTE && margin_bits >= MIN_MARGIN_BITS {
+                    code_costs.push(costs.iter().map(|&c| (c as f64 - data_best) / scale).collect());
+                    WindowKind::Code { class: best, margin }
+                } else {
+                    WindowKind::Ambiguous { best }
+                }
+            }
+            _ => WindowKind::Data,
         };
-        for (idx, score) in scores.iter_mut().enumerate() {
-            let share = score.raw_score.max(0) as f64 / total_positive as f64;
-            score.confidence = if idx == 0 {
-                share.max(margin_conf * 0.8)
-            } else {
-                share
-            };
-        }
+        windows.push(WindowVerdict { offset: off, len, kind });
     }
 
-    scores
+    Scan { model, windows, code_costs }
 }
 
-fn try_wrapper_subregion_fallback(
-    data: &[u8],
-    options: &ClassifierOptions,
-) -> Option<ClassificationResult> {
-    if options.fast_mode || !has_wrapper_hint(data) {
-        return None;
-    }
-
-    if head_printable_ratio(&data[..data.len().min(4096)]) > 0.95 {
-        return None;
-    }
-
-    let scan_len = data.len().min(32 * 1024 * 1024);
-    let scan = &data[..scan_len];
-
-    let window_size = 8 * 1024;
-    let max_windows = 4usize;
-    let step = ((scan.len().saturating_sub(window_size)) / max_windows).max(4 * 1024);
-
-    let mut by_isa: HashMap<(Isa, u8, Endianness), (u32, i64, f64)> = HashMap::new();
-    let mut informative_windows = 0u32;
-    let mut examined_windows = 0u32;
-
-    let mut off = 0usize;
-    while off + window_size <= scan.len() {
-        let window = &scan[off..off + window_size];
-        off += step;
-        examined_windows += 1;
-
-        if examined_windows > max_windows as u32 {
-            break;
-        }
-
-        if is_padding_or_empty(window)
-            || is_string_data(window)
-            || is_high_entropy(window)
-            || is_wrapper_noise_window(window)
-        {
-            continue;
-        }
-
-        let scores = score_wrapper_architectures(window);
-        let Some(best) = scores.first() else {
-            continue;
-        };
-
-        if best.raw_score <= 0 || best.confidence < 0.22 {
-            continue;
-        }
-
-        if !wrapper_subregion_allowed_isa(best.isa) {
-            continue;
-        }
-
-        informative_windows += 1;
-        let key = (best.isa, best.bitwidth, best.endianness);
-        let entry = by_isa.entry(key).or_insert((0, 0, 0.0));
-        entry.0 += 1;
-        entry.1 += best.raw_score;
-        entry.2 += best.confidence;
-
-        if informative_windows >= 64 {
-            break;
-        }
-    }
-
-    if informative_windows < 6 || by_isa.is_empty() {
-        return None;
-    }
-
-    let mut ranked: Vec<((Isa, u8, Endianness), (u32, i64, f64))> = by_isa.into_iter().collect();
-    ranked.sort_by(|a, b| {
-        b.1 .0
-            .cmp(&a.1 .0)
-            .then_with(|| b.1 .1.cmp(&a.1 .1))
-            .then_with(|| {
-                b.1 .2
-                    .partial_cmp(&a.1 .2)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-    });
-
-    let ((isa, bitwidth, endianness), (wins, _raw_sum, conf_sum)) = ranked[0];
-    let second_wins = ranked.get(1).map(|r| r.1 .0).unwrap_or(0);
-    let dominance = if second_wins > 0 {
-        wins as f64 / second_wins as f64
+fn scan_budget(data_len: usize, options: &ClassifierOptions) -> usize {
+    let budget = if options.fast_mode {
+        options.max_scan_bytes.min(64 * 1024)
     } else {
-        10.0
+        options.max_scan_bytes
     };
-
-    let coverage = wins as f64 / informative_windows as f64;
-    let avg_conf = conf_sum / wins as f64;
-
-    if wins < 3 || coverage < 0.25 || avg_conf < 0.28 || dominance < 1.35 {
-        return None;
+    if options.deep_scan {
+        data_len.max(budget)
+    } else {
+        budget
     }
+}
 
-    let confidence =
-        (avg_conf * 0.70 + coverage * 0.30).clamp(options.min_confidence.max(0.30), 0.93);
+fn result_for(info: &ClassInfo, confidence: f64) -> Option<ClassificationResult> {
+    let ClassKind::Code { isa, endianness, bitwidth, variant } = info.kind else {
+        return None;
+    };
     let mut result = ClassificationResult::from_heuristics(isa, bitwidth, endianness, confidence);
     result.source = ClassificationSource::Heuristic;
     result.format = FileFormat::Raw;
-
-    if options.detect_extensions {
-        result.extensions = crate::extensions::detect_from_code(data, isa, endianness);
+    if let Some(v) = variant {
+        result.variant = Variant::new(v);
     }
-
     Some(result)
 }
 
-/// Damp known high-frequency confusers only in low-evidence situations.
-///
-/// These ISAs (x86_64, parisc, hcs12, rl78) can over-score on short/noisy
-/// blobs. We only apply this when the global confidence estimate is below the
-/// normal acceptance floor, so strong/decisive classifications are unaffected.
-fn apply_low_evidence_confuser_penalties(scores: &mut [ArchitectureScore]) {
-    let mut best = 0i64;
-    let mut second = 0i64;
-    let mut total_positive = 0i64;
-
-    for score in scores.iter() {
-        let raw = score.raw_score.max(0);
-        total_positive += raw;
-
-        if raw > best {
-            second = best;
-            best = raw;
-        } else if raw > second {
-            second = raw;
-        }
-    }
-
-    if best <= 0 || total_positive <= 0 {
-        return;
-    }
-
-    let share_confidence = best as f64 / total_positive as f64;
-    let margin_confidence = if second > 0 {
-        let margin = (best - second) as f64 / second as f64;
-        (margin / (margin + 0.25)).min(0.95)
-    } else {
-        0.95
-    };
-    let estimated_confidence = share_confidence.max(margin_confidence * 0.8);
-
-    // Only penalize in low-evidence regimes (default threshold floor).
-    if estimated_confidence >= 0.30 {
-        return;
-    }
-
-    let near_top_cutoff = ((best as f64) * 0.85) as i64;
-
-    for score in scores.iter_mut() {
-        if score.raw_score < near_top_cutoff {
-            continue;
-        }
-
-        let damp = match score.isa {
-            Isa::X86_64 => 0.88,
-            Isa::Parisc => 0.82,
-            Isa::Hcs12 => 0.78,
-            Isa::Rl78 => 0.78,
-            _ => continue,
-        };
-
-        if score.raw_score > 0 {
-            score.raw_score = ((score.raw_score as f64) * damp).round() as i64;
-        }
-    }
+/// Classify headerless data with the embedded model.
+pub fn analyze(data: &[u8], options: &ClassifierOptions) -> Result<ClassificationResult> {
+    analyze_with_model(data, options, Model::embedded())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-enum ConfidenceFamily {
-    X86,
-    Arm,
-    AArch64,
-    RiscV,
-    Mips,
-    Ppc,
-    S390,
-    Sparc,
-    M68k,
-    Sh,
-    LoongArch,
-    Arc,
-    V850,
-    Csky,
-    TiC6000,
-    Other(Isa),
-}
-
-#[inline]
-fn confidence_family(isa: Isa) -> ConfidenceFamily {
-    match isa {
-        Isa::X86 | Isa::X86_64 => ConfidenceFamily::X86,
-        Isa::Arm => ConfidenceFamily::Arm,
-        Isa::AArch64 => ConfidenceFamily::AArch64,
-        Isa::RiscV32 | Isa::RiscV64 | Isa::RiscV128 => ConfidenceFamily::RiscV,
-        Isa::Mips | Isa::Mips64 => ConfidenceFamily::Mips,
-        Isa::Ppc | Isa::Ppc64 | Isa::PpcVle => ConfidenceFamily::Ppc,
-        Isa::S390 | Isa::S390x => ConfidenceFamily::S390,
-        Isa::Sparc | Isa::Sparc64 => ConfidenceFamily::Sparc,
-        Isa::M68k | Isa::ColdFire => ConfidenceFamily::M68k,
-        Isa::Sh | Isa::Sh4 => ConfidenceFamily::Sh,
-        Isa::LoongArch32 | Isa::LoongArch64 => ConfidenceFamily::LoongArch,
-        Isa::Arc | Isa::ArcCompact | Isa::ArcCompact2 => ConfidenceFamily::Arc,
-        Isa::V850 | Isa::Rh850 => ConfidenceFamily::V850,
-        Isa::Csky => ConfidenceFamily::Csky,
-        Isa::TiC6000 => ConfidenceFamily::TiC6000,
-        _ => ConfidenceFamily::Other(isa),
-    }
-}
-
-/// Raise confidence for variant-split winners when one ISA family clearly dominates.
-///
-/// This addresses a common calibration issue: families with multiple variants
-/// (e.g., x86/x86-64, MIPS32/64, SPARC32/64) can split confidence internally,
-/// pushing otherwise-correct results below threshold.
-fn try_variant_family_confidence_boost(
-    sorted_scores: &[&ArchitectureScore],
-    options: &ClassifierOptions,
-) -> Option<f64> {
-    let best = *sorted_scores.first()?;
-    let second = *sorted_scores.get(1)?;
-
-    let best_family = confidence_family(best.isa);
-    let second_family = confidence_family(second.isa);
-
-    // Only handle the variant-splitting case where the top two candidates are
-    // from the same ISA family.
-    if best_family != second_family {
-        return None;
-    }
-
-    // Compare against the strongest *different-family* competitor.
-    let strongest_other = sorted_scores
-        .iter()
-        .copied()
-        .find(|score| confidence_family(score.isa) != best_family);
-
-    let other_score = strongest_other.map_or(0i64, |s| s.raw_score.max(0));
-    let family_ratio = if other_score > 0 {
-        best.raw_score as f64 / other_score as f64
-    } else {
-        10.0
-    };
-
-    // Family-specific gates:
-    // - x86/x86-64 often appears as a strong confuser on non-x86 tiny samples,
-    //   so we require either:
-    //   (a) very strong separation, or
-    //   (b) high absolute score plus moderate separation.
-    // - Other variant-split families can use a looser ratio once score is
-    //   non-trivial.
-    let passes_family_gate = match best_family {
-        ConfidenceFamily::X86 => {
-            (best.raw_score >= 250 && family_ratio >= 1.50)
-                || (best.raw_score >= 900 && family_ratio >= 1.20)
-        }
-        _ => best.raw_score >= 250 && family_ratio >= 1.05,
-    };
-
-    if !passes_family_gate {
-        return None;
-    }
-
-    // Family-collapsed share: keep only the strongest score per family.
-    let mut family_max: HashMap<ConfidenceFamily, i64> = HashMap::new();
-    for score in sorted_scores {
-        let raw = score.raw_score.max(0);
-        if raw <= 0 {
-            continue;
-        }
-        let family = confidence_family(score.isa);
-        let entry = family_max.entry(family).or_insert(0);
-        if raw > *entry {
-            *entry = raw;
-        }
-    }
-
-    let total_family_positive: i64 = family_max.values().sum();
-    let share_confidence = if total_family_positive > 0 {
-        best.raw_score.max(0) as f64 / total_family_positive as f64
-    } else {
-        0.0
-    };
-
-    let margin_confidence = if other_score > 0 {
-        let margin = (best.raw_score - other_score) as f64 / other_score as f64;
-        (margin / (margin + 0.25)).min(0.95)
-    } else {
-        0.95
-    };
-
-    let boosted_confidence = share_confidence.max(margin_confidence * 0.8);
-
-    if boosted_confidence >= options.min_confidence {
-        Some(boosted_confidence)
-    } else {
-        None
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-enum FallbackHypothesis {
-    Arm,
-    Arc,
-    Sh,
-    V850,
-    Mips,
-}
-
-#[derive(Debug, Clone)]
-struct FallbackEvidence {
-    hypothesis: FallbackHypothesis,
-    anchor_score: u32,
-    strong_hits: u32,
-    anchor_density_per_mb: f64,
-    anchor_offsets: Vec<usize>,
-    anchor_bins: HashMap<usize, u32>,
-    window_hits: u32,
-    evidence_score: f64,
-    best_confidence: f64,
-    best_isa: Option<Isa>,
-    best_bitwidth: Option<u8>,
-    best_endianness: Option<Endianness>,
-}
-
-impl FallbackEvidence {
-    fn new(hypothesis: FallbackHypothesis) -> Self {
-        Self {
-            hypothesis,
-            anchor_score: 0,
-            strong_hits: 0,
-            anchor_density_per_mb: 0.0,
-            anchor_offsets: Vec::new(),
-            anchor_bins: HashMap::new(),
-            window_hits: 0,
-            evidence_score: 0.0,
-            best_confidence: 0.0,
-            best_isa: None,
-            best_bitwidth: None,
-            best_endianness: None,
-        }
-    }
-}
-
-#[inline]
-fn push_fallback_anchor(offsets: &mut Vec<usize>, offset: usize, min_spacing: usize) {
-    const MAX_OFFSETS: usize = 64;
-
-    if offsets.len() >= MAX_OFFSETS {
-        return;
-    }
-    if let Some(last) = offsets.last() {
-        if offset.saturating_sub(*last) < min_spacing {
-            return;
-        }
-    }
-    offsets.push(offset);
-}
-
-#[inline]
-fn record_fallback_anchor(
-    evidence: &mut FallbackEvidence,
-    offset: usize,
-    weight: u32,
-    min_spacing: usize,
-) {
-    const ANCHOR_BIN_SIZE: usize = 64 * 1024;
-
-    evidence.anchor_score = evidence.anchor_score.saturating_add(weight);
-    push_fallback_anchor(&mut evidence.anchor_offsets, offset, min_spacing);
-    let bin = offset / ANCHOR_BIN_SIZE;
-    let entry = evidence.anchor_bins.entry(bin).or_insert(0);
-    *entry = entry.saturating_add(weight);
-}
-
-#[inline]
-fn fallback_family_match(hypothesis: FallbackHypothesis, isa: Isa) -> bool {
-    match hypothesis {
-        FallbackHypothesis::Arm => isa == Isa::Arm,
-        FallbackHypothesis::Arc => matches!(isa, Isa::Arc | Isa::ArcCompact | Isa::ArcCompact2),
-        FallbackHypothesis::Sh => matches!(isa, Isa::Sh | Isa::Sh4),
-        FallbackHypothesis::V850 => matches!(isa, Isa::V850 | Isa::Rh850),
-        FallbackHypothesis::Mips => matches!(isa, Isa::Mips | Isa::Mips64),
-    }
-}
-
-#[inline]
-fn fallback_window_size(hypothesis: FallbackHypothesis) -> usize {
-    match hypothesis {
-        FallbackHypothesis::Arm => 2048,
-        FallbackHypothesis::Arc => 4096,
-        FallbackHypothesis::Sh => 16384,
-        FallbackHypothesis::V850 => 4096,
-        FallbackHypothesis::Mips => 8192,
-    }
-}
-
-#[inline]
-fn fallback_density_threshold(hypothesis: FallbackHypothesis) -> f64 {
-    match hypothesis {
-        FallbackHypothesis::Arm => 2000.0,
-        FallbackHypothesis::Arc => 1500.0,
-        FallbackHypothesis::Sh => 10_000.0,
-        FallbackHypothesis::V850 => 300.0,
-        FallbackHypothesis::Mips => 3000.0,
-    }
-}
-
-/// Bounded fallback for large raw blobs with sparse code islands.
-///
-/// Strategy:
-/// 1) Fast anchor prescan for a small family of historically under-detected ISAs.
-/// 2) Anchor-density gating to avoid broad false positives.
-/// 3) Local window scoring around anchor offsets, then strict dominance checks.
-fn try_anchor_window_fallback(
+/// Classify headerless data with a specific model.
+pub fn analyze_with_model(
     data: &[u8],
     options: &ClassifierOptions,
-) -> Option<ClassificationResult> {
-    if options.fast_mode || data.len() < 256 * 1024 {
-        return None;
+    model: &Model,
+) -> Result<ClassificationResult> {
+    analyze_detailed_with_model(data, options, model).0
+}
+
+/// Classify headerless data and also return the ranked candidates, from a
+/// single scan.
+pub fn analyze_detailed(
+    data: &[u8],
+    options: &ClassifierOptions,
+) -> (Result<ClassificationResult>, Vec<ArchitectureScore>) {
+    analyze_detailed_with_model(data, options, Model::embedded())
+}
+
+fn analyze_detailed_with_model(
+    data: &[u8],
+    options: &ClassifierOptions,
+    model: &Model,
+) -> (Result<ClassificationResult>, Vec<ArchitectureScore>) {
+    if data.len() < MIN_WINDOW {
+        return (
+            Err(ClassifierError::FileTooSmall { expected: MIN_WINDOW, actual: data.len() }),
+            Vec::new(),
+        );
     }
-
-    // Bound fallback work on very large blobs.
-    let scan_len = data.len().min(32 * 1024 * 1024);
-    let scan = &data[..scan_len];
-
-    // Special-case CFF container blobs: these often include text headers followed
-    // by sparse RH850/V850 code payloads that whole-buffer scoring dilutes.
-    if scan.len() >= 64
-        && (scan.starts_with(b"CFF-")
-            || has_marker(&scan[..scan.len().min(512)], b"CFF-TRANSLATOR"))
-    {
-        let head_len = scan_len.min(16 * 1024);
-        if head_len >= 1024 {
-            let head = &scan[..head_len];
-
-            // Prefer dedicated EPR parsing when available.
-            if matches!(
-                crate::formats::detect_format(head),
-                crate::formats::DetectedFormat::Epr
-            ) {
-                if let Ok(mut parsed) = crate::formats::epr::parse(head) {
-                    if matches!(parsed.isa, Isa::V850 | Isa::Rh850) {
-                        if parsed.confidence < options.min_confidence {
-                            parsed.confidence = options.min_confidence;
-                        }
-                        parsed.source = ClassificationSource::Heuristic;
-                        parsed.format = FileFormat::Raw;
-                        if options.detect_extensions {
-                            parsed.extensions = crate::extensions::detect_from_code(
-                                data,
-                                parsed.isa,
-                                parsed.endianness,
-                            );
-                        }
-                        return Some(parsed);
-                    }
-                }
-            }
-
-            let opts = ClassifierOptions {
-                min_confidence: 0.01,
-                deep_scan: false,
-                max_scan_bytes: head_len,
-                detect_extensions: false,
-                fast_mode: false,
-            };
-            let scores = score_all_architectures_raw(head, &opts);
-            if let Some(v) = scores
-                .iter()
-                .filter(|s| matches!(s.isa, Isa::V850 | Isa::Rh850))
-                .max_by(|a, b| a.raw_score.cmp(&b.raw_score))
-            {
-                if v.confidence >= 0.60 {
-                    let mut detected = v.isa;
-                    if detected == Isa::V850 && has_marker(scan, b"RH850") {
-                        detected = Isa::Rh850;
-                    }
-                    let confidence = v.confidence.clamp(options.min_confidence, 0.95);
-                    let mut result = ClassificationResult::from_heuristics(
-                        detected,
-                        v.bitwidth,
-                        v.endianness,
-                        confidence,
-                    );
-                    result.source = ClassificationSource::Heuristic;
-                    result.format = FileFormat::Raw;
-                    if options.detect_extensions {
-                        result.extensions =
-                            crate::extensions::detect_from_code(data, detected, v.endianness);
-                    }
-                    return Some(result);
-                }
-            }
-        }
-    }
-
-    // ARM big-endian vector-stub shortcut.
-    //
-    // Some firmware blobs start with classic ARM BE branch stubs
-    // (e.g. repeated EAxxxxxx words) and only sparse executable islands.
-    if scan_len >= 64 {
-        let mut be_branch_head = 0u32;
-        for off in (0..64).step_by(4) {
-            let w = u32::from_be_bytes([scan[off], scan[off + 1], scan[off + 2], scan[off + 3]]);
-            if (w & 0xFF000000) == 0xEA000000 || (w & 0xFF000000) == 0xEB000000 {
-                be_branch_head += 1;
-            }
-        }
-
-        if be_branch_head >= 6 {
-            let mut be_exact = 0u32;
-            let head_limit = scan_len.min(1024);
-            let mut off = 0usize;
-            while off + 3 < head_limit {
-                let w =
-                    u32::from_be_bytes([scan[off], scan[off + 1], scan[off + 2], scan[off + 3]]);
-                if matches!(w, 0xE320F000 | 0xE1A00000 | 0xE12FFF1E) {
-                    be_exact += 1;
-                }
-                off += 4;
-            }
-
-            if be_exact >= 1 {
-                let confidence = 0.70f64.clamp(options.min_confidence, 0.92);
-                let mut result = ClassificationResult::from_heuristics(
-                    Isa::Arm,
-                    32,
-                    Endianness::Big,
-                    confidence,
-                );
-                result.source = ClassificationSource::Heuristic;
-                result.format = FileFormat::Raw;
-                if options.detect_extensions {
-                    result.extensions =
-                        crate::extensions::detect_from_code(data, Isa::Arm, Endianness::Big);
-                }
-                return Some(result);
-            }
-        }
-    }
-
-    // Keep anchor offsets distributed across the scanned region.
-    let anchor_spacing = (scan_len / 64).max(1024);
-
-    let mut arm = FallbackEvidence::new(FallbackHypothesis::Arm);
-    let mut arc = FallbackEvidence::new(FallbackHypothesis::Arc);
-    let mut sh = FallbackEvidence::new(FallbackHypothesis::Sh);
-    let mut v850 = FallbackEvidence::new(FallbackHypothesis::V850);
-    let mut mips = FallbackEvidence::new(FallbackHypothesis::Mips);
-
-    // 16-bit anchor pass (ARC / SH / V850)
-    let mut i = 0usize;
-    while i + 1 < scan.len() {
-        let hw_le = u16::from_le_bytes([scan[i], scan[i + 1]]);
-        let hw_be = u16::from_be_bytes([scan[i], scan[i + 1]]);
-
-        // ARC anchors
-        if hw_le == 0x7EE0 || hw_le == 0x7FE0 {
-            record_fallback_anchor(&mut arc, i, 16, anchor_spacing);
-            arc.strong_hits += 1;
-        } else if hw_le == 0xC0F1 || hw_le == 0xC0D1 {
-            record_fallback_anchor(&mut arc, i, 10, anchor_spacing);
-            arc.strong_hits += 1;
-        } else if hw_le == 0x78E0 {
-            record_fallback_anchor(&mut arc, i, 4, anchor_spacing);
-        }
-
-        // SuperH anchors (BE words)
-        if hw_be == 0x000B {
-            record_fallback_anchor(&mut sh, i, 12, anchor_spacing);
-            sh.strong_hits += 1;
-        } else if hw_be == 0x0009 {
-            record_fallback_anchor(&mut sh, i, 2, anchor_spacing);
-        }
-        if i + 3 < scan.len() && scan[i..i + 4] == [0x00, 0x0B, 0x00, 0x09] {
-            record_fallback_anchor(&mut sh, i, 24, anchor_spacing);
-            sh.strong_hits += 2;
-        }
-
-        // V850 anchors
-        if hw_le == 0x006F {
-            record_fallback_anchor(&mut v850, i, 12, anchor_spacing);
-            v850.strong_hits += 1;
-        }
-        if i + 3 < scan.len() && scan[i..i + 4] == [0x6F, 0x00, 0x00, 0x00] {
-            record_fallback_anchor(&mut v850, i, 20, anchor_spacing);
-            v850.strong_hits += 2;
-        }
-
-        i += 2;
-    }
-
-    // 32-bit anchor pass (ARM / MIPS), aligned.
-    let mut j = 0usize;
-    while j + 3 < scan.len() {
-        let w_le = u32::from_le_bytes([scan[j], scan[j + 1], scan[j + 2], scan[j + 3]]);
-
-        // ARM anchors (exact + strong structural)
-        if w_le == 0xE12FFF1E {
-            record_fallback_anchor(&mut arm, j, 24, anchor_spacing);
-            arm.strong_hits += 1;
-        } else if w_le == 0xE320F000 {
-            record_fallback_anchor(&mut arm, j, 10, anchor_spacing);
-            arm.strong_hits += 1;
-        } else if (w_le & 0xFFFF0000) == 0xE92D0000 || (w_le & 0xFFFF0000) == 0xE8BD0000 {
-            record_fallback_anchor(&mut arm, j, 14, anchor_spacing);
-        }
-
-        // MIPS anchors (little-endian words)
-        if w_le == 0x03E00008 {
-            record_fallback_anchor(&mut mips, j, 20, anchor_spacing);
-            mips.strong_hits += 1;
-        } else {
-            let upper = (w_le >> 16) as u16;
-            if upper == 0x27BD || upper == 0x67BD {
-                record_fallback_anchor(&mut mips, j, 4, anchor_spacing);
-            } else if upper == 0xAFBF || upper == 0x8FBF {
-                record_fallback_anchor(&mut mips, j, 8, anchor_spacing);
-            }
-        }
-
-        j += 4;
-    }
-
-    for evidence in [&mut arm, &mut arc, &mut sh, &mut v850, &mut mips] {
-        evidence.anchor_density_per_mb = if scan_len > 0 {
-            evidence.anchor_score as f64 * 1_048_576.0 / scan_len as f64
-        } else {
-            0.0
-        };
-    }
-
-    // Fast direct path: if one ISA has overwhelming anchor evidence,
-    // classify immediately without local window rescoring.
-    let mut direct_candidates: Vec<(f64, Isa, u8, Endianness, f64)> = Vec::new();
-
-    if arm.strong_hits >= 8 && arm.anchor_density_per_mb >= 3000.0 {
-        let score = arm.strong_hits as f64 * 1.2 + arm.anchor_density_per_mb / 3500.0;
-        let confidence = 0.52 + (arm.strong_hits as f64 / 512.0).min(0.28);
-        direct_candidates.push((score, Isa::Arm, 32, Endianness::Little, confidence));
-    }
-
-    if arc.strong_hits >= 64 && arc.anchor_density_per_mb >= 1800.0 {
-        let score = arc.strong_hits as f64 * 0.9 + arc.anchor_density_per_mb / 1800.0;
-        let confidence = 0.50 + (arc.strong_hits as f64 / 1024.0).min(0.28);
-        direct_candidates.push((score, Isa::Arc, 32, Endianness::Little, confidence));
-    }
-
-    if sh.strong_hits >= 64 && sh.anchor_density_per_mb >= 8000.0 {
-        let score = sh.strong_hits as f64 * 0.7 + sh.anchor_density_per_mb / 1400.0;
-        let confidence = 0.56 + (sh.strong_hits as f64 / 4096.0).min(0.30);
-        direct_candidates.push((score, Isa::Sh, 32, Endianness::Big, confidence));
-    }
-
-    if mips.strong_hits >= 8 && mips.anchor_density_per_mb >= 1500.0 {
-        let score = mips.strong_hits as f64 * 1.3 + mips.anchor_density_per_mb / 1800.0;
-        let confidence = 0.52 + (mips.strong_hits as f64 / 512.0).min(0.35);
-        direct_candidates.push((score, Isa::Mips64, 64, Endianness::Little, confidence));
-    }
-
-    if !direct_candidates.is_empty() {
-        direct_candidates
-            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        let best = direct_candidates[0];
-        let second = direct_candidates.get(1).map(|c| c.0).unwrap_or(0.0);
-        let dominance = if second > 0.0 { best.0 / second } else { 10.0 };
-
-        if dominance >= 1.15 {
-            let mut detected_isa = best.1;
-            if detected_isa == Isa::V850 && has_marker(data, b"RH850") {
-                detected_isa = Isa::Rh850;
-            }
-            let confidence = best.4.clamp(options.min_confidence, 0.92);
-            let mut result =
-                ClassificationResult::from_heuristics(detected_isa, best.2, best.3, confidence);
-            result.source = ClassificationSource::Heuristic;
-            result.format = FileFormat::Raw;
+    let scan = scan(data, model, DEFAULT_WINDOW, scan_budget(data.len(), options));
+    let candidates = candidates_from_scan(&scan);
+    let inconclusive = |confidence: f64| ClassifierError::HeuristicInconclusive {
+        confidence: confidence * 100.0,
+        threshold: options.min_confidence * 100.0,
+    };
+    let result = match scan.decide() {
+        None => Err(inconclusive(0.0)),
+        Some(d) if d.confidence < options.min_confidence => Err(inconclusive(d.confidence)),
+        Some(d) => result_for(d.info, d.confidence).ok_or_else(|| inconclusive(0.0)).map(|mut r| {
             if options.detect_extensions {
-                result.extensions = crate::extensions::detect_from_code(data, detected_isa, best.3);
+                r.extensions = crate::extensions::detect_from_code(data, r.isa, r.endianness);
             }
-            return Some(result);
-        }
-    }
-
-    let mut hypotheses: Vec<FallbackEvidence> = vec![arm, arc, sh, v850, mips]
-        .into_iter()
-        .filter(|e| {
-            e.anchor_score > 0
-                && e.anchor_offsets.len() >= 2
-                && e.anchor_density_per_mb >= fallback_density_threshold(e.hypothesis)
-        })
-        .collect();
-
-    if hypotheses.is_empty() {
-        return None;
-    }
-
-    // Keep fallback bounded: evaluate only the strongest anchor hypotheses.
-    hypotheses.sort_by(|a, b| {
-        b.anchor_density_per_mb
-            .partial_cmp(&a.anchor_density_per_mb)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    hypotheses.truncate(2);
-
-    for evidence in &mut hypotheses {
-        let mut offset_candidates: Vec<usize> = Vec::new();
-
-        // Prefer densest anchor regions instead of uniformly sampling offsets.
-        let mut bins: Vec<(usize, u32)> = evidence
-            .anchor_bins
-            .iter()
-            .map(|(bin, score)| (*bin, *score))
-            .collect();
-        bins.sort_by(|a, b| b.1.cmp(&a.1));
-        for (bin, _) in bins.into_iter().take(3) {
-            let center = bin
-                .saturating_mul(64 * 1024)
-                .saturating_add(32 * 1024)
-                .min(scan_len.saturating_sub(1));
-            offset_candidates.push(center);
-        }
-
-        if offset_candidates.is_empty() {
-            let stride = (evidence.anchor_offsets.len() / 3).max(1);
-            for offset in evidence.anchor_offsets.iter().step_by(stride).take(3) {
-                offset_candidates.push(*offset);
-            }
-        }
-
-        let window_size = fallback_window_size(evidence.hypothesis);
-        let opts = ClassifierOptions {
-            min_confidence: 0.01,
-            deep_scan: false,
-            max_scan_bytes: window_size,
-            detect_extensions: false,
-            fast_mode: false,
-        };
-
-        for &anchor_off in &offset_candidates {
-            let start = anchor_off
-                .saturating_sub(window_size / 2)
-                .min(scan_len.saturating_sub(1));
-            let end = (start + window_size).min(scan_len);
-            if end <= start || end - start < 64 {
-                continue;
-            }
-            let window = &scan[start..end];
-            if is_padding_or_empty(window) || is_string_data(window) {
-                continue;
-            }
-
-            let scores = score_all_architectures_raw(window, &opts);
-            let Some(overall_best) = scores.first() else {
-                continue;
-            };
-
-            let family_best = scores
-                .iter()
-                .filter(|s| fallback_family_match(evidence.hypothesis, s.isa))
-                .max_by(|a, b| a.raw_score.cmp(&b.raw_score));
-
-            let Some(fam) = family_best else {
-                continue;
-            };
-            if fam.raw_score <= 0 || fam.confidence < 0.20 {
-                continue;
-            }
-
-            // Require local competitiveness; avoid counting weak family matches.
-            let close_to_top = fam.raw_score as f64 >= overall_best.raw_score.max(1) as f64 * 0.85;
-            if !close_to_top {
-                continue;
-            }
-
-            evidence.window_hits += 1;
-            evidence.evidence_score += fam.confidence;
-            if fam.isa == overall_best.isa {
-                evidence.evidence_score += 0.10;
-            }
-            if fam.confidence > evidence.best_confidence {
-                evidence.best_confidence = fam.confidence;
-                evidence.best_isa = Some(fam.isa);
-                evidence.best_bitwidth = Some(fam.bitwidth);
-                evidence.best_endianness = Some(fam.endianness);
-            }
-
-            // Bounded cost: each hypothesis only needs a few strong windows.
-            if evidence.window_hits >= 3 && evidence.evidence_score >= 1.2 {
-                break;
-            }
-        }
-    }
-
-    hypotheses
-        .retain(|e| e.window_hits > 0 && e.evidence_score >= 0.40 && e.best_confidence >= 0.28);
-    if hypotheses.is_empty() {
-        return None;
-    }
-
-    hypotheses.sort_by(|a, b| {
-        b.evidence_score
-            .partial_cmp(&a.evidence_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    let best = &hypotheses[0];
-    let second_score = hypotheses.get(1).map(|e| e.evidence_score).unwrap_or(0.0);
-    let dominance = if second_score > 0.0 {
-        best.evidence_score / second_score
-    } else {
-        10.0
+            r
+        }),
     };
-
-    // Strict acceptance criteria to protect against false positives.
-    if !(best.window_hits >= 2 || best.best_confidence >= 0.45) {
-        return None;
-    }
-    if dominance < 1.30 {
-        return None;
-    }
-
-    let detected_isa = if let Some(isa) = best.best_isa {
-        if isa == Isa::V850 && has_marker(data, b"RH850") {
-            Isa::Rh850
-        } else {
-            isa
-        }
-    } else {
-        return None;
-    };
-
-    let bitwidth = best
-        .best_bitwidth
-        .unwrap_or_else(|| detected_isa.default_bitwidth());
-    let endianness = best.best_endianness.unwrap_or(Endianness::Little);
-
-    let mut confidence = best.best_confidence.max(options.min_confidence);
-    if dominance >= 2.0 {
-        confidence = (confidence + 0.05).min(0.90);
-    }
-
-    let mut result =
-        ClassificationResult::from_heuristics(detected_isa, bitwidth, endianness, confidence);
-    result.source = ClassificationSource::Heuristic;
-    result.format = FileFormat::Raw;
-    if options.detect_extensions {
-        result.extensions = crate::extensions::detect_from_code(data, detected_isa, endianness);
-    }
-
-    Some(result)
+    (result, candidates)
 }
 
-/// Ignore homogeneous byte runs this large during raw heuristic scoring.
+/// Per-class scores for the input, best first.
 ///
-/// Very long contiguous single-byte regions are usually padding/erased flash,
-/// not executable code. Skipping them prevents low-information data from
-/// dominating ISA scoring.
-const HOMOGENEOUS_RUN_SKIP_BYTES: usize = 8 * 1024;
-
-/// Chunk size used when feeding data to architecture scorers.
-const SCORE_CHUNK_SIZE: usize = 64 * 1024;
-
-/// Collect contiguous informative spans, skipping long homogeneous byte runs.
-///
-/// Returns ranges as `(start, end)` offsets into `data`.
-fn collect_informative_spans(
-    data: &[u8],
-    target_bytes: usize,
-    min_homogeneous_run: usize,
-) -> Vec<(usize, usize)> {
-    if data.is_empty() || target_bytes == 0 {
-        return Vec::new();
-    }
-
-    let mut spans: Vec<(usize, usize)> = Vec::new();
-    let mut kept = 0usize;
-    let mut i = 0usize;
-
-    while i < data.len() && kept < target_bytes {
-        let value = data[i];
-        let mut j = i + 1;
-        while j < data.len() && data[j] == value {
-            j += 1;
-        }
-
-        let run_len = j - i;
-        let is_homogeneous = min_homogeneous_run > 0 && run_len >= min_homogeneous_run;
-
-        if !is_homogeneous {
-            let remaining = target_bytes - kept;
-            let take_len = run_len.min(remaining);
-            let take_end = i + take_len;
-
-            if let Some(last) = spans.last_mut() {
-                if last.1 == i {
-                    last.1 = take_end;
-                } else {
-                    spans.push((i, take_end));
-                }
-            } else {
-                spans.push((i, take_end));
-            }
-
-            kept += take_len;
-
-            if take_len < run_len {
-                break;
-            }
-        }
-
-        i = j;
-    }
-
-    spans
-}
-
-/// Score all supported architectures.
+/// `raw_score` is the evidence in bits over the code windows found in the
+/// input; classes of the same ISA/endianness/bitwidth are merged.
 pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<ArchitectureScore> {
-    let target_informative_bytes = options.max_scan_bytes.min(data.len());
-    let informative_spans =
-        collect_informative_spans(data, target_informative_bytes, HOMOGENEOUS_RUN_SKIP_BYTES);
+    let model = Model::embedded();
+    let scan = scan(data, model, DEFAULT_WINDOW, scan_budget(data.len(), options));
+    candidates_from_scan(&scan)
+}
 
-    if informative_spans.is_empty() {
-        return Vec::new();
-    }
-
-    let mut accumulated = std::collections::HashMap::new();
-
-    for (start, end) in informative_spans {
-        let span = &data[start..end];
-        for chunk in span.chunks(SCORE_CHUNK_SIZE) {
-            let chunk_scores = score_all_architectures_raw(chunk, options);
-            for score in chunk_scores {
-                let entry = accumulated
-                    .entry((score.isa.clone(), score.bitwidth, score.endianness))
-                    .or_insert(0i64);
-                *entry += score.raw_score;
-            }
+fn candidates_from_scan(scan: &Scan) -> Vec<ArchitectureScore> {
+    let model = scan.model();
+    let evidence = scan.class_evidence(None);
+    let mut merged: HashMap<(Isa, u8, Endianness), f64> = HashMap::new();
+    for i in 0..model.len() {
+        if let ClassKind::Code { isa, endianness, bitwidth, .. } = model.class(i).kind {
+            let e = merged.entry((isa, bitwidth, endianness)).or_insert(f64::NEG_INFINITY);
+            *e = e.max(evidence[i]);
         }
     }
-
-    let mut final_scores = Vec::new();
-    for ((isa, bitwidth, endianness), raw_score) in accumulated {
-        final_scores.push(ArchitectureScore {
+    let positive: f64 = merged.values().filter(|v| **v > 0.0).sum();
+    let mut out: Vec<ArchitectureScore> = merged
+        .into_iter()
+        .map(|((isa, bitwidth, endianness), ev)| ArchitectureScore {
             isa,
-            raw_score,
-            confidence: 0.0,
+            raw_score: ev.round() as i64,
+            confidence: if positive > 0.0 { ev.max(0.0) / positive } else { 0.0 },
             endianness,
             bitwidth,
-        });
-    }
-
-    apply_low_evidence_confuser_penalties(&mut final_scores);
-
-    // Sort by score to find winner and runner-up
-    final_scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-
-    let total_positive: i64 = final_scores.iter().map(|s| s.raw_score.max(0)).sum();
-
-    if total_positive > 0 && !final_scores.is_empty() {
-        let best_score = final_scores[0].raw_score.max(0);
-        let second_score = final_scores.get(1).map(|s| s.raw_score.max(0)).unwrap_or(0);
-
-        // Calculate margin confidence for winner
-        let margin_conf = if second_score > 0 {
-            let margin = (best_score - second_score) as f64 / second_score as f64;
-            (margin / (margin + 0.25)).min(0.95)
-        } else {
-            0.95
-        };
-
-        for (i, score) in final_scores.iter_mut().enumerate() {
-            let share = score.raw_score.max(0) as f64 / total_positive as f64;
-
-            // For the top scorer, also consider margin of victory
-            if i == 0 {
-                score.confidence = share.max(margin_conf * 0.8);
-            } else {
-                score.confidence = share;
-            }
-        }
-    }
-
-    final_scores
+        })
+        .collect();
+    out.sort_by(|a, b| b.raw_score.cmp(&a.raw_score).then(a.isa.name().cmp(b.isa.name())));
+    out
 }
 
-fn score_all_architectures_raw(data: &[u8], options: &ClassifierOptions) -> Vec<ArchitectureScore> {
-    let max_bytes = options.max_scan_bytes.min(data.len());
-    let scan_data = &data[..max_bytes];
-
-    let mut scores = Vec::with_capacity(SUPPORTED_ARCHITECTURES.len());
-
-    // x86/x86-64
-    let x86_32_score = scorer::score_x86(scan_data, 32);
-    scores.push(ArchitectureScore {
-        isa: Isa::X86,
-        raw_score: x86_32_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    let x86_64_score = scorer::score_x86(scan_data, 64);
-    scores.push(ArchitectureScore {
-        isa: Isa::X86_64,
-        raw_score: x86_64_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-
-    // ARM
-    let arm_score = scorer::score_arm(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Arm,
-        raw_score: arm_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // AArch64
-    let aarch64_score = scorer::score_aarch64(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::AArch64,
-        raw_score: aarch64_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-
-    // RISC-V
-    let riscv32_score = scorer::score_riscv(scan_data, 32);
-    scores.push(ArchitectureScore {
-        isa: Isa::RiscV32,
-        raw_score: riscv32_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    let riscv64_score = scorer::score_riscv(scan_data, 64);
-    scores.push(ArchitectureScore {
-        isa: Isa::RiscV64,
-        raw_score: riscv64_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-
-    // MIPS 32-bit (both endiannesses)
-    let (mips32_be, mips32_le) = scorer::score_mips(scan_data, false);
-    let (mips32_score, mips32_endian) = if mips32_be >= mips32_le {
-        (mips32_be, Endianness::Big)
-    } else {
-        (mips32_le, Endianness::Little)
-    };
-    scores.push(ArchitectureScore {
-        isa: Isa::Mips,
-        raw_score: mips32_score,
-        confidence: 0.0,
-        endianness: mips32_endian,
-        bitwidth: 32,
-    });
-
-    // MIPS 64-bit (both endiannesses, separate scoring for 64-bit opcodes)
-    let (mips64_be, mips64_le) = scorer::score_mips(scan_data, true);
-    let (mips64_score, mips64_endian) = if mips64_be >= mips64_le {
-        (mips64_be, Endianness::Big)
-    } else {
-        (mips64_le, Endianness::Little)
-    };
-    scores.push(ArchitectureScore {
-        isa: Isa::Mips64,
-        raw_score: mips64_score,
-        confidence: 0.0,
-        endianness: mips64_endian,
-        bitwidth: 64,
-    });
-
-    // PowerPC (big-endian)
-    let ppc_be_score = scorer::score_ppc(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Ppc,
-        raw_score: ppc_be_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    // PowerPC 64-bit: take max of BE and LE scores
-    let ppc64_le_score = scorer::score_ppc_le(scan_data);
-    let (ppc64_score, ppc64_endian) = if ppc_be_score >= ppc64_le_score {
-        (ppc_be_score, Endianness::Big)
-    } else {
-        (ppc64_le_score, Endianness::Little)
-    };
-    scores.push(ArchitectureScore {
-        isa: Isa::Ppc64,
-        raw_score: ppc64_score,
-        confidence: 0.0,
-        endianness: ppc64_endian,
-        bitwidth: 64,
-    });
-
-    // SPARC (32-bit and 64-bit)
-    let sparc_score = scorer::score_sparc(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Sparc,
-        raw_score: sparc_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-    scores.push(ArchitectureScore {
-        isa: Isa::Sparc64,
-        raw_score: sparc_score, // Same scoring logic for 64-bit
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 64,
-    });
-
-    // s390x
-    let s390x_score = scorer::score_s390x(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::S390x,
-        raw_score: s390x_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 64,
-    });
-
-    // m68k
-    let m68k_score = scorer::score_m68k(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::M68k,
-        raw_score: m68k_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    // SuperH (both endiannesses — SH-1/SH-2 are typically BE, SH-3/SH-4 typically LE)
-    let (sh_be, sh_le) = scorer::score_superh(scan_data);
-    let (sh_score, sh_endian) = if sh_be >= sh_le {
-        (sh_be, Endianness::Big)
-    } else {
-        (sh_le, Endianness::Little)
-    };
-    scores.push(ArchitectureScore {
-        isa: Isa::Sh,
-        raw_score: sh_score,
-        confidence: 0.0,
-        endianness: sh_endian,
-        bitwidth: 32,
-    });
-
-    // Alpha
-    let alpha_score = scorer::score_alpha(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Alpha,
-        raw_score: alpha_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-
-    // LoongArch
-    let loongarch_score = scorer::score_loongarch(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::LoongArch64,
-        raw_score: loongarch_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-
-    // Hexagon
-    let hexagon_score = scorer::score_hexagon(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Hexagon,
-        raw_score: hexagon_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // AVR
-    let avr_score = scorer::score_avr(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Avr,
-        raw_score: avr_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 8,
-    });
-
-    // MSP430
-    let msp430_score = scorer::score_msp430(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Msp430,
-        raw_score: msp430_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 16,
-    });
-
-    // PA-RISC
-    let parisc_score = scorer::score_parisc(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Parisc,
-        raw_score: parisc_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    // ARC
-    let arc_score = scorer::score_arc(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Arc,
-        raw_score: arc_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // Xtensa
-    let xtensa_score = scorer::score_xtensa(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Xtensa,
-        raw_score: xtensa_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // MicroBlaze
-    let microblaze_score = scorer::score_microblaze(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::MicroBlaze,
-        raw_score: microblaze_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    // Nios II
-    let nios2_score = scorer::score_nios2(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Nios2,
-        raw_score: nios2_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // OpenRISC
-    let openrisc_score = scorer::score_openrisc(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::OpenRisc,
-        raw_score: openrisc_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    // Lanai
-    let lanai_score = scorer::score_lanai(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Lanai,
-        raw_score: lanai_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    // JVM Bytecode
-    let jvm_score = scorer::score_jvm(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Jvm,
-        raw_score: jvm_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32, // Stack-based, but operand stack is 32-bit slots
-    });
-
-    // WebAssembly
-    let wasm_score = scorer::score_wasm(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Wasm,
-        raw_score: wasm_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32, // WASM 1.0 is 32-bit memory addressing
-    });
-
-    // Dalvik Bytecode
-    let dalvik_score = scorer::score_dalvik(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Dalvik,
-        raw_score: dalvik_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // Blackfin DSP
-    let blackfin_score = scorer::score_blackfin(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Blackfin,
-        raw_score: blackfin_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // IA-64/Itanium
-    let ia64_score = scorer::score_ia64(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Ia64,
-        raw_score: ia64_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 64,
-    });
-
-    // DEC VAX
-    let vax_score = scorer::score_vax(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Vax,
-        raw_score: vax_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // Intel i860
-    let i860_score = scorer::score_i860(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::I860,
-        raw_score: i860_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // Cell SPU
-    let cellspu_score = scorer::score_cellspu(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::CellSpu,
-        raw_score: cellspu_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    // TriCore
-    let tricore_score = scorer::score_tricore(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Tricore,
-        raw_score: tricore_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // HCS12/HCS12X (Freescale/NXP MC68HC12 / CPU12)
-    let hcs12_score = scorer::score_hcs12(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Hcs12,
-        raw_score: hcs12_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 16,
-    });
-
-    // Motorola 68HC11
-    let hc11_score = scorer::score_hc11(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Hc11,
-        raw_score: hc11_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 8,
-    });
-
-    // C166/C167/ST10 (Infineon/Siemens)
-    let c166_score = scorer::score_c166(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::C166,
-        raw_score: c166_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 16,
-    });
-
-    // C-SKY
-    let csky_score = scorer::score_csky(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Csky,
-        raw_score: csky_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // Renesas RL78 (successor to NEC 78K) — 8/16-bit little-endian MCU
-    let rl78_score = scorer::score_rl78(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Rl78,
-        raw_score: rl78_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 16,
-    });
-
-    // Renesas/NEC V850
-    let v850_score = scorer::score_v850(scan_data);
-
-    let fr30_score = scorer::score_fr30(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::Fr30,
-        raw_score: fr30_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    let s12z_score = scorer::score_s12z(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::S12z,
-        raw_score: s12z_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 16,
-    });
-
-    let ppcvle_score = scorer::score_ppcvle(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::PpcVle,
-        raw_score: ppcvle_score,
-        confidence: 0.0,
-        endianness: Endianness::Big,
-        bitwidth: 32,
-    });
-
-    let tic6000_score = scorer::score_tic6000(scan_data);
-    scores.push(ArchitectureScore {
-        isa: Isa::TiC6000,
-        raw_score: tic6000_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    scores.push(ArchitectureScore {
-        isa: Isa::V850,
-        raw_score: v850_score,
-        confidence: 0.0,
-        endianness: Endianness::Little,
-        bitwidth: 32,
-    });
-
-    // Calculate confidence using margin-based approach
-    // Sort by score to find winner and runner-up
-    scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-
-    let total_positive: i64 = scores.iter().map(|s| s.raw_score.max(0)).sum();
-
-    if total_positive > 0 && !scores.is_empty() {
-        let best_score = scores[0].raw_score.max(0);
-        let second_score = scores.get(1).map(|s| s.raw_score.max(0)).unwrap_or(0);
-
-        // Calculate margin confidence for winner
-        let margin_conf = if second_score > 0 {
-            let margin = (best_score - second_score) as f64 / second_score as f64;
-            (margin / (margin + 0.25)).min(0.95)
-        } else {
-            0.95
-        };
-
-        for (i, score) in scores.iter_mut().enumerate() {
-            let share = score.raw_score.max(0) as f64 / total_positive as f64;
-
-            // For the top scorer, also consider margin of victory
-            if i == 0 {
-                score.confidence = share.max(margin_conf * 0.8);
-            } else {
-                score.confidence = share;
-            }
-        }
-    }
-
-    scores
+/// The `n` best candidates.
+pub fn top_candidates(data: &[u8], n: usize, options: &ClassifierOptions) -> Vec<ArchitectureScore> {
+    let mut v = score_all_architectures(data, options);
+    v.truncate(n);
+    v
 }
 
-/// Detected ISA from windowed analysis of firmware/multi-ISA binaries.
+/// ISA found in some region of a multi-ISA image.
 #[derive(Debug, Clone)]
 pub struct DetectedIsa {
-    /// The ISA detected
+    /// The ISA detected.
     pub isa: Isa,
-    /// Number of windows where this ISA was the top scorer
+    /// Number of windows classified as this ISA family.
     pub window_count: usize,
-    /// Total bytes attributed to this ISA
+    /// Total bytes in those windows.
     pub total_bytes: usize,
-    /// Average raw score across windows
+    /// Average per-window margin over the runner-up hypothesis, bits per byte.
     pub avg_score: f64,
-    /// Endianness
+    /// Byte order.
     pub endianness: Endianness,
-    /// Bitwidth
+    /// Register width.
     pub bitwidth: u8,
 }
 
-/// Detect multiple ISAs in a binary using sliding-window analysis.
+/// Find every ISA that owns a meaningful share of the code in `data`.
 ///
-/// Divides the data into fixed-size non-overlapping windows, scores each
-/// window against all architectures, and aggregates which ISAs appear as
-/// top scorers. Returns all ISAs that dominate at least `min_windows`
-/// windows with sufficient score.
-///
-/// This is designed for firmware images that contain code sections from
-/// multiple ISA families (e.g., AArch64 + ARM32, or Hexagon + AVR).
-pub fn detect_multi_isa(
-    data: &[u8],
-    options: &ClassifierOptions,
-    window_size: usize,
-) -> Vec<DetectedIsa> {
-    let min_windows: usize = 3;
-    let min_bytes: usize = 2048;
-    // Minimum confidence for the window winner to be counted.
-    // score_all_architectures computes confidence = max(share, margin*0.8).
-    // On noise data, confidence is typically 0.05-0.15 (many ISAs score similarly).
-    // On real code, the correct ISA gets 0.20+ confidence.
-    let min_window_confidence: f64 = 0.14;
+/// Windows of `window_size` bytes tile the whole input. A family is reported
+/// when its calibrated evidence (the same measure that drives single-ISA
+/// confidence, false-alarm allowance included) is at least
+/// `MULTI_MIN_EVIDENCE` and it owns at least 2% of the code bytes.
+pub fn detect_multi_isa(data: &[u8], _options: &ClassifierOptions, window_size: usize) -> Vec<DetectedIsa> {
+    detect_multi_isa_with_model(data, Model::embedded(), window_size)
+}
 
-    // Per-ISA accumulation: (raw_score, endianness, bitwidth) per window
-    let mut isa_windows: HashMap<Isa, Vec<(i64, Endianness, u8)>> = HashMap::new();
+/// Minimum net evidence for a family in [`detect_multi_isa`]: one clear 1 KB
+/// code window is enough (its weight is ~1), a few weak hits are not.
+const MULTI_MIN_EVIDENCE: f64 = 0.35;
 
-    // Use window-appropriate options: scan entire window, low confidence threshold
-    let window_opts = ClassifierOptions {
-        min_confidence: 0.01,
-        max_scan_bytes: window_size,
-        deep_scan: false,
-        detect_extensions: false,
-        fast_mode: false,
-    };
-
-    let mut offset = 0;
-    while offset + window_size <= data.len() {
-        let window = &data[offset..offset + window_size];
-
-        // Pre-filter: skip obvious non-code windows
-        if is_padding_or_empty(window) || is_string_data(window) || is_high_entropy(window) {
-            offset += window_size;
+/// [`detect_multi_isa`] with a specific model.
+pub fn detect_multi_isa_with_model(data: &[u8], model: &Model, window_size: usize) -> Vec<DetectedIsa> {
+    let window = window_size.max(MIN_WINDOW * 4);
+    let scan = scan(data, model, window, data.len());
+    let votes = scan.family_votes();
+    let code_bytes: usize = votes.iter().map(|v| v.1).sum();
+    let mut out = Vec::new();
+    for (family, bytes, evidence) in votes {
+        if evidence < MULTI_MIN_EVIDENCE || (bytes as f64) < 0.02 * code_bytes as f64 {
             continue;
         }
-
-        // Score this window against all architectures
-        let scores = score_all_architectures(window, &window_opts);
-
-        // The scores are sorted by raw_score descending with confidence computed.
-        // Only count the winner if its confidence exceeds our threshold.
-        if let Some(best) = scores.first() {
-            if best.raw_score > 0 && best.confidence >= min_window_confidence {
-                isa_windows.entry(best.isa).or_default().push((
-                    best.raw_score,
-                    best.endianness,
-                    best.bitwidth,
-                ));
-            }
-        }
-
-        offset += window_size;
-    }
-
-    // Total classified windows (those that passed confidence filter)
-    let total_classified: usize = isa_windows.values().map(|w| w.len()).sum();
-
-    // Aggregate and filter
-    let mut results: Vec<DetectedIsa> = isa_windows
-        .into_iter()
-        .filter(|(_, windows)| {
-            let count = windows.len();
-            // Absolute minimum: at least 3 windows and 2KB
-            if count < min_windows || count * window_size < min_bytes {
-                return false;
-            }
-            // Relative frequency: must win at least 8% of all classified windows.
-            // This eliminates noise ISAs that win a few windows by chance.
-            if total_classified > 10 {
-                let fraction = count as f64 / total_classified as f64;
-                if fraction < 0.08 {
-                    return false;
-                }
-            }
-            true
-        })
-        .map(|(isa, windows)| {
-            let count = windows.len();
-            let total_bytes = count * window_size;
-            let avg_score = windows.iter().map(|w| w.0 as f64).sum::<f64>() / count as f64;
-            let endianness = windows[0].1;
-            let bitwidth = windows[0].2;
-
-            DetectedIsa {
+        let (windows, margin_sum) = scan
+            .code_windows()
+            .filter(|(_, c, _, _)| model.class(*c).family == family)
+            .fold((0usize, 0.0f64), |(n, m), (_, _, margin, _)| (n + 1, m + margin));
+        let class_ev = scan.class_evidence(Some(family));
+        let Some(best) = (0..model.len())
+            .filter(|&i| model.class(i).family == family)
+            .max_by(|&a, &b| class_ev[a].total_cmp(&class_ev[b]))
+        else {
+            continue;
+        };
+        if let ClassKind::Code { isa, endianness, bitwidth, .. } = model.class(best).kind {
+            out.push(DetectedIsa {
                 isa,
-                window_count: count,
-                total_bytes,
-                avg_score,
+                window_count: windows,
+                total_bytes: bytes,
+                avg_score: margin_sum / windows.max(1) as f64,
                 endianness,
                 bitwidth,
+            });
+        }
+    }
+    out
+}
+
+/// Coarse ISA family of `isa` as used by the model (e.g. `Mips` and `Mips64`
+/// are both "mips"), or `None` for ISAs the model does not know.
+pub fn family_of(isa: Isa) -> Option<&'static str> {
+    CLASSES.iter().find_map(|c| match c.kind {
+        ClassKind::Code { isa: ci, .. } if ci == isa => Some(c.family),
+        _ => None,
+    })
+}
+
+/// Byte ranges of `data` that the embedded model classifies as code of the
+/// same family as `isa` (all windows are scanned, at most `budget` bytes).
+///
+/// Code-pattern analyses (e.g. extension detection) should look only here:
+/// headers, literal pools, string tables and padding are not instructions.
+/// Returns an empty list if `isa` is not a model ISA or no window matches.
+pub fn code_regions(data: &[u8], isa: Isa, budget: usize) -> Vec<(usize, usize)> {
+    let model = Model::embedded();
+    let Some(family) = family_of(isa) else {
+        return Vec::new();
+    };
+    let scan = scan(data, model, DEFAULT_WINDOW, budget);
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for w in &scan.windows {
+        if let WindowKind::Code { class, .. } = w.kind {
+            if model.class(class).family == family {
+                match out.last_mut() {
+                    Some(last) if last.0 + last.1 == w.offset => last.1 += w.len,
+                    _ => out.push((w.offset, w.len)),
+                }
             }
+        }
+    }
+    out
+}
+
+/// ISAs the embedded model can recognise in headerless data.
+pub fn supported_isas() -> Vec<Isa> {
+    let mut v: Vec<Isa> = Model::embedded()
+        .classes()
+        .filter_map(|c| match c.kind {
+            ClassKind::Code { isa, .. } => Some(isa),
+            ClassKind::Data => None,
         })
         .collect();
-
-    // Sort by window count descending (most dominant ISA first)
-    results.sort_by(|a, b| b.window_count.cmp(&a.window_count));
-
-    results
-}
-
-/// Check if a window is padding (all same byte or all zeros/0xFF).
-fn is_padding_or_empty(data: &[u8]) -> bool {
-    if data.is_empty() {
-        return true;
-    }
-    let first = data[0];
-    data.iter().all(|&b| b == first)
-}
-
-/// Check if a window is mostly string/text data (>75% printable ASCII).
-fn is_string_data(data: &[u8]) -> bool {
-    if data.is_empty() {
-        return false;
-    }
-    let printable = data
-        .iter()
-        .filter(|&&b| {
-            b == 0 || b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7E).contains(&b)
-        })
-        .count();
-    printable * 100 / data.len() > 75
-}
-
-/// Check if data has very high byte diversity (likely compressed/random).
-/// Uses distinct byte count as a fast entropy proxy.
-/// Random/compressed data uses 240-256 distinct byte values per 1KB.
-/// Real machine code typically uses 100-220 distinct values.
-fn is_high_entropy(data: &[u8]) -> bool {
-    if data.len() < 64 {
-        return false;
-    }
-    let mut seen = [false; 256];
-    for &b in data {
-        seen[b as usize] = true;
-    }
-    let distinct = seen.iter().filter(|&&s| s).count();
-    // For 1KB windows: random data → ~250 distinct, code → 100-220
-    // Scale threshold by window size: larger windows naturally see more distinct bytes
-    let threshold = if data.len() >= 512 { 235 } else { 200 };
-    distinct >= threshold
-}
-
-/// Get the top N architecture candidates.
-pub fn top_candidates(
-    data: &[u8],
-    n: usize,
-    options: &ClassifierOptions,
-) -> Vec<ArchitectureScore> {
-    let mut scores = score_all_architectures(data, options);
-    scores.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-    scores.truncate(50);
-    scores
+    v.sort_by_key(|i| i.name());
+    v.dedup();
+    v
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_x86_detection() {
-        // Common x86-64 prologue with multiple distinctive patterns
-        let data = [
-            0x55, // push rbp
-            0x48, 0x89, 0xE5, // mov rbp, rsp
-            0x48, 0x83, 0xEC, 0x20, // sub rsp, 0x20
-            0x48, 0x89, 0x7D, 0xF8, // mov [rbp-8], rdi
-            0x48, 0x89, 0x75, 0xF0, // mov [rbp-16], rsi
-            0x90, // nop
-            0x90, // nop
-            0x48, 0x83, 0xC4, 0x20, // add rsp, 0x20
-            0x5D, // pop rbp
-            0xC3, // ret
-        ];
-
-        // Use thorough options with 15% threshold for small heuristic samples
-        let mut options = ClassifierOptions {
-            min_confidence: 0.15,
-            ..ClassifierOptions::thorough()
-        };
-        let result = analyze(&data, &options).unwrap();
-        assert!(matches!(result.isa, Isa::X86 | Isa::X86_64));
-    }
-
-    #[test]
-    fn test_aarch64_detection() {
-        // AArch64 prologue with multiple distinctive patterns
-        let data = [
-            0xFD, 0x7B, 0xBF, 0xA9, // stp x29, x30, [sp, #-16]!
-            0xFD, 0x03, 0x00, 0x91, // mov x29, sp
-            0xE0, 0x03, 0x00, 0xAA, // mov x0, x0
-            0xE1, 0x03, 0x01, 0xAA, // mov x1, x1
-            0x1F, 0x20, 0x03, 0xD5, // nop
-            0x1F, 0x20, 0x03, 0xD5, // nop
-            0xFD, 0x7B, 0xC1, 0xA8, // ldp x29, x30, [sp], #16
-            0xC0, 0x03, 0x5F, 0xD6, // ret
-        ];
-
-        // Use thorough options with 15% threshold for heuristic detection
-        // (lowered from 20% due to more architectures being scored)
-        let mut options = ClassifierOptions {
-            min_confidence: 0.15,
-            ..ClassifierOptions::thorough()
-        };
-        let result = analyze(&data, &options).unwrap();
-        assert_eq!(result.isa, Isa::AArch64);
-    }
-
-    #[test]
-    fn test_riscv_detection() {
-        // RISC-V with high-scoring patterns: NOP, RET, and compressed instructions
-        let data = [
-            0x13, 0x00, 0x00, 0x00, // nop (addi x0, x0, 0) = 25 pts
-            0x13, 0x00, 0x00, 0x00, // nop = 25 pts
-            0x13, 0x00, 0x00, 0x00, // nop = 25 pts
-            0x67, 0x80, 0x00, 0x00, // ret (jalr x0, x1, 0) = 30 pts
-            0x01, 0x00, // c.nop = 20 pts (compressed)
-            0x82, 0x80, // c.ret = 25 pts (compressed)
-        ];
-
-        // Use thorough options with 15% threshold for heuristic detection
-        let mut options = ClassifierOptions {
-            min_confidence: 0.15,
-            ..ClassifierOptions::thorough()
-        };
-        let result = analyze(&data, &options).unwrap();
-        assert!(matches!(result.isa, Isa::RiscV32 | Isa::RiscV64));
-    }
-
-    #[test]
-    fn test_v850_rh850_marker_upgrade() {
-        let mut data = vec![
-            0x6F, 0x00, 0x6F, 0x00, 0x6F, 0x00, 0x6F, 0x00, // repeated JMP [r31]
-            0x00, 0x00, 0x6F, 0x00, 0x00, 0x00, 0x6F, 0x00,
-        ];
-        data.extend_from_slice(b"RH850");
-
-        let mut options = ClassifierOptions {
-            min_confidence: 0.1,
-            ..ClassifierOptions::thorough()
-        };
-        let result = analyze(&data, &options).unwrap();
-        assert_eq!(result.isa, Isa::Rh850);
-    }
-
-    #[test]
-    fn test_collect_informative_spans_skips_long_homogeneous_runs() {
-        let mut data = vec![0xAA; 12];
-        data.extend_from_slice(&[0x10, 0x11, 0x12, 0x13]);
-        data.extend_from_slice(&vec![0x3C; 11]);
-        data.extend_from_slice(&[0x20, 0x21, 0x22]);
-
-        let spans = collect_informative_spans(&data, data.len(), 10);
-
-        assert_eq!(spans, vec![(12, 16), (27, 30)]);
-    }
-
-    #[test]
-    fn test_collect_informative_spans_reads_past_long_prefix_padding() {
-        let mut data = vec![0xFF; 9000];
-        data.extend_from_slice(&[0x55, 0x48, 0x89, 0xE5, 0x5D, 0xC3]);
-
-        let spans = collect_informative_spans(&data, 6, 8192);
-
-        assert_eq!(spans, vec![(9000, 9006)]);
-    }
-
-    #[test]
-    fn test_variant_family_confidence_boost_promotes_split_family_winner() {
-        let scores = vec![
-            ArchitectureScore {
-                isa: Isa::X86_64,
-                raw_score: 2200,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 64,
-            },
-            ArchitectureScore {
-                isa: Isa::X86,
-                raw_score: 2100,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 32,
-            },
-            ArchitectureScore {
-                isa: Isa::RiscV64,
-                raw_score: 700,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 64,
-            },
-        ];
-
-        let mut sorted: Vec<_> = scores.iter().collect();
-        sorted.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-
-        let options = ClassifierOptions {
-            min_confidence: 0.30,
-            ..ClassifierOptions::new()
-        };
-
-        let boosted = try_variant_family_confidence_boost(&sorted, &options)
-            .expect("family split should produce a confidence boost");
-        assert!(boosted >= options.min_confidence);
-    }
-
-    #[test]
-    fn test_variant_family_confidence_boost_rejects_low_raw_noise() {
-        let scores = vec![
-            ArchitectureScore {
-                isa: Isa::X86_64,
-                raw_score: 20,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 64,
-            },
-            ArchitectureScore {
-                isa: Isa::X86,
-                raw_score: 20,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 32,
-            },
-            ArchitectureScore {
-                isa: Isa::Ppc,
-                raw_score: 14,
-                confidence: 0.0,
-                endianness: Endianness::Big,
-                bitwidth: 32,
-            },
-        ];
-
-        let mut sorted: Vec<_> = scores.iter().collect();
-        sorted.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-
-        let options = ClassifierOptions {
-            min_confidence: 0.30,
-            ..ClassifierOptions::new()
-        };
-
-        assert!(try_variant_family_confidence_boost(&sorted, &options).is_none());
-    }
-
-    #[test]
-    fn test_variant_family_confidence_boost_rejects_weak_family_ratio() {
-        let scores = vec![
-            ArchitectureScore {
-                isa: Isa::X86_64,
-                raw_score: 8083,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 64,
-            },
-            ArchitectureScore {
-                isa: Isa::X86,
-                raw_score: 7961,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 32,
-            },
-            ArchitectureScore {
-                isa: Isa::LoongArch64,
-                raw_score: 6969,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 64,
-            },
-        ];
-
-        let mut sorted: Vec<_> = scores.iter().collect();
-        sorted.sort_by(|a, b| b.raw_score.cmp(&a.raw_score));
-
-        let options = ClassifierOptions {
-            min_confidence: 0.30,
-            ..ClassifierOptions::new()
-        };
-
-        assert!(try_variant_family_confidence_boost(&sorted, &options).is_none());
-    }
-
-    #[test]
-    fn test_low_evidence_confuser_penalty_damps_near_top_confusers() {
-        let mut scores = vec![
-            ArchitectureScore {
-                isa: Isa::X86_64,
-                raw_score: 420,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 64,
-            },
-            ArchitectureScore {
-                isa: Isa::Parisc,
-                raw_score: 360,
-                confidence: 0.0,
-                endianness: Endianness::Big,
-                bitwidth: 32,
-            },
-            ArchitectureScore {
-                isa: Isa::RiscV64,
-                raw_score: 410,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 64,
-            },
-            ArchitectureScore {
-                isa: Isa::Arm,
-                raw_score: 320,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 32,
-            },
-        ];
-
-        apply_low_evidence_confuser_penalties(&mut scores);
-
-        let x86_64 = scores.iter().find(|s| s.isa == Isa::X86_64).unwrap();
-        let parisc = scores.iter().find(|s| s.isa == Isa::Parisc).unwrap();
-        let riscv = scores.iter().find(|s| s.isa == Isa::RiscV64).unwrap();
-
-        assert!(x86_64.raw_score < 420);
-        assert!(parisc.raw_score < 360);
-        assert_eq!(riscv.raw_score, 410);
-    }
-
-    #[test]
-    fn test_low_evidence_confuser_penalty_skips_non_near_top_confusers() {
-        let mut scores = vec![
-            ArchitectureScore {
-                isa: Isa::RiscV64,
-                raw_score: 259,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 64,
-            },
-            ArchitectureScore {
-                isa: Isa::RiscV32,
-                raw_score: 259,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 32,
-            },
-            ArchitectureScore {
-                isa: Isa::Rl78,
-                raw_score: 204,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 16,
-            },
-            ArchitectureScore {
-                isa: Isa::Arm,
-                raw_score: 102,
-                confidence: 0.0,
-                endianness: Endianness::Little,
-                bitwidth: 32,
-            },
-        ];
-
-        apply_low_evidence_confuser_penalties(&mut scores);
-
-        let rl78 = scores.iter().find(|s| s.isa == Isa::Rl78).unwrap();
-        assert_eq!(rl78.raw_score, 204);
-    }
-
-    #[test]
-    fn test_fallback_recovers_sparse_arm_island() {
-        // Large mostly-homogeneous blob with a sparse ARM code island.
-        let mut data = vec![0xFFu8; 600 * 1024];
-        let base = 280 * 1024;
-
-        // Write a compact ARM pattern repeatedly over a sparse 24KB island.
-        // PUSH, NOP, BX LR
-        let pat = [0xE92D4010u32, 0xE1A00000u32, 0xE12FFF1Eu32];
-        for idx in 0..2048usize {
-            let off = base + idx * 12;
-            if off + 12 > data.len() {
-                break;
-            }
-            data[off..off + 4].copy_from_slice(&pat[0].to_le_bytes());
-            data[off + 4..off + 8].copy_from_slice(&pat[1].to_le_bytes());
-            data[off + 8..off + 12].copy_from_slice(&pat[2].to_le_bytes());
+    /// A toy model: "x86" loves 0x90 0x90, "arm" loves 0xE1 0xA0, data loves zeros.
+    fn toy_model() -> Vec<u8> {
+        let mut x86 = ModelBuilder::new();
+        let mut arm = ModelBuilder::new();
+        let mut rodata = ModelBuilder::new();
+        for i in 0..20_000u32 {
+            x86.add(&[0x90, 0x90, 0xC3, (i % 7) as u8]);
+            arm.add(&[0xE1, 0xA0, 0x00, 0x01 + (i % 5) as u8]);
+            rodata.add(&[0x00, 0x00, (i % 3) as u8, 0x00]);
         }
+        Model::serialize(
+            &[
+                ("x86".into(), x86.build(16.0, model::COST_SCALE)),
+                ("arm".into(), arm.build(16.0, model::COST_SCALE)),
+                ("neg_rodata".into(), rodata.build(16.0, model::COST_SCALE)),
+            ],
+            model::COST_SCALE,
+        )
+    }
 
-        let options = ClassifierOptions::new();
-        let result = analyze(&data, &options).expect("fallback should classify sparse ARM island");
-        assert_eq!(result.isa, Isa::Arm);
-        assert!(result.confidence >= options.min_confidence);
+    fn repeat(pattern: &[u8], n: usize) -> Vec<u8> {
+        pattern.iter().copied().cycle().take(n).collect()
     }
 
     #[test]
-    fn test_fallback_arm_be_vector_stub() {
-        // Build a large blob with ARM BE branch stubs at the start.
-        let mut data = vec![0xFFu8; 600 * 1024];
-        let branches = [
-            0xEA000006u32,
-            0xEA000057u32,
-            0xEA000067u32,
-            0xEA000070u32,
-            0xEA000097u32,
-            0xEA0000B8u32,
-            0xEA0000C2u32,
-            0xEA0000D0u32,
-        ];
-        for (idx, w) in branches.iter().enumerate() {
-            let off = idx * 4;
-            data[off..off + 4].copy_from_slice(&w.to_be_bytes());
-        }
-        // Include one exact ARM BE marker in the first 1KB.
-        data[0x40..0x44].copy_from_slice(&0xE320F000u32.to_be_bytes());
-
-        let options = ClassifierOptions {
-            min_confidence: 0.90,
-            ..ClassifierOptions::new()
-        };
-        let result = analyze(&data, &options).expect("fallback should classify ARM BE stub");
-        assert_eq!(result.isa, Isa::Arm);
-        assert_eq!(result.endianness, Endianness::Big);
-        assert!(result.confidence >= options.min_confidence);
+    fn classifies_by_likelihood() {
+        let bytes = toy_model();
+        let model = Model::parse(&bytes).unwrap();
+        let opts = ClassifierOptions::new();
+        let r = analyze_with_model(&repeat(&[0x90, 0x90, 0xC3, 0x03], 4096), &opts, &model).unwrap();
+        assert_eq!(r.isa, Isa::X86);
+        let r = analyze_with_model(&repeat(&[0xE1, 0xA0, 0x00, 0x02], 4096), &opts, &model).unwrap();
+        assert_eq!(r.isa, Isa::Arm);
+        assert_eq!(r.variant.name, "a32");
     }
 
     #[test]
-    fn test_fallback_recovers_sparse_mips_island() {
-        // Large mixed blob with sparse MIPS little-endian return/prologue patterns.
-        let mut data = vec![0xFFu8; 700 * 1024];
-        let base = 200 * 1024;
-
-        // Repeat: addiu sp,sp,-56 ; jr ra ; nop
-        //   addiu sp,sp,-56  => 0x27BDFFC8 (LE bytes C8 FF BD 27)
-        //   jr ra            => 0x03E00008 (LE bytes 08 00 E0 03)
-        //   nop              => 0x00000000
-        for idx in 0..2048usize {
-            let off = base + idx * 12;
-            if off + 12 > data.len() {
-                break;
-            }
-            data[off..off + 4].copy_from_slice(&0x27BDFFC8u32.to_le_bytes());
-            data[off + 4..off + 8].copy_from_slice(&0x03E00008u32.to_le_bytes());
-            data[off + 8..off + 12].copy_from_slice(&0x00000000u32.to_le_bytes());
-        }
-
-        let options = ClassifierOptions::new();
-        let result = analyze(&data, &options).expect("fallback should classify sparse MIPS island");
-        assert!(matches!(result.isa, Isa::Mips | Isa::Mips64));
-        assert_eq!(result.endianness, Endianness::Little);
-        assert!(result.confidence >= options.min_confidence);
-    }
-
-    #[test]
-    fn test_wrapper_subregion_fallback_prefers_embedded_code_region() {
-        let mut data = vec![0xFFu8; 700 * 1024];
-
-        // Firmware-style ASCII wrapper header.
-        let header = b"FIRMWARE UPDATE IMAGE\0EPSON IPLF\0";
-        data[..header.len()].copy_from_slice(header);
-
-        // Embed a dense C-SKY-like code island away from the header.
-        let base = 260 * 1024;
-        let pattern: [u8; 14] = [
-            0x1C, 0x07, 0x07, 0x87, // 0x071C, 0x8707 pair
-            0x3C, 0x78, // 0x783C
-            0x66, 0x12, 0x80, 0x12, // 0x1266, 0x1280
-            0x07, 0xA7, 0x60, 0x07, // 0xA707, 0x0760
-        ];
-        for n in 0..4096usize {
-            let off = base + n * pattern.len();
-            if off + pattern.len() > data.len() {
-                break;
-            }
-            data[off..off + pattern.len()].copy_from_slice(&pattern);
-        }
-
-        let options = ClassifierOptions {
-            min_confidence: 0.30,
-            ..ClassifierOptions::new()
-        };
-
-        let result = analyze(&data, &options).expect("wrapper fallback should classify subregion");
-        assert_eq!(result.isa, Isa::Csky);
-        assert!(result.confidence >= options.min_confidence);
-    }
-
-    #[test]
-    fn test_analyze_inconclusive_for_large_uniform_data() {
-        let data = vec![0xFF; 12 * 1024];
-        let options = ClassifierOptions::new();
-
-        let result = analyze(&data, &options);
+    fn data_and_noise_are_rejected() {
+        let bytes = toy_model();
+        let model = Model::parse(&bytes).unwrap();
+        let opts = ClassifierOptions::new();
+        let zeros_ish = repeat(&[0, 0, 1, 0, 0, 0, 2, 0], 4096);
         assert!(matches!(
-            result,
+            analyze_with_model(&zeros_ish, &opts, &model),
             Err(ClassifierError::HeuristicInconclusive { .. })
         ));
+        let mut x: u64 = 0x1234_5678;
+        let noise: Vec<u8> = (0..8192)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect();
+        assert!(analyze_with_model(&noise, &opts, &model).is_err());
+        assert!(analyze_with_model(&vec![0xFF; 64 * 1024], &opts, &model).is_err());
+    }
+
+    #[test]
+    fn padding_does_not_dilute_code() {
+        let bytes = toy_model();
+        let model = Model::parse(&bytes).unwrap();
+        let mut data = vec![0xFF; 256 * 1024];
+        let code = repeat(&[0xE1, 0xA0, 0x00, 0x04], 8192);
+        data[100_000..100_000 + code.len()].copy_from_slice(&code);
+        let r = analyze_with_model(&data, &ClassifierOptions::new(), &model).unwrap();
+        assert_eq!(r.isa, Isa::Arm);
+        assert!(r.confidence > 0.9);
+    }
+
+    #[test]
+    fn tiling_and_sampling() {
+        assert_eq!(tiles(10, 1024), vec![]);
+        assert_eq!(tiles(100, 1024), vec![(0, 100)]);
+        let t = tiles(10 * 1024, 1024);
+        assert_eq!(t.len(), 10);
+        assert_eq!(t[9], (9 * 1024, 1024));
+        let idx: Vec<usize> = (0..1000).collect();
+        let s = spread(&idx, 64);
+        assert_eq!(s.len(), 64);
+        assert_eq!((s[0], s[63]), (0, 999));
+        assert_eq!(spread(&idx[..10], 64).len(), 10);
+    }
+
+    #[test]
+    fn budget_is_spent_on_non_padding() {
+        let bytes = toy_model();
+        let model = Model::parse(&bytes).unwrap();
+        // 8 MB of erased flash with 8 KB of code near the start.
+        let mut data = vec![0xFF; 8 << 20];
+        let code = repeat(&[0xE1, 0xA0, 0x00, 0x04], 8192);
+        data[4096..4096 + code.len()].copy_from_slice(&code);
+        let opts = ClassifierOptions { max_scan_bytes: 64 * 1024, ..ClassifierOptions::new() };
+        let r = analyze_with_model(&data, &opts, &model).unwrap();
+        assert_eq!(r.isa, Isa::Arm);
+    }
+
+    #[test]
+    fn multi_isa_reports_both_regions() {
+        let bytes = toy_model();
+        let model = Model::parse(&bytes).unwrap();
+        let mut data = repeat(&[0x90, 0x90, 0xC3, 0x01], 16 * 1024);
+        data.extend(repeat(&[0xE1, 0xA0, 0x00, 0x03], 16 * 1024));
+        let s = scan(&data, &model, 1024, data.len());
+        let fams: Vec<_> = s.family_votes().into_iter().map(|v| v.0).collect();
+        assert_eq!(fams.len(), 2);
+        assert!(fams.contains(&"x86") && fams.contains(&"arm"));
     }
 }

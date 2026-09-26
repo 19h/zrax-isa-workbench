@@ -362,7 +362,10 @@ pub fn detect(data: &[u8]) -> bool {
     // For very small files (< 8KB), require stronger evidence
     let threshold = if data.len() < 8192 { 40 } else { 25 };
 
-    score >= threshold
+    // Dates and a mix of zero/non-zero first bytes occur in fonts, images and
+    // raw firmware alike; at least one EPR-specific signal is required.
+    let specific = has_automotive_string || has_triple_redundancy(data) || has_ev_ecm_string(data);
+    specific && score >= threshold
 }
 
 /// Parse the EPR container and classify the contained ECU firmware.

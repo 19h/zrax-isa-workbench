@@ -29,6 +29,8 @@ pub mod machine {
     pub const AM33: u16 = 0x01D3;
     pub const POWERPC: u16 = 0x01F0;
     pub const POWERPCFP: u16 = 0x01F1;
+    /// Big-endian PowerPC (Xbox 360).
+    pub const POWERPCBE: u16 = 0x01F2;
     pub const IA64: u16 = 0x0200;
     pub const MIPS16: u16 = 0x0266;
     pub const ALPHA64: u16 = 0x0284;
@@ -80,6 +82,7 @@ pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str
 
         machine::POWERPC => (Isa::Ppc, 32, Endianness::Little, None),
         machine::POWERPCFP => (Isa::Ppc, 32, Endianness::Little, Some("FP")),
+        machine::POWERPCBE => (Isa::Ppc, 32, Endianness::Big, Some("Xbox 360")),
 
         machine::IA64 => (Isa::Ia64, 64, Endianness::Little, None),
 
@@ -96,7 +99,7 @@ pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str
 
         machine::AMD64 => (Isa::X86_64, 64, Endianness::Little, None),
 
-        machine::M32R => (Isa::Unknown(0x9041), 32, Endianness::Little, Some("M32R")),
+        machine::M32R => (Isa::M32r, 32, Endianness::Little, None),
 
         machine::ARM64EC => (Isa::AArch64, 64, Endianness::Little, Some("ARM64EC")),
         machine::ARM64X => (Isa::AArch64, 64, Endianness::Little, Some("ARM64X")),
@@ -201,7 +204,56 @@ pub fn parse(data: &[u8], pe_offset: u32) -> Result<ClassificationResult> {
     result.variant = variant;
     result.metadata = metadata;
 
+    // .NET: an IL-only assembly is CIL bytecode whatever the COFF machine says
+    // (AnyCPU assemblies are stamped i386).
+    if size_of_optional > 0 {
+        match clr_flags(data, coff_off + 20, size_of_optional, num_sections, is_pe32plus) {
+            Some(flags) if flags & COMIMAGE_FLAGS_ILONLY != 0 => {
+                result.isa = Isa::Clr;
+                result.bitwidth = 32;
+                result.variant = Variant::new(".NET IL-only");
+                result.metadata.notes.push(format!(
+                    ".NET assembly (IL-only); PE machine is {}",
+                    machine_description(machine)
+                ));
+            }
+            Some(_) => result
+                .metadata
+                .notes
+                .push("Mixed-mode .NET assembly (CIL plus native code)".to_string()),
+            None => {}
+        }
+    }
+
     Ok(result)
+}
+
+/// COR20 header flag: the image contains only CIL.
+const COMIMAGE_FLAGS_ILONLY: u32 = 0x1;
+
+/// Flags of the CLR (COR20) header, if the image has one.
+fn clr_flags(data: &[u8], opt_off: usize, opt_size: u16, num_sections: u16, pe32plus: bool) -> Option<u32> {
+    // Data directory 14 = COM descriptor.
+    let dirs = opt_off + if pe32plus { 112 } else { 96 };
+    let count = read_u32(data, opt_off + if pe32plus { 108 } else { 92 }, true).ok()?;
+    if count <= 14 || dirs + 15 * 8 > opt_off + opt_size as usize {
+        return None;
+    }
+    let rva = read_u32(data, dirs + 14 * 8, true).ok()?;
+    let size = read_u32(data, dirs + 14 * 8 + 4, true).ok()?;
+    if rva == 0 || size < 72 {
+        return None;
+    }
+    let sections = opt_off + opt_size as usize;
+    let file_off = (0..usize::from(num_sections.min(96))).find_map(|i| {
+        let sh = sections + i * 40;
+        let vsize = read_u32(data, sh + 8, true).ok()?;
+        let va = read_u32(data, sh + 12, true).ok()?;
+        let raw_size = read_u32(data, sh + 16, true).ok()?;
+        let raw_ptr = read_u32(data, sh + 20, true).ok()?;
+        (rva >= va && rva < va + vsize.max(raw_size)).then(|| (rva - va + raw_ptr) as usize)
+    })?;
+    read_u32(data, file_off + 16, true).ok()
 }
 
 /// Get a human-readable description of a PE machine type.

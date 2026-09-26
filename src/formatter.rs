@@ -170,7 +170,7 @@ impl PayloadFormatter for HumanFormatter {
         let mut s = String::from("  Candidates:\n");
         for (i, c) in candidates.iter().take(5).enumerate() {
             s.push_str(&format!(
-                "    {}. {} ({}-bit, {}) - score: {}, {:.1}%\n",
+                "    {}. {} ({}-bit, {}) - evidence: {} bits, share: {:.1}%\n",
                 i + 1,
                 c.isa,
                 c.bitwidth,
@@ -529,7 +529,7 @@ impl PayloadFormatter for CandidatesFormatter {
         let mut s = String::new();
         for (i, c) in candidates.iter().enumerate() {
             s.push_str(&format!(
-                "  {}. {} ({}-bit, {}) - score: {}, confidence: {:.1}%\n",
+                "  {}. {} ({}-bit, {}) - evidence: {} bits, share: {:.1}%\n",
                 i + 1,
                 c.isa,
                 c.bitwidth,

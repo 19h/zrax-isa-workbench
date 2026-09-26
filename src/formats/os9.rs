@@ -125,10 +125,11 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
         ..Default::default()
     };
 
-    // 6809 is not currently modeled as a dedicated ISA enum variant.
-    // Use M68k family as the closest legacy bucket for now.
+    // Both layouts handled here (the 0x87CD module header with a 16-bit size,
+    // and FLEX record streams) are 6809 formats; OS-9/68k modules use the
+    // 0x4AFC sync and a different header.
     let mut result =
-        ClassificationResult::from_format(Isa::M68k, 32, Endianness::Big, FileFormat::Os9);
+        ClassificationResult::from_format(Isa::M6809, 8, Endianness::Big, FileFormat::Os9);
     result.variant = Variant::new("OS-9 module");
     result.metadata = metadata;
     Ok(result)
@@ -152,7 +153,7 @@ mod tests {
         data[0..2].copy_from_slice(&OS9_SYNC.to_be_bytes());
         data[2..4].copy_from_slice(&32u16.to_be_bytes());
         let result = parse(&data).unwrap();
-        assert_eq!(result.isa, Isa::M68k);
+        assert_eq!(result.isa, Isa::M6809);
         assert_eq!(result.format, FileFormat::Os9);
     }
 
@@ -171,7 +172,7 @@ mod tests {
         data.extend_from_slice(&[FLEX_DATA_RECORD, 0x20, 0x00, 0x02, 0x12, 0x34]);
         data.extend_from_slice(&[FLEX_TRANSFER_RECORD, 0x20, 0x00]);
         let result = parse(&data).unwrap();
-        assert_eq!(result.isa, Isa::M68k);
+        assert_eq!(result.isa, Isa::M6809);
         assert_eq!(result.format, FileFormat::Os9);
         assert!(result
             .metadata

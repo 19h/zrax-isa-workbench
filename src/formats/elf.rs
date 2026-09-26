@@ -97,7 +97,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         }
 
         // IBM SPU/SPC
-        0x17 => (Isa::Unknown(0x17), 32),
+        0x17 => (Isa::CellSpu, 32),
 
         // NEC V800 / Renesas RH850 toolchains
         0x24 => (Isa::Rh850, 32),
@@ -130,16 +130,16 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x2D => (Isa::Arc, 32),
 
         // Hitachi H8/300
-        0x2E => (Isa::Unknown(0x2E), 16),
+        0x2E => (Isa::H8300, 16),
 
         // Hitachi H8/300H
-        0x2F => (Isa::Unknown(0x2F), 16),
+        0x2F => (Isa::H8300, 16),
 
         // Hitachi H8S
-        0x30 => (Isa::Unknown(0x30), 16),
+        0x30 => (Isa::H8300, 16),
 
         // Hitachi H8/500
-        0x31 => (Isa::Unknown(0x31), 16),
+        0x31 => (Isa::H8300, 16),
 
         // Intel IA-64
         0x32 => (Isa::Ia64, 64),
@@ -193,7 +193,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x42 => (Isa::Unknown(0x42), 32),
 
         // STMicro ST9+
-        0x43 => (Isa::Unknown(0x43), 8),
+        0x43 => (Isa::St9, 16),
 
         // STMicro ST7
         0x44 => (Isa::Unknown(0x44), 8),
@@ -256,7 +256,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x57 => (Isa::V850, 32),
 
         // Mitsubishi M32R
-        0x58 => (Isa::Unknown(0x58), 32),
+        0x58 => (Isa::M32r, 32),
 
         // Matsushita MN10300
         0x59 => (Isa::Unknown(0x59), 32),
@@ -343,7 +343,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x74 => (Isa::C166, 16),
 
         // Renesas M16C
-        0x75 => (Isa::Unknown(0x75), 16),
+        0x75 => (Isa::M16c, 16),
 
         // Microchip dsPIC30F
         0x76 => (Isa::Unknown(0x76), 16),
@@ -352,7 +352,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x77 => (Isa::Unknown(0x77), 32),
 
         // Renesas M32C
-        0x78 => (Isa::Unknown(0x78), 32),
+        0x78 => (Isa::M16c, 32),
 
         // Altium TSK3000
         0x83 => (Isa::Unknown(0x83), 32),
@@ -419,7 +419,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0xA6 => (Isa::Unknown(0xA6), 32),
 
         // Andes NDS32
-        0xA7 => (Isa::Unknown(0xA7), 32),
+        0xA7 => (Isa::Nds32, 32),
 
         // Cyan eCOG1X
         0xA8 => (Isa::Unknown(0xA8), 16),

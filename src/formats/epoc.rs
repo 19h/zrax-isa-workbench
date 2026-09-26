@@ -38,9 +38,11 @@ pub fn detect(data: &[u8]) -> bool {
         return true;
     }
 
-    // Fallback for partially-corrupted headers that still preserve UID layout.
-    KNOWN_UID1.contains(&uid1)
-        || ((uid1 & 0xFFF0_0000) == 0x1000_0000 && uid2 != 0)
+    // Without the "EPOC" signature, require a known UID1 *and* a plausible
+    // UID2/UID3. A bare 0x100xxxxx first word is far too common: it is the
+    // initial stack pointer of every Cortex-M part with SRAM at 0x10000000.
+    let plausible_uid = |u: u32| u == 0 || (u & 0xFFF0_0000) == 0x1000_0000;
+    (KNOWN_UID1.contains(&uid1) && plausible_uid(uid2) && plausible_uid(uid3))
         || (KNOWN_UID2.contains(&uid2) && (uid3 & 0xFFF0_0000) == 0x1000_0000)
 }
 
@@ -104,6 +106,15 @@ mod tests {
         let result = parse(&data).unwrap();
         assert_eq!(result.isa, Isa::Arm);
         assert_eq!(result.format, FileFormat::Epoc);
+    }
+
+    #[test]
+    fn test_reject_cortex_m_vector_table() {
+        // Initial SP in SRAM at 0x1000_xxxx, then reset vector: not Symbian.
+        let mut data = vec![0u8; 0x40];
+        data[0..4].copy_from_slice(&0x1000_8000u32.to_le_bytes());
+        data[4..8].copy_from_slice(&0x0000_0145u32.to_le_bytes());
+        assert!(!detect(&data));
     }
 
     #[test]

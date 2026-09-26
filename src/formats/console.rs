@@ -80,6 +80,32 @@ pub enum ConsoleFormat {
 }
 
 /// Detect console format.
+fn dol_header_plausible(data: &[u8]) -> bool {
+    let be = |o: usize| u32::from_be_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]);
+    let len = data.len() as u64;
+    let mut text_ranges = Vec::new();
+    let mut sections = 0;
+    for i in 0..18 {
+        let (off, addr, size) = (be(4 * i), be(0x48 + 4 * i), be(0x90 + 4 * i));
+        if size == 0 {
+            if off != 0 && off < 0x100 {
+                return false;
+            }
+            continue;
+        }
+        let in_ram = (0x8000_0000..0x8180_0000).contains(&addr);
+        if off < 0x100 || u64::from(off) + u64::from(size) > len || !in_ram {
+            return false;
+        }
+        sections += 1;
+        if i < 7 {
+            text_ranges.push(addr..addr.saturating_add(size));
+        }
+    }
+    let entry = be(0xE0);
+    sections > 0 && text_ranges.iter().any(|r| r.contains(&entry))
+}
+
 pub fn detect(data: &[u8]) -> Option<ConsoleFormat> {
     if data.len() < 4 {
         return None;
@@ -119,23 +145,12 @@ pub fn detect(data: &[u8]) -> Option<ConsoleFormat> {
         return Some(ConsoleFormat::Nro);
     }
 
-    // DOL - no magic, but starts with section offsets
-    // Heuristic: first 7 u32s are text offsets, should be reasonable values
-    if data.len() >= DOL_HEADER_SIZE {
-        let text0_off = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-        let text0_addr = u32::from_be_bytes([data[0x48], data[0x49], data[0x4A], data[0x4B]]);
-        let entry = u32::from_be_bytes([data[0xE0], data[0xE1], data[0xE2], data[0xE3]]);
-
-        // DOL text section offset typically starts after header (0x100)
-        // Entry point should be in a reasonable range for GameCube/Wii
-        if text0_off >= 0x100
-            && text0_off < 0x100000
-            && text0_addr >= 0x80000000
-            && entry >= 0x80000000
-            && entry < 0x81800000
-        {
-            return Some(ConsoleFormat::Dol);
-        }
+    // DOL has no magic: 7 text + 11 data section offsets, addresses and
+    // sizes, then bss and entry. Require the whole table to be consistent
+    // with the file and the entry to land in a text section; a couple of
+    // loose range checks match raw PowerPC code.
+    if data.len() >= DOL_HEADER_SIZE && dol_header_plausible(data) {
+        return Some(ConsoleFormat::Dol);
     }
 
     None
