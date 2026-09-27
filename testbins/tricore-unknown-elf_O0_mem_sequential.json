@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/mem_sequential.o",
+    "size_bytes": 8492,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "mem_sequential",
+    "language": "c",
+    "category": "memory",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/mem_sequential.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/mem_sequential.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/mem_sequential.c"
+  },
+  "hashes": {
+    "sha256": "57013c077b435b84093dcd73d952ce8a156204bedff0bf7bbf4820b1b5be6ac4",
+    "md5": "f8701845d87093f4b0c872131977d874"
+  },
+  "build_timestamp": "2026-02-26T10:16:06.751332+00:00"
+}

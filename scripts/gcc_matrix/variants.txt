@@ -54,3 +54,12 @@ avr avr -mmcu=attiny85
 msp430 msp430-elf -mmcu=msp430f5529
 msp430 msp430-elf -mmcu=msp430g2553
 hppa hppa-linux-gnu none
+pdp11 pdp11-aout -m45
+pdp11 pdp11-aout -m45,-mlra
+pdp11 pdp11-aout -m45,-mint32
+pdp11 pdp11-aout -m40
+pdp11 pdp11-aout -m10
+cr16 cr16-elf none releases/gcc-11.5.0
+cr16 cr16-elf -mcr16c releases/gcc-11.5.0
+cr16 cr16-elf -mdata-model=far releases/gcc-11.5.0
+cr16 cr16-elf -mint32 releases/gcc-11.5.0

@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cf_indirect_call.o",
+    "size_bytes": 9328,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "cf_indirect_call",
+    "language": "c",
+    "category": "control_flow",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/cf_indirect_call.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cf_indirect_call.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/cf_indirect_call.c"
+  },
+  "hashes": {
+    "sha256": "b3bdc5a9a20eaea8cd981a9901e301c80bb4f541f4dcb1de494fd10db0e328e6",
+    "md5": "2f6474ab2321785aa64755978da67565"
+  },
+  "build_timestamp": "2026-02-26T10:15:39.894108+00:00"
+}

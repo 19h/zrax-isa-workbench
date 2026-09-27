@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_physics_sim.o",
+    "size_bytes": 9364,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "fp_physics_sim",
+    "language": "c",
+    "category": "floating_point",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/fp_physics_sim.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_physics_sim.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/fp_physics_sim.c"
+  },
+  "hashes": {
+    "sha256": "6848c6460ac251ad37be5f018368ab13f9285b00f497ca02b0dd36ec33a2b008",
+    "md5": "103013801ee16c376b35dd212500b2a0"
+  },
+  "build_timestamp": "2026-02-26T10:15:53.581618+00:00"
+}

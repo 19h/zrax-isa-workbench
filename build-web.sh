@@ -5,7 +5,7 @@ set -euo pipefail
 # Output: dist/ folder containing index.html + JS glue + .wasm (ready to upload)
 
 echo "Building WASM..."
-wasm-pack build --target web --no-default-features --features wasm
+wasm-pack build --release --target web --no-default-features --features wasm
 
 echo "Assembling dist/..."
 rm -rf dist

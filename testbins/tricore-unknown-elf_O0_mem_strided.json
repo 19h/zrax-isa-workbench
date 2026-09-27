@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/mem_strided.o",
+    "size_bytes": 9900,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "mem_strided",
+    "language": "c",
+    "category": "memory",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/mem_strided.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/mem_strided.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/mem_strided.c"
+  },
+  "hashes": {
+    "sha256": "04babe776f2b5fd7a9949fa808f095c8915bb048a52d4f34a6216913211df3cd",
+    "md5": "b56fdb625c56642717956aedf7533847"
+  },
+  "build_timestamp": "2026-02-26T10:16:08.755978+00:00"
+}

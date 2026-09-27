@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_nop_sled.o",
+    "size_bytes": 1040,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "min_nop_sled",
+    "language": "c",
+    "category": "minimal",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/min_nop_sled.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_nop_sled.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/min_nop_sled.c"
+  },
+  "hashes": {
+    "sha256": "3c7d81999a0ec1f109ecec9f34d91697edca3edf01b1bef0e713d975e0ba7c2d",
+    "md5": "0de9bb62fafd15e82a8cb35c6b1a72d4"
+  },
+  "build_timestamp": "2026-02-26T10:16:21.157698+00:00"
+}

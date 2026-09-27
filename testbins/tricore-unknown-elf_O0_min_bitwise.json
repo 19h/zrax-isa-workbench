@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_bitwise.o",
+    "size_bytes": 1628,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "min_bitwise",
+    "language": "c",
+    "category": "minimal",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/min_bitwise.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_bitwise.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/min_bitwise.c"
+  },
+  "hashes": {
+    "sha256": "90547d07c940edcb37cb715d13a0251dfb6021698fb1711fa4e775d262d033a3",
+    "md5": "5a70345793aea530c4c12e60158e8d7d"
+  },
+  "build_timestamp": "2026-02-26T10:16:11.974361+00:00"
+}

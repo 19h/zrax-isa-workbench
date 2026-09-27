@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cpp_lambda.o",
+    "size_bytes": 40364,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "cpp_lambda",
+    "language": "cpp",
+    "category": "cpp_features",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/cpp_lambda.cpp"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-c++ -c -O0 -std=c++17 -fno-exceptions -fno-rtti -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cpp_lambda.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/cpp_lambda.cpp"
+  },
+  "hashes": {
+    "sha256": "81709e01cacb2bf6df6db98406f48fe5abe729964679535ab34f1c91bd346b55",
+    "md5": "fd2cbc1f1262ebac3b67a77c202ca633"
+  },
+  "build_timestamp": "2026-02-26T10:16:54.732336+00:00"
+}

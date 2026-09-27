@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/allocator.o",
+    "size_bytes": 22428,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "allocator",
+    "language": "c",
+    "category": "general",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/06_allocator.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/allocator.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/06_allocator.c"
+  },
+  "hashes": {
+    "sha256": "64a0cb0500f9abe283edca13586ab436d6a72ccd096a7522813cc349eabb0cf1",
+    "md5": "d8ca8ee09e2f785ab54fc85e3df0120e"
+  },
+  "build_timestamp": "2026-02-26T10:15:13.021496+00:00"
+}

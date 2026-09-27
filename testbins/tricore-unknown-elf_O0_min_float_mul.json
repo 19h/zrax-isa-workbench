@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_float_mul.o",
+    "size_bytes": 2960,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "min_float_mul",
+    "language": "c",
+    "category": "minimal",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/min_float_mul.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_float_mul.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/min_float_mul.c"
+  },
+  "hashes": {
+    "sha256": "73030a75db1e4a8b361a0e6db9a8a5591ad7997be51dfdd04f2de14a1602eda9",
+    "md5": "05773c6c8acc1d8267b7f8f4590a6611"
+  },
+  "build_timestamp": "2026-02-26T10:16:17.222555+00:00"
+}

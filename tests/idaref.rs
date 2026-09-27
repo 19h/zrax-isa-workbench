@@ -6,11 +6,13 @@
 //!
 //! Two kinds of expectation:
 //! * `Is(..)` — the ISA we must report (any slice of a fat binary counts).
-//! * `Unsupported` — an ISA this crate has no variant for (6809, ST20, TLCS-900,
-//!   ...). The only acceptable outcomes are "unknown" and "inconclusive":
-//!   claiming some *other* ISA is a false positive, not a near miss.
+//! * `Unsupported` — a processor this crate has no variant for. The only
+//!   acceptable outcomes are "unknown" and "inconclusive": claiming some
+//!   *other* ISA is a false positive, not a near miss.
 //!
 //! Run with `cargo test --test idaref -- --nocapture` for the full report.
+//! `IDAREF_DIR=/path/to/ida/tests/input` runs it on IDA's full test corpus
+//! (`idaref/` is a subset of it).
 
 use isa_classifier::{detect_payload, ClassificationSource, ClassifierError, ClassifierOptions, Isa};
 use std::collections::BTreeMap;
@@ -70,8 +72,8 @@ const PREFIXES: &[(&str, Expect)] = &[
     ("hcs12x_", Is(&[Hcs12])),
     ("6811_", Is(&[Hc11])),
     ("6809_", Is(&[M6809])),
-    ("6808_", Unsupported),
-    ("hcs08_", Unsupported),
+    ("6808_", Is(&[Hc08])),
+    ("hcs08_", Is(&[Hc08])),
     ("sh4b_", Is(&[Sh, Sh4])),
     ("sh4_", Is(&[Sh, Sh4])),
     ("sh3b_", Is(&[Sh, Sh4])),
@@ -95,14 +97,14 @@ const PREFIXES: &[(&str, Expect)] = &[
     ("h8h_", Is(&[H8300])),
     ("h8368_", Is(&[H8300])),
     ("h8300_", Is(&[H8300])),
-    ("h8500", Unsupported),
+    ("h8500", Is(&[H8500])),
     ("h8_", Is(&[H8300])),
     ("h8.", Is(&[H8300])),
     ("m32r_", Is(&[M32r])),
     ("m32c80_", Is(&[M16c])),
     ("m16c60_", Is(&[M16c])),
     ("r8c_", Is(&[M16c])), // R8C is an M16C/60-series core
-    ("r32c_", Unsupported),
+    ("r32c_", Is(&[R32c])),
     ("avr_", Is(&[Avr])),
     ("msp430_", Is(&[Msp430])),
     ("tricore_", Is(&[Tricore])),
@@ -122,7 +124,7 @@ const PREFIXES: &[(&str, Expect)] = &[
     ("tms320c5_", Is(&[TiC5500])),
     ("tms32028_", Is(&[TiC28x, TiC2000])),
     ("tms320c2_", Is(&[TiC2000, TiC28x])),
-    ("tms320c3", Unsupported),
+    ("tms320c3", Is(&[TiC3x])),
     ("cskyv1b_", Is(&[Csky])),
     ("cskyv1_", Is(&[Csky])),
     ("mcore_", Is(&[Csky])), // EM_MCORE; C-SKY V1 is the M·CORE derivative that uses it
@@ -134,38 +136,68 @@ const PREFIXES: &[(&str, Expect)] = &[
     ("dalvik_", Is(&[Dalvik, Arm, AArch64])), // OAT/ODEX files are ELF containers
     ("cli_", Is(&[Clr, X86, X86_64])),        // mixed-mode assemblies carry native code
     ("wasm_", Is(&[Wasm])),
+    ("hexagon_", Is(&[Hexagon])),
+    ("m68k_", Is(&[M68k, ColdFire])),
+    ("mips64_", Is(&[Mips64, Mips])),
+    ("riscv64_", Is(&[RiscV64, RiscV32])),
+    ("rxb_", Is(&[Rx])),
+    ("m16c80_", Is(&[M16c])),
+    ("pic24_", Is(&[Pic])),
+    ("pic30_", Is(&[Pic])),
+    ("pic18cxx_", Is(&[Pic])),
+    ("pic12Cxx", Is(&[Pic])),
+    ("pdp11", Is(&[Pdp11])),
+    ("ez80_", Is(&[Z80])),
+    ("z180", Is(&[Z80])),
+    ("z380", Is(&[Z80])),
+    ("78k0s", Is(&[K78k0r])),
+    ("8051", Is(&[I8051])), // 8051, 80C51MX
+    ("51xa-", Is(&[Xa])),
+    ("80196", Is(&[Mcs96])),
+    ("8096", Is(&[Mcs96])),
+    ("8061", Is(&[Mcs96])), // Ford EEC-IV
+    ("8065", Is(&[Mcs96])), // Ford EEC-V
+    ("6803", Is(&[M6800])),
+    ("6805_", Is(&[Hc05, Hc08])), // the 68HC08 runs 68HC05 object code
+    ("6816_", Is(&[Hc16])),
+    // MELPS 7700/7900 derive from the 65816; with too little code for a
+    // class of their own the code model reports the 6502 family.
+    ("m7700_", Is(&[M7700, Mcs6502])),
+    ("m7900_", Is(&[M7700, Mcs6502])),
+    ("dsp96k_", Is(&[Dsp96k])),
+    ("st7_", Is(&[St7])),
+    ("sam8_", Is(&[Z8])), // SAM8 is Samsung's Super8/Z8 derivative
     ("ebc_", Is(&[Ebc])),
     ("spu_", Is(&[CellSpu])),
-    ("m65816_", Is(&[W65816])),
+    ("m65816_", Is(&[W65816, Mcs6502])), // 6502 superset; the code model has no 65816 class
     ("m65c02_", Is(&[Mcs6502, W65816])),
     ("m6502_", Is(&[Mcs6502])),
     ("z80_", Is(&[Z80])),
     ("gb_", Is(&[Z80])),
-    ("z8_", Unsupported),
+    ("z8_", Is(&[Z8])),
     ("fr_", Is(&[Fr30, Fr80])),
     ("ad2106x_", Is(&[Sharc])),
-    ("ad218x_", Unsupported),
+    ("ad218x_", Is(&[Adsp21xx])),
     ("nds32_", Is(&[Nds32])),
     ("st9_", Is(&[St9])),
-    ("st20_", Unsupported),
-    ("dsp56k_", Unsupported),
-    ("dsp561xx", Unsupported),
-    ("dsp563xx_", Unsupported),
-    ("oakdsp_", Unsupported),
-    ("tlcs900", Unsupported),
-    ("mn102l00", Unsupported),
-    ("unsp_", Unsupported),
-    ("80196", Unsupported),
-    ("kr1878", Unsupported),
-    ("cr16_", Unsupported),
-    ("f2mc16lx_", Unsupported),
-    ("c39_", Unsupported),
-    ("51xa-", Unsupported),
-    ("m740_", Unsupported),
-    ("m750_", Unsupported),
-    ("spc700_", Unsupported),
-    ("trimedia", Unsupported),
-    ("clemency_", Unsupported), // 9-bit bytes
+    ("st20_", Is(&[St20])),
+    ("dsp56k_", Is(&[Dsp56k])),
+    ("dsp561xx", Is(&[Dsp56k])),
+    ("dsp563xx_", Is(&[Dsp56k])),
+    ("oakdsp_", Is(&[OakDsp])),
+    ("tlcs900", Is(&[Tlcs900])),
+    ("mn102l00", Is(&[Mn10200])),
+    ("unsp_", Is(&[Unsp])),
+    ("kr1878", Is(&[Kr1878])),
+    ("cr16_", Is(&[Cr16])),
+    ("f2mc16lx_", Is(&[F2mc16])),
+    ("c39_", Is(&[C39, Mcs6502])), // Rockwell C39 is a 65C02 derivative
+    ("m740_", Is(&[M740, Mcs6502])), // MELPS 740 is a 6502 superset
+    ("m750_", Is(&[M740, Mcs6502])),
+    ("spc700_", Is(&[Spc700])),
+    ("trimedia", Is(&[TriMedia])),
+    ("clemency_", Is(&[Clemency])),
+    ("unk_", Unsupported), // IDA's "unknown processor" test files
 ];
 
 /// Not binaries: IDA databases, listings, debug side files.
@@ -207,7 +239,10 @@ fn read_limited(path: &Path) -> std::io::Result<Vec<u8>> {
 
 #[test]
 fn idaref_classification_suite() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("idaref");
+    // IDAREF_DIR points the suite at another copy of the corpus, e.g. IDA's
+    // full `tests/input` (idaref/ is a subset of it).
+    let dir = std::env::var_os("IDAREF_DIR")
+        .map_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("idaref"), Into::into);
     if !dir.exists() {
         eprintln!("idaref/ not present, skipping");
         return;

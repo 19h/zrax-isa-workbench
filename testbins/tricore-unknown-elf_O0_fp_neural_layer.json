@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_neural_layer.o",
+    "size_bytes": 3672,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "fp_neural_layer",
+    "language": "c",
+    "category": "floating_point",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/fp_neural_layer.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_neural_layer.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/fp_neural_layer.c"
+  },
+  "hashes": {
+    "sha256": "959851cebb1f57b346031d6121ea6c29f500f2917e27dc87346e1eb485133bad",
+    "md5": "9ad2afe4b6b4a5655807a0a686480e1c"
+  },
+  "build_timestamp": "2026-02-26T10:15:51.959153+00:00"
+}

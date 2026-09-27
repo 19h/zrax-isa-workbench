@@ -1,0 +1,47 @@
+# Program configurations: class  config  compiler  flags (commas separate flags)
+# Each is built at three optimisation settings (SDCC: default, --opt-code-size,
+# --opt-code-speed; cc65: none, -O, -Oirs). cc65 flags = --cpu value.
+i8051    mcs51_small             sdcc  -mmcs51,--model-small
+i8051    mcs51_medium            sdcc  -mmcs51,--model-medium
+i8051    mcs51_large             sdcc  -mmcs51,--model-large
+i8051    mcs51_large_stack_auto  sdcc  -mmcs51,--model-large,--stack-auto
+i8051    ds390                   sdcc  -mds390
+hc08     hc08                    sdcc  -mhc08
+hc08     s08                     sdcc  -ms08
+z80      z80                     sdcc  -mz80
+z80      z180                    sdcc  -mz180
+z80      ez80                    sdcc  -mez80
+z80      r800                    sdcc  -mr800
+sm83     sm83                    sdcc  -msm83
+stm8     stm8                    sdcc  -mstm8
+stm8     stm8_large              sdcc  -mstm8,--model-large
+mos6502  sdcc_mos6502            sdcc  -mmos6502
+mos6502  sdcc_mos65c02           sdcc  -mmos65c02
+mos6502  cc65_6502               cc65  6502
+mos6502  cc65_65c02              cc65  65C02
+
+# Prebuilt libraries: class  port  libdir  flags  -> <class>/lib_<name>/
+# (SDCC: share/sdcc/lib/<libdir>/*.lib and crt0.rel; cc65: share/cc65/lib/<libdir>.lib)
+lib i8051    mcs51     small               --model-small
+lib i8051    mcs51     medium              --model-medium
+lib i8051    mcs51     large               --model-large
+lib i8051    mcs51     huge                --model-huge
+lib i8051    mcs51     small-stack-auto    --model-small,--stack-auto
+lib i8051    mcs51     large-stack-auto    --model-large,--stack-auto
+lib i8051    ds390     ds390               none
+lib hc08     hc08      hc08                none
+lib hc08     s08       s08                 none
+lib hc08     s08       s08-stack-auto      --stack-auto
+lib z80      z80       z80                 none
+lib z80      z180      z180                none
+lib z80      ez80      ez80                none
+lib z80      r800      r800                none
+lib sm83     sm83      sm83                none
+lib stm8     stm8      stm8                none
+lib stm8     stm8      stm8-large          --model-large
+lib mos6502  mos6502   mos6502             none
+lib mos6502  mos6502   mos6502-stack-auto  --stack-auto
+lib mos6502  mos65c02  mos65c02            none
+lib mos6502  cc65      none                6502
+lib mos6502  cc65      sim6502             6502
+lib mos6502  cc65      sim65c02            65C02

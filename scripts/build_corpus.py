@@ -143,6 +143,28 @@ def elf_class(machine, is_le, is_64, flags):
         return "cellspu"
     if m == 256:
         return "kvx"
+    if m == 165:
+        return "i8051"
+    if m == 71:
+        return "hc08"
+    if m == 72:
+        return "hc05"
+    if m == 69:
+        return "hc16"
+    if m == 68:
+        return "st7"
+    if m == 186:
+        return "stm8"
+    if m == 220:
+        return "z80"
+    if m == 65:
+        return "pdp11"
+    if m in (103, 177):
+        return "cr16"
+    if m == 104:
+        return "f2mc16"
+    if m == 162:
+        return "r32c"
     return None
 
 
@@ -196,6 +218,28 @@ FRESH_NON_ELF = {"wasm32-unknown-unknown": "wasm", "wasm32-wasi": "wasm"}
 # alone does not determine the byte order.
 GEN_BYTE_ORDER = {
     ("xtensa", False): "xtensaeb",
+}
+
+# Classes whose code, as it appears in a linked image or flash dump, is a
+# fixed byte permutation of another class's code: source class -> (derived
+# class, word size). Every sample of the source class is also added, with
+# each word byte-reversed, to the derived class (same group, so the same
+# split).
+#
+# RX in big-endian mode fetches code as big-endian 32-bit words but decodes
+# instructions in little-endian byte order, so big-endian executables and
+# ROM images store code with every 32-bit word reversed (binutils
+# bfd/elf32-rx.c, rx_get_section_contents). Relocatable objects are not
+# swapped, which is why the compiler output itself is labelled "rx".
+WORD_SWAPPED = {
+    "rx": ("rxeb", 4),
+    # Word-addressed DSPs: ROM images and object-to-binary converters store
+    # the words in either byte order (DSP563xx byte-wide boot ROMs low byte
+    # first, LOD/.p56 conversions high byte first; TI C3x COFF little-endian,
+    # some ROM dumps big-endian). Samples are stored little-endian.
+    "dsp56k": ("dsp56keb", 3),
+    "dsp56100": ("dsp56100eb", 2),
+    "tic3x": ("tic3xeb", 4),
 }
 
 # ISAdetect (Debian) architecture -> class
@@ -404,6 +448,12 @@ def strip_text_blocks(data, block=256, limit=0.85):
 RAW_SOURCES = {"idaref-raw", "testbins-raw", "raw"}
 
 
+def word_swap(data, n):
+    """Byte-reverse every n-byte word of data (a trailing partial word is dropped)."""
+    end = len(data) - len(data) % n
+    return b"".join(data[i : i + n][::-1] for i in range(0, end, n))
+
+
 def looks_like_code(data, raw_dump):
     """Reject text listings and, for raw dumps, fill-dominated images.
 
@@ -430,6 +480,18 @@ class Corpus:
     def add(self, cls, group, source, data):
         if cls is None:
             return
+        derived = WORD_SWAPPED.get(cls)
+        # Swap before cleaning: dropping a padding run or a text block shifts
+        # the word phase of everything after it.
+        swapped = word_swap(data, derived[1]) if derived else None
+        data = self._clean(cls, source, data)
+        if data is not None and self._write(cls, group, source, data) and derived:
+            swapped = self._clean(derived[0], source, swapped)
+            if swapped is not None:
+                self._write(derived[0], group, source, swapped)
+
+    def _clean(self, cls, source, data):
+        """The sample as it is stored, or None if it is not usable."""
         if not cls.startswith("neg_"):
             # Padding is skipped by the classifier, so it must not be learned
             # as code; and a "code" sample that is mostly text or fill is a
@@ -438,17 +500,20 @@ class Corpus:
             raw_dump = source in RAW_SOURCES
             if len(data) >= MIN_SAMPLE_BYTES and not looks_like_code(data, raw_dump):
                 self.rejected[cls] += 1
-                return
+                return None
         if len(data) < MIN_SAMPLE_BYTES:
-            return
+            return None
         if len(data) > MAX_SAMPLE_BYTES:
             # Deterministic window from the middle of the section: the start
             # of .text is dominated by crt/PLT boilerplate.
             start = ((len(data) - MAX_SAMPLE_BYTES) // 2) & ~0xF
             data = data[start : start + MAX_SAMPLE_BYTES]
+        return data
+
+    def _write(self, cls, group, source, data):
         h = hashlib.sha1(data).hexdigest()
         if h in self.seen:  # exact duplicates add nothing but leakage
-            return
+            return False
         self.seen.add(h)
         sid = h[:16]
         d = os.path.join(self.out, "samples", cls)
@@ -459,6 +524,7 @@ class Corpus:
             {"id": sid, "class": cls, "group": group, "source": source, "size": len(data)}
         )
         self.per_class_bytes[cls] += len(data)
+        return True
 
     def finish(self, test_mod):
         by_class = defaultdict(set)
@@ -636,18 +702,25 @@ def main():
     # 3. Extra compiler output (e.g. the LLVM cross-compile matrix).  The
     #    directory name is the class because e_machine cannot tell A32/T32 or
     #    microMIPS apart; wasm objects are parsed for their code section.
+    #    Toolchains without ELF output (SDCC, cc65, pdp11-aout, gputils)
+    #    leave extracted code as raw *.bin files instead of *.o.
     for gen in a.gen:
         # One source per matrix directory, so the trainer's per-source cap
         # balances toolchains (LLVM vs GCC) instead of lumping them together.
         gen_path = os.path.normpath(gen)
         gen_tag = "gen:" + "/".join(gen_path.split(os.sep)[-2:])
         for cls in sorted(os.listdir(gen)):
-            for p in glob.glob(os.path.join(gen, cls, "**", "*.o"), recursive=True):
+            paths = glob.glob(os.path.join(gen, cls, "**", "*.o"), recursive=True)
+            paths += glob.glob(os.path.join(gen, cls, "**", "*.bin"), recursive=True)
+            for p in sorted(paths):
                 if not os.path.isfile(p):
                     continue
                 with open(p, "rb") as f:
                     d = f.read()
                 group = "prog:" + program_of(p)
+                if p.endswith(".bin"):
+                    corpus.add(cls, group, gen_tag, d)
+                    continue
                 if cls == "wasm":
                     w = wasm_code(d)
                     if w is not None:

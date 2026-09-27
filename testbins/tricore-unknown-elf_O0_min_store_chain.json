@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_store_chain.o",
+    "size_bytes": 2764,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "min_store_chain",
+    "language": "c",
+    "category": "minimal",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/min_store_chain.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_store_chain.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/min_store_chain.c"
+  },
+  "hashes": {
+    "sha256": "0cb694d4c3c148dd2c01bba9c32bed25ac1e5b02b398df2a28cffa19bff1c353",
+    "md5": "259c73fb0ff8a64e6e3530bb576e4205"
+  },
+  "build_timestamp": "2026-02-26T10:16:23.615019+00:00"
+}

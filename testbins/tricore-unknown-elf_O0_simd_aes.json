@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/simd_aes.o",
+    "size_bytes": 4540,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "simd_aes",
+    "language": "c",
+    "category": "simd",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/simd_aes.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/simd_aes.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/simd_aes.c"
+  },
+  "hashes": {
+    "sha256": "8cc83aad5b1eeb5b0ab44a4771b6a746cc6d3e2b7ea064618ff6486875c29c1e",
+    "md5": "f433da2b9519be52319e1c1f5c2420b3"
+  },
+  "build_timestamp": "2026-02-26T10:16:25.057137+00:00"
+}

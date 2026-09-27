@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_syscall_raw.o",
+    "size_bytes": 3956,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "asm_syscall_raw",
+    "language": "c",
+    "category": "assembly",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/asm_syscall_raw.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_syscall_raw.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/asm_syscall_raw.c"
+  },
+  "hashes": {
+    "sha256": "be9b0ce07bd610e9cba97f55f0b81f97da6a2b65d2af93bbce254ea8a1ece2b7",
+    "md5": "7786dd8d834a3f9ec258627148658242"
+  },
+  "build_timestamp": "2026-02-26T10:15:26.255695+00:00"
+}

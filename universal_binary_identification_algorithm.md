@@ -31,10 +31,12 @@ XCOFF (AIX):
   [0x00-0x01] = 01 DF (32-bit)
   [0x00-0x01] = 01 F7 (64-bit)
 
-ECOFF (MIPS/Alpha):
-  [0x00-0x01] = 01 60 (MIPS LE)
-  [0x00-0x01] = 60 01 (MIPS BE)
-  [0x00-0x01] = 01 83 (Alpha)
+ECOFF (MIPS/Alpha) -- magic is stored in the file's own byte order:
+  [0x00-0x01] = 01 60 (MIPS big-endian, MIPSEBMAGIC 0x0160; also 01 63, 01 40)
+  [0x00-0x01] = 62 01 (MIPS little-endian, MIPSELMAGIC 0x0162; also 66 01, 42 01)
+  [0x00-0x01] = 83 01 (Alpha, 0x0183 little-endian; 85 01 for BSD)
+  NOTE: 60 01 (0x0160 little-endian) is NOT MIPS -- it is the Intel i960 COFF
+  magic (0x0161 = i960 RW), handled as generic COFF.
 ```
 
 ---
@@ -327,6 +329,15 @@ ECOFF (MIPS/Alpha):
 ---
 
 # Part 5: Instruction Encoding Patterns
+
+> **Not the raw-code classifier.** The patterns below are useful background
+> for humans, but hand-weighted pattern counting (the `heuristic_analysis`
+> pseudo-code in Part 7) does not work as a classifier: scores grow with input
+> length on random data, the "confidence = best / total" share is not a
+> probability, and per-ISA cross-penalties end up firing on the ISA's own code.
+> The crate replaced it with byte-bigram models trained on ground-truth code,
+> competing against models of non-code data; see
+> `docs/architecture/raw-code-model.md` for the design and measured accuracy.
 
 ## 5.1 x86/x86-64
 
@@ -1116,7 +1127,11 @@ def parse_mips_flags(e_flags: int) -> tuple:
 
 
 def heuristic_analysis(data: bytes) -> dict:
-    """Analyze raw instruction stream to identify ISA."""
+    """Analyze raw instruction stream to identify ISA.
+
+    SUPERSEDED: see the note at the top of Part 5. Kept for reference only;
+    the crate uses trained byte-bigram models (docs/architecture/raw-code-model.md).
+    """
     
     scores = {}
     

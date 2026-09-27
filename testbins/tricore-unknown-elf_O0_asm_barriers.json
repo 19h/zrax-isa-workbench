@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_barriers.o",
+    "size_bytes": 4804,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "asm_barriers",
+    "language": "c",
+    "category": "assembly",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/asm_barriers.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_barriers.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/asm_barriers.c"
+  },
+  "hashes": {
+    "sha256": "b9011a338d850ae6bcb76459161962c59f3f6f3892e226f515ab4791b01d262b",
+    "md5": "57319e06fad8d77d875a1ab2ba8afced"
+  },
+  "build_timestamp": "2026-02-26T10:15:23.198595+00:00"
+}

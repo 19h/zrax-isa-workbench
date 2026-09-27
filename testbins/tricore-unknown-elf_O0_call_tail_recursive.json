@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/call_tail_recursive.o",
+    "size_bytes": 4900,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "call_tail_recursive",
+    "language": "c",
+    "category": "calling_convention",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/call_tail_recursive.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/call_tail_recursive.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/call_tail_recursive.c"
+  },
+  "hashes": {
+    "sha256": "f0e34faf8cf4d048a19b3181da5bf553d9028a0febf326b955489b7880a53214",
+    "md5": "63f7acef4a7124f9d398072a18ab8e7a"
+  },
+  "build_timestamp": "2026-02-26T10:15:34.803575+00:00"
+}

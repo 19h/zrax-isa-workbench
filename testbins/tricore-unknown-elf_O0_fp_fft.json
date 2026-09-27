@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_fft.o",
+    "size_bytes": 6640,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "fp_fft",
+    "language": "c",
+    "category": "floating_point",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/fp_fft.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_fft.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/fp_fft.c"
+  },
+  "hashes": {
+    "sha256": "585061d3407a1c8bf8a035f94c7fadd33cecb633c47ba1e65bcd5f7caddf170c",
+    "md5": "482d9bc5c7acd9b31f194ec3b569ad4d"
+  },
+  "build_timestamp": "2026-02-26T10:15:48.579986+00:00"
+}

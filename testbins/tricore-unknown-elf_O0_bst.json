@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/bst.o",
+    "size_bytes": 409764,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "bst",
+    "language": "cpp",
+    "category": "general",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/04_bst.cpp"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-c++ -c -O0 -std=c++17 -fno-exceptions -fno-rtti -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/bst.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/04_bst.cpp"
+  },
+  "hashes": {
+    "sha256": "dac205ad39f85b0ca45c8c051e6a35fd16c0108298b0dd297568e620fba315bf",
+    "md5": "7dc4a573a62016213cd3ce6d5e323658"
+  },
+  "build_timestamp": "2026-02-26T10:16:39.711611+00:00"
+}

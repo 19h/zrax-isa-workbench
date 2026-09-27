@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/int_popcount.o",
+    "size_bytes": 4360,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "int_popcount",
+    "language": "c",
+    "category": "integer",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/int_popcount.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/int_popcount.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/int_popcount.c"
+  },
+  "hashes": {
+    "sha256": "da14fbde60f061d27afd14004a339cb4876a2ddf08e88ececd78eae4354c6fca",
+    "md5": "90585b0af806acc543cd57eb87bb5e17"
+  },
+  "build_timestamp": "2026-02-26T10:16:01.269816+00:00"
+}

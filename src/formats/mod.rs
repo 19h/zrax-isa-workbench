@@ -40,6 +40,7 @@ pub mod hex;
 pub mod java;
 pub mod kernel;
 pub mod llvm_bc;
+pub mod lod;
 pub mod macho;
 pub mod mz;
 pub mod ols;
@@ -51,7 +52,9 @@ pub mod pef;
 pub mod sgo;
 pub mod som;
 pub mod sox;
+pub mod spc;
 pub mod tds;
+pub mod tmobj;
 pub mod vbf;
 pub mod wasm;
 pub mod xcoff;
@@ -232,6 +235,12 @@ pub enum DetectedFormat {
     Bcf,
     /// VAG/Simos SOX encrypted container
     Sox,
+    /// SNES SPC700 sound file
+    Spc,
+    /// TriMedia object module
+    TmObj,
+    /// Motorola DSP LOD load file
+    Lod,
     /// Unknown/raw format
     Raw,
 }
@@ -481,6 +490,21 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::AmigaHunk;
     }
 
+    // SNES SPC700 sound files (27-byte ASCII signature)
+    if spc::detect(data) {
+        return DetectedFormat::Spc;
+    }
+
+    // TriMedia object modules (magic and version in the header)
+    if tmobj::detect(data) {
+        return DetectedFormat::TmObj;
+    }
+
+    // Motorola DSP LOD load files (text records)
+    if lod::detect(data) {
+        return DetectedFormat::Lod;
+    }
+
     // OS-9 modules
     if os9::detect(data) {
         return DetectedFormat::Os9;
@@ -559,6 +583,9 @@ pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<Classifica
         DetectedFormat::Frf => frf::parse(data),
         DetectedFormat::Bcf => bcf::parse(data),
         DetectedFormat::Sox => sox::parse(data),
+        DetectedFormat::Spc => spc::parse(data),
+        DetectedFormat::TmObj => tmobj::parse(data),
+        DetectedFormat::Lod => lod::parse(data),
         DetectedFormat::Raw => Err(crate::error::ClassifierError::UnknownFormat {
             magic: data.iter().take(4).copied().collect(),
         }),

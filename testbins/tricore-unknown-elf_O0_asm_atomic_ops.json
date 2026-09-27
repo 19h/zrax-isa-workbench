@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_atomic_ops.o",
+    "size_bytes": 5312,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "asm_atomic_ops",
+    "language": "c",
+    "category": "assembly",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/asm_atomic_ops.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_atomic_ops.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/asm_atomic_ops.c"
+  },
+  "hashes": {
+    "sha256": "03ba90998e7f117d8130b7c00583dc618a54895c5bcb8343bccfbc8d29c0b3cc",
+    "md5": "eaaa3c2b5414e0d4864801263b76e847"
+  },
+  "build_timestamp": "2026-02-26T10:15:21.722001+00:00"
+}

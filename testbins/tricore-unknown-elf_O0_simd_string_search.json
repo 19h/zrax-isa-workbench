@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/simd_string_search.o",
+    "size_bytes": 1564,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "simd_string_search",
+    "language": "c",
+    "category": "simd",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/simd_string_search.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/simd_string_search.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/simd_string_search.c"
+  },
+  "hashes": {
+    "sha256": "32ef0850fe64e925640cce8c141e8df527046589bf11b9c0eff3b597d922e642",
+    "md5": "8c57497fe535761dec898e17ff210930"
+  },
+  "build_timestamp": "2026-02-26T10:16:31.249194+00:00"
+}

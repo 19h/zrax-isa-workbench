@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/int_bigint.o",
+    "size_bytes": 5628,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "int_bigint",
+    "language": "c",
+    "category": "integer",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/int_bigint.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/int_bigint.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/int_bigint.c"
+  },
+  "hashes": {
+    "sha256": "14ebf80e846db8697015aafc39bbe617e9b6c7f7ce50e43ee7dc97194b38bca4",
+    "md5": "9a6d3a6172ebe2ac2bd6c69246491dc5"
+  },
+  "build_timestamp": "2026-02-26T10:15:55.350571+00:00"
+}

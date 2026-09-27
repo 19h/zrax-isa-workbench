@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_context_switch.o",
+    "size_bytes": 5280,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "asm_context_switch",
+    "language": "c",
+    "category": "assembly",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/asm_context_switch.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_context_switch.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/asm_context_switch.c"
+  },
+  "hashes": {
+    "sha256": "84442701f3e65e5774747b0da94def02ea3142a24a52aefac231d949296ce5d2",
+    "md5": "710dcc53fa956236128a4a3e69c03d0e"
+  },
+  "build_timestamp": "2026-02-26T10:15:24.665706+00:00"
+}

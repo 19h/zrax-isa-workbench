@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cf_switch_dense.o",
+    "size_bytes": 6532,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "cf_switch_dense",
+    "language": "c",
+    "category": "control_flow",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/cf_switch_dense.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cf_switch_dense.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/cf_switch_dense.c"
+  },
+  "hashes": {
+    "sha256": "2b3aee369ce0da3d3acb144b9b938703e93e390e02dcad1fa128d514b4ae196f",
+    "md5": "d79a65c259e54c080dceee636c960518"
+  },
+  "build_timestamp": "2026-02-26T10:15:43.388634+00:00"
+}

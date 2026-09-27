@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_dsp_filter.o",
+    "size_bytes": 5884,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "fp_dsp_filter",
+    "language": "c",
+    "category": "floating_point",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/fp_dsp_filter.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_dsp_filter.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/fp_dsp_filter.c"
+  },
+  "hashes": {
+    "sha256": "95a098ff60438c4e5fb15c0adf2a87226268b88e1b841cc919e9403fb72735ef",
+    "md5": "176c47c94a8e2995a7db8fcf6f403b6d"
+  },
+  "build_timestamp": "2026-02-26T10:15:46.650369+00:00"
+}

@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_mul_chain.o",
+    "size_bytes": 1180,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "min_mul_chain",
+    "language": "c",
+    "category": "minimal",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/min_mul_chain.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_mul_chain.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/min_mul_chain.c"
+  },
+  "hashes": {
+    "sha256": "836657ff928242845e955aeb1500d4b92430a325bdf1a66c25626f2bc94904eb",
+    "md5": "458a01078497494282cb4cfb671da338"
+  },
+  "build_timestamp": "2026-02-26T10:16:19.925714+00:00"
+}

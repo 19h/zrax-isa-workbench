@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/call_many_int_args.o",
+    "size_bytes": 5036,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "call_many_int_args",
+    "language": "c",
+    "category": "calling_convention",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/call_many_int_args.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/call_many_int_args.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/call_many_int_args.c"
+  },
+  "hashes": {
+    "sha256": "cd7d3463fc6999d59592627736e6339b68e02f69ce4aa16aee34b04e5903a289",
+    "md5": "118f9dcc43ff627b70f7a3878b3d219a"
+  },
+  "build_timestamp": "2026-02-26T10:15:28.996175+00:00"
+}

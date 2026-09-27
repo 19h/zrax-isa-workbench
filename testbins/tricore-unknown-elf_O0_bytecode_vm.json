@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/bytecode_vm.o",
+    "size_bytes": 33608,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "bytecode_vm",
+    "language": "c",
+    "category": "general",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/09_bytecode_vm.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/bytecode_vm.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/09_bytecode_vm.c"
+  },
+  "hashes": {
+    "sha256": "f719c1e8195d7536b21d5ff304f705ae27ede10fce7e01a8d6c6b32a7019b32c",
+    "md5": "e4d38ed0e86a61573be6511db122daa2"
+  },
+  "build_timestamp": "2026-02-26T10:15:17.970931+00:00"
+}

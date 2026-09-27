@@ -210,6 +210,66 @@ pub enum Isa {
     /// Cell Broadband Engine SPU
     CellSpu,
 
+    // 8/16-bit microcontrollers and DSPs (mostly identified from raw code)
+    /// Intel MCS-51 (8051/8052, 80C390, 80C51MX)
+    I8051,
+    /// Philips/NXP 80C51XA
+    Xa,
+    /// Intel MCS-96 (8096, 80196, Ford EEC 8061/8065)
+    Mcs96,
+    /// Motorola 6800/6801/6803, Hitachi 6301/6303
+    M6800,
+    /// Motorola 68HC05
+    Hc05,
+    /// Motorola/Freescale 68HC08, HCS08
+    Hc08,
+    /// Motorola 68HC16 (CPU16)
+    Hc16,
+    /// Mitsubishi/Renesas MELPS 7700 and 7900
+    M7700,
+    /// Mitsubishi/Renesas MELPS 740 (6502 derivative)
+    M740,
+    /// Rockwell C39 (65C02 derivative)
+    C39,
+    /// Zilog Z8, Super8, Samsung SAM8
+    Z8,
+    /// STMicro ST7
+    St7,
+    /// STMicro ST20 (transputer derivative)
+    St20,
+    /// Toshiba TLCS-900
+    Tlcs900,
+    /// Panasonic MN10200
+    Mn10200,
+    /// National Semiconductor/TI CompactRISC CR16
+    Cr16,
+    /// Fujitsu F2MC-16 (F2MC-16L/LX/F)
+    F2mc16,
+    /// Renesas R32C/100
+    R32c,
+    /// Hitachi H8/500
+    H8500,
+    /// Sunplus µ'nSP
+    Unsp,
+    /// Angstrem KR1878
+    Kr1878,
+    /// Sony SPC700 (SNES sound CPU)
+    Spc700,
+    /// TI TMS320C3x/C4x
+    TiC3x,
+    /// Motorola DSP56000 family (DSP56000/56100/56300/56600)
+    Dsp56k,
+    /// Motorola DSP96000
+    Dsp96k,
+    /// Analog Devices ADSP-21xx (ADSP-2100, ADSP-218x)
+    Adsp21xx,
+    /// DSP Group OakDSP
+    OakDsp,
+    /// Philips/NXP TriMedia
+    TriMedia,
+    /// LegitBS cLEMENCy (9-bit bytes, DEF CON CTF 2017)
+    Clemency,
+
     // Unknown with numeric ID
     Unknown(u32),
 }
@@ -308,6 +368,35 @@ impl Isa {
             Isa::Clr => "CLR/.NET Bytecode",
             Isa::Ebc => "EFI Byte Code",
             Isa::CellSpu => "Cell SPU",
+            Isa::I8051 => "Intel 8051 (MCS-51)",
+            Isa::Xa => "Philips 80C51XA",
+            Isa::Mcs96 => "Intel MCS-96",
+            Isa::M6800 => "Motorola 6800/6801",
+            Isa::Hc05 => "Motorola 68HC05",
+            Isa::Hc08 => "Motorola 68HC08/HCS08",
+            Isa::Hc16 => "Motorola 68HC16",
+            Isa::M7700 => "Mitsubishi 7700/7900",
+            Isa::M740 => "Mitsubishi 740",
+            Isa::C39 => "Rockwell C39",
+            Isa::Z8 => "Zilog Z8",
+            Isa::St7 => "STMicro ST7",
+            Isa::St20 => "STMicro ST20",
+            Isa::Tlcs900 => "Toshiba TLCS-900",
+            Isa::Mn10200 => "Panasonic MN10200",
+            Isa::Cr16 => "National CompactRISC CR16",
+            Isa::F2mc16 => "Fujitsu F2MC-16",
+            Isa::R32c => "Renesas R32C",
+            Isa::H8500 => "Hitachi H8/500",
+            Isa::Unsp => "Sunplus unSP",
+            Isa::Kr1878 => "Angstrem KR1878",
+            Isa::Spc700 => "Sony SPC700",
+            Isa::TiC3x => "TI TMS320C3x/C4x",
+            Isa::Dsp56k => "Motorola DSP56000",
+            Isa::Dsp96k => "Motorola DSP96000",
+            Isa::Adsp21xx => "Analog Devices ADSP-21xx",
+            Isa::OakDsp => "DSP Group OakDSP",
+            Isa::TriMedia => "Philips TriMedia",
+            Isa::Clemency => "cLEMENCy",
             Isa::Unknown(_) => "Unknown",
         }
     }
@@ -392,6 +481,33 @@ impl Isa {
             | Isa::St9 => 16,
             Isa::M6809 => 8,
 
+            Isa::I8051
+            | Isa::M6800
+            | Isa::Hc05
+            | Isa::Hc08
+            | Isa::M740
+            | Isa::C39
+            | Isa::Z8
+            | Isa::St7
+            | Isa::Kr1878
+            | Isa::Spc700 => 8,
+            Isa::Xa
+            | Isa::Mcs96
+            | Isa::Hc16
+            | Isa::M7700
+            | Isa::Mn10200
+            | Isa::Cr16
+            | Isa::F2mc16
+            | Isa::H8500
+            | Isa::Unsp
+            | Isa::Tlcs900
+            | Isa::Adsp21xx
+            | Isa::OakDsp => 16,
+            Isa::Dsp56k => 24,
+            Isa::St20 | Isa::R32c | Isa::TiC3x | Isa::Dsp96k | Isa::TriMedia => 32,
+            // 27-bit words of 9-bit bytes
+            Isa::Clemency => 27,
+
             Isa::Pdp11 => 16,
             Isa::Vax => 32,
             Isa::I860 | Isa::I960 => 32,
@@ -437,6 +553,28 @@ impl Isa {
                 | Isa::Rl78
                 | Isa::K78k0r
                 | Isa::Rh850
+                | Isa::I8051
+                | Isa::Xa
+                | Isa::Mcs96
+                | Isa::M6800
+                | Isa::Hc05
+                | Isa::Hc08
+                | Isa::Hc16
+                | Isa::M7700
+                | Isa::M740
+                | Isa::C39
+                | Isa::Z8
+                | Isa::St7
+                | Isa::St20
+                | Isa::Tlcs900
+                | Isa::Mn10200
+                | Isa::Cr16
+                | Isa::F2mc16
+                | Isa::R32c
+                | Isa::H8500
+                | Isa::Unsp
+                | Isa::Spc700
+                | Isa::Clemency
         )
     }
 }
@@ -546,6 +684,12 @@ pub enum FileFormat {
     AmigaHunk,
     /// OS-9 module container
     Os9,
+    /// SNES SPC700 sound file
+    SnesSpc,
+    /// TriMedia object module (TMObj)
+    TmObj,
+    /// Motorola DSP LOD load file
+    DspLod,
 
     // Apple Formats
     /// PEF (Preferred Executable Format) - Classic Mac OS
@@ -672,6 +816,9 @@ impl fmt::Display for FileFormat {
             FileFormat::PalmPdb => write!(f, "Palm PDB/PRC"),
             FileFormat::AmigaHunk => write!(f, "Amiga Hunk"),
             FileFormat::Os9 => write!(f, "OS-9"),
+            FileFormat::SnesSpc => write!(f, "SNES SPC"),
+            FileFormat::TmObj => write!(f, "TriMedia TMObj"),
+            FileFormat::DspLod => write!(f, "Motorola DSP LOD"),
             // Apple
             FileFormat::Pef => write!(f, "PEF"),
             // Hex formats

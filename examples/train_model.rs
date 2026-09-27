@@ -4,7 +4,7 @@
 //! ```text
 //! cargo run --release --example train_model -- --corpus DIR
 //!     [--out src/heuristics/model.bin] [--split all|train] [--alpha 16]
-//!     [--min-bytes 49152] [--source-cap 1048576] [--exclude a,b,c (default: pru)]
+//!     [--min-bytes 49152] [--source-cap 1048576] [--exclude a,b,c (default: pru,trimedia)]
 //! ```
 //!
 //! `--split train` leaves the corpus test split out, for honest evaluation
@@ -39,8 +39,11 @@ fn main() {
     // - pru: trained on GCC output only, it absorbed 14 of 19 false-alarm
     //   windows on real .rodata (margins up to 1.5 bits/byte, above the
     //   strong-window threshold); raw PRU firmware outside ELF is rare.
+    // - trimedia: one program (the tmlinux kernel); it accepted a real .rodata
+    //   file and had the largest false-alarm margin (0.87 bits/byte). TriMedia
+    //   objects are identified from their TMObj header instead.
     let exclude: Vec<String> = arg("--exclude")
-        .unwrap_or_else(|| "pru".into())
+        .unwrap_or_else(|| "pru,trimedia".into())
         .split(',')
         .filter(|s| !s.is_empty())
         .map(str::to_string)

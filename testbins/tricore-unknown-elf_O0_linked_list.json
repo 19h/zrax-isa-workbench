@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/linked_list.o",
+    "size_bytes": 12532,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "linked_list",
+    "language": "c",
+    "category": "general",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/03_linked_list.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/linked_list.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/03_linked_list.c"
+  },
+  "hashes": {
+    "sha256": "5de09eb224f0e2398b425c0407b4fd5247b608126da6308f6515c0687db153e7",
+    "md5": "541b0a95d750a72ba8d3f9ad13c75244"
+  },
+  "build_timestamp": "2026-02-26T10:15:11.232250+00:00"
+}

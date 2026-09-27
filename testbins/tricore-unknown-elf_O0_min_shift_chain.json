@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_shift_chain.o",
+    "size_bytes": 1648,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "min_shift_chain",
+    "language": "c",
+    "category": "minimal",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/min_shift_chain.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/min_shift_chain.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/min_shift_chain.c"
+  },
+  "hashes": {
+    "sha256": "6257d3855e487ecade5ed1af481eb486aec7373ece70480993204b0b232d2c1a",
+    "md5": "abc9ca2a55cca80ef00133461b773fed"
+  },
+  "build_timestamp": "2026-02-26T10:16:22.314396+00:00"
+}

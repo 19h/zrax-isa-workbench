@@ -248,8 +248,7 @@ pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str
         machine::M68K_LEGACY_BE => (Isa::M68k, 32, Endianness::Big, Some("68k COFF")),
         machine::ADSP_21XX_LEGACY => (Isa::Sharc, 32, Endianness::Little, Some("ADSP-21xx")),
         machine::MIPS_LEGACY_BE => (Isa::Mips, 32, Endianness::Big, Some("MIPS BE COFF")),
-        // Zilog Z8 is not a Z80; there is no Isa variant for it.
-        machine::Z8_LEGACY => (Isa::Unknown(0x8000), 8, Endianness::Big, Some("Zilog Z8")),
+        machine::Z8_LEGACY => (Isa::Z8, 8, Endianness::Big, Some("Zilog Z8")),
         other => (Isa::Unknown(other as u32), 32, Endianness::Little, None),
     }
 }
@@ -261,6 +260,7 @@ pub fn machine_to_isa(machine: u16) -> (Isa, u8, Endianness, Option<&'static str
 /// identified here.
 pub fn ti_target(target_id: u16) -> Option<(Isa, u8, &'static str)> {
     Some(match target_id {
+        0x0093 => (Isa::TiC3x, 32, "TMS320C3x/C4x"),
         0x0097 => (Isa::Arm, 32, "TMS470"),
         0x0098 => (Isa::TiC5500, 16, "TMS320C54x"),
         0x0099 => (Isa::TiC6000, 32, "TMS320C6000"),
@@ -279,8 +279,9 @@ fn layout(data: &[u8], machine: u16) -> (bool, usize, usize) {
         machine::M68K_LEGACY_BE
         | machine::MIPS_LEGACY_BE
         | machine::H8300_LEGACY
-        | machine::H8300S_LEGACY
-        | machine::Z8_LEGACY => (true, COFF_HEADER_SIZE, SECTION_HEADER_SIZE),
+        | machine::H8300S_LEGACY => (true, COFF_HEADER_SIZE, SECTION_HEADER_SIZE),
+        // Zilog COFF (ZDS): the whole header is little-endian.
+        machine::Z8_LEGACY => (false, COFF_HEADER_SIZE, SECTION_HEADER_SIZE),
         // TI COFF: 22-byte file header (target ID at 20); COFF2 sections are 48 bytes.
         // GNU i960 COFF section headers carry an extra s_align word.
         machine::I960_RO | machine::I960_RW => (false, COFF_HEADER_SIZE, SECTION_HEADER_SIZE + 4),
@@ -626,6 +627,19 @@ mod tests {
         assert_eq!(result.isa, Isa::X86);
         assert_eq!(result.format, FileFormat::Coff);
         assert_eq!(result.metadata.raw_machine, Some(machine::I386 as u32));
+    }
+
+    #[test]
+    fn test_zilog_z8_coff_is_little_endian() {
+        let data = make_coff_header(machine::Z8_LEGACY, 2);
+        assert_eq!(&data[..2], &[0x00, 0x80]);
+        assert_eq!(detect(&data), Some(machine::Z8_LEGACY));
+        assert_eq!(parse(&data).unwrap().isa, Isa::Z8);
+    }
+
+    #[test]
+    fn test_ti_coff_c3x_target() {
+        assert_eq!(ti_target(0x0093).map(|t| t.0), Some(Isa::TiC3x));
     }
 
     #[test]

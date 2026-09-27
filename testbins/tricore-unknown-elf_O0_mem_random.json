@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/mem_random.o",
+    "size_bytes": 10256,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "mem_random",
+    "language": "c",
+    "category": "memory",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/mem_random.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/mem_random.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/mem_random.c"
+  },
+  "hashes": {
+    "sha256": "089c5d62c0b032856e763998ffc82d997d4bcbe9ba7678cf2a0c35d1c459ecb8",
+    "md5": "8add5686a2e42893ac0e338017110dbe"
+  },
+  "build_timestamp": "2026-02-26T10:16:04.814410+00:00"
+}

@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_mandelbrot.o",
+    "size_bytes": 3332,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "fp_mandelbrot",
+    "language": "c",
+    "category": "floating_point",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/fp_mandelbrot.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/fp_mandelbrot.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/fp_mandelbrot.c"
+  },
+  "hashes": {
+    "sha256": "ac2f2eb81909a88d736525e9dac5ffbfaa1e26916c789e74cfeac91d169daf3a",
+    "md5": "34a2b165a0df5cf4203975c67a13fe75"
+  },
+  "build_timestamp": "2026-02-26T10:15:50.403516+00:00"
+}

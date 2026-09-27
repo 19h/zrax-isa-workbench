@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/call_variadic.o",
+    "size_bytes": 4412,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "call_variadic",
+    "language": "c",
+    "category": "calling_convention",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/call_variadic.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/call_variadic.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/call_variadic.c"
+  },
+  "hashes": {
+    "sha256": "6bba08e8d64db5feefe40b2f38ecc6d249983de001b8c6b6708961a1b52f5f43",
+    "md5": "4eedc16c6e260e198b291bbb29ba6e28"
+  },
+  "build_timestamp": "2026-02-26T10:15:36.332303+00:00"
+}

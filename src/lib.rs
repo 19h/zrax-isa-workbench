@@ -1,7 +1,7 @@
 //! ISA Classifier - Universal Binary Architecture Identification
 //!
 //! Identifies the processor architecture of a binary: from container headers
-//! when there is one (ELF, PE/COFF, Mach-O and ~35 other formats), and from
+//! when there is one (ELF, PE/COFF, Mach-O and ~40 other formats), and from
 //! the code itself when there is not (raw firmware, memory dumps, extracted
 //! sections).
 //!
@@ -25,7 +25,7 @@
 //! # Headerless data
 //!
 //! Raw data is classified by [`heuristics`]: byte-bigram models trained on
-//! ground-truth code for ~50 ISA variants, competing against models of
+//! ground-truth code for ~90 ISA variants, competing against models of
 //! non-code data. Results carry a calibrated confidence and are rejected
 //! (`HeuristicInconclusive`) when the data does not look like code of any
 //! known ISA. See `scripts/build_corpus.py` and `examples/train_model.rs` for
@@ -380,6 +380,9 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::AmigaHunk => FormatDetection::new(FileFormat::AmigaHunk),
         DetectedFormat::Tds => FormatDetection::new(FileFormat::Tds),
         DetectedFormat::Os9 => FormatDetection::new(FileFormat::Os9),
+        DetectedFormat::Spc => FormatDetection::new(FileFormat::SnesSpc),
+        DetectedFormat::TmObj => FormatDetection::new(FileFormat::TmObj),
+        DetectedFormat::Lod => FormatDetection::new(FileFormat::DspLod),
         DetectedFormat::Goff => FormatDetection::new(FileFormat::Goff),
         DetectedFormat::LlvmBc { .. } => FormatDetection::new(FileFormat::LlvmBc),
         DetectedFormat::FatElf => FormatDetection::new(FileFormat::FatElf),

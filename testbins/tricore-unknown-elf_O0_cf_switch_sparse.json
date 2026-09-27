@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cf_switch_sparse.o",
+    "size_bytes": 9840,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "cf_switch_sparse",
+    "language": "c",
+    "category": "control_flow",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/cf_switch_sparse.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cf_switch_sparse.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/cf_switch_sparse.c"
+  },
+  "hashes": {
+    "sha256": "04f069876536aad048a9c5ed2435cd6a2440f982bd9fb82cf82e2264e43635e9",
+    "md5": "72ea40f7ce3219b8b9e6366300225517"
+  },
+  "build_timestamp": "2026-02-26T10:15:45.001736+00:00"
+}

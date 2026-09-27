@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/int_crc32.o",
+    "size_bytes": 4224,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "int_crc32",
+    "language": "c",
+    "category": "integer",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/int_crc32.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/int_crc32.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/int_crc32.c"
+  },
+  "hashes": {
+    "sha256": "6f08a31b16c0505879a3b10304071058f2ba66ebc0d93ee18fad726e847a28d4",
+    "md5": "4c9540df13d4a373f4f0e387636a861a"
+  },
+  "build_timestamp": "2026-02-26T10:15:57.437893+00:00"
+}

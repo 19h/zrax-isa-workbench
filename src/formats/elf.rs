@@ -139,7 +139,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x30 => (Isa::H8300, 16),
 
         // Hitachi H8/500
-        0x31 => (Isa::H8300, 16),
+        0x31 => (Isa::H8500, 16),
 
         // Intel IA-64
         0x32 => (Isa::Ia64, 64),
@@ -196,19 +196,19 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x43 => (Isa::St9, 16),
 
         // STMicro ST7
-        0x44 => (Isa::Unknown(0x44), 8),
+        0x44 => (Isa::St7, 8),
 
         // Motorola MC68HC16
-        0x45 => (Isa::Unknown(0x45), 16),
+        0x45 => (Isa::Hc16, 16),
 
         // Motorola MC68HC11
         0x46 => (Isa::Hc11, 16),
 
         // Motorola MC68HC08
-        0x47 => (Isa::Unknown(0x47), 8),
+        0x47 => (Isa::Hc08, 8),
 
         // Motorola MC68HC05
-        0x48 => (Isa::Unknown(0x48), 8),
+        0x48 => (Isa::Hc05, 8),
 
         // Silicon Graphics SVx
         0x49 => (Isa::Unknown(0x49), 32),
@@ -262,7 +262,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x59 => (Isa::Unknown(0x59), 32),
 
         // Matsushita MN10200
-        0x5A => (Isa::Unknown(0x5A), 16),
+        0x5A => (Isa::Mn10200, 16),
 
         // picoJava
         0x5B => (Isa::Unknown(0x5B), 32),
@@ -301,10 +301,10 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x66 => (Isa::Unknown(0x66), 32),
 
         // NS CompactRISC
-        0x67 => (Isa::Unknown(0x67), 16),
+        0x67 => (Isa::Cr16, 16),
 
         // Fujitsu F2MC16
-        0x68 => (Isa::Unknown(0x68), 16),
+        0x68 => (Isa::F2mc16, 16),
 
         // TI MSP430
         0x69 => (Isa::Msp430, 16),
@@ -404,16 +404,16 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0xA1 => (Isa::Unknown(0xA1), 8),
 
         // Renesas R32C
-        0xA2 => (Isa::Unknown(0xA2), 32),
+        0xA2 => (Isa::R32c, 32),
 
         // NXP TriMedia
-        0xA3 => (Isa::Unknown(0xA3), 32),
+        0xA3 => (Isa::TriMedia, 32),
 
         // Qualcomm Hexagon
         0xA4 => (Isa::Hexagon, 32),
 
         // Intel 8051
-        0xA5 => (Isa::Unknown(0xA5), 8),
+        0xA5 => (Isa::I8051, 8),
 
         // STMicro STxP7x
         0xA6 => (Isa::Unknown(0xA6), 32),
@@ -449,7 +449,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0xB0 => (Isa::Unknown(0xB0), 16),
 
         // NS CompactRISC CR16
-        0xB1 => (Isa::Unknown(0xB1), 16),
+        0xB1 => (Isa::Cr16, 16),
 
         // Freescale ETPU
         0xB2 => (Isa::Unknown(0xB2), 32),
@@ -1190,5 +1190,9 @@ mod tests {
         assert_eq!(e_machine_to_isa(0x27, 1).0, Isa::Csky);
         assert_eq!(e_machine_to_isa(0xF9, 1).0, Isa::Mips);
         assert_eq!(e_machine_to_isa(0x102, 2).0, Isa::LoongArch64);
+        assert_eq!(e_machine_to_isa(0x31, 1).0, Isa::H8500);
+        assert_eq!(e_machine_to_isa(0x47, 1).0, Isa::Hc08);
+        assert_eq!(e_machine_to_isa(0xA5, 1).0, Isa::I8051);
+        assert_eq!(e_machine_to_isa(0xB1, 1).0, Isa::Cr16);
     }
 }

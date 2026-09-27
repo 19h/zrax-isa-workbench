@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_arch_detect.o",
+    "size_bytes": 1456,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "asm_arch_detect",
+    "language": "c",
+    "category": "assembly",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/asm_arch_detect.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/asm_arch_detect.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/asm_arch_detect.c"
+  },
+  "hashes": {
+    "sha256": "ea79e55369cc517ef03e874b7a7a0480476b7bf83d992487afd7217644969918",
+    "md5": "a7b3f2a4db0a0db490d2587409d065ba"
+  },
+  "build_timestamp": "2026-02-26T10:15:20.345204+00:00"
+}

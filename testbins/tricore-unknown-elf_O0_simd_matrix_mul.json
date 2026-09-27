@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/simd_matrix_mul.o",
+    "size_bytes": 1880,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "simd_matrix_mul",
+    "language": "c",
+    "category": "simd",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/simd_matrix_mul.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/simd_matrix_mul.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/simd_matrix_mul.c"
+  },
+  "hashes": {
+    "sha256": "85cab32eced1f93abaa0bf81fc6a9b0fa9c1b1023f04754a64d65444a4906480",
+    "md5": "8106d7175cbc79608e8363aa0f21446e"
+  },
+  "build_timestamp": "2026-02-26T10:16:29.769131+00:00"
+}

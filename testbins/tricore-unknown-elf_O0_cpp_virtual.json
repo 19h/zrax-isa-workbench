@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cpp_virtual.o",
+    "size_bytes": 50060,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "cpp_virtual",
+    "language": "cpp",
+    "category": "cpp_features",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/cpp_virtual.cpp"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-c++ -c -O0 -std=c++17 -fno-exceptions -fno-rtti -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cpp_virtual.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/cpp_virtual.cpp"
+  },
+  "hashes": {
+    "sha256": "5cb1b4c8db76b888bfda0f955cd8a58c72d2fa6ca0949f8f19b26d9222f1d7ce",
+    "md5": "f2502f66b7babbc5beb4292b8ed6e6fc"
+  },
+  "build_timestamp": "2026-02-26T10:16:58.795251+00:00"
+}

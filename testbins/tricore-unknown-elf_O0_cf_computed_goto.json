@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cf_computed_goto.o",
+    "size_bytes": 11316,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "cf_computed_goto",
+    "language": "c",
+    "category": "control_flow",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/cf_computed_goto.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/cf_computed_goto.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/cf_computed_goto.c"
+  },
+  "hashes": {
+    "sha256": "834e06fb1cc0cd0fcd080ee7213fd69073ff0ba86d99046d0e2ea2f51a33e507",
+    "md5": "4ba73b00e3d8675b904a195a071e4895"
+  },
+  "build_timestamp": "2026-02-26T10:15:38.019970+00:00"
+}

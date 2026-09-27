@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-Rigorous ISA classifier accuracy analysis.
+ISA classifier accuracy analysis (CLI-level, armgen blobs + synthetic firmware).
+
+The primary, held-out evaluation is `cargo run --release --example eval`
+(see docs/architecture/raw-code-model.md); this script measures the CLI end to
+end. Scoring is strict: family-level matches only (32/64-bit and endianness
+variants of one ISA count as the same answer, different ISAs never do), at the
+CLI's default confidence threshold, with rejections reported separately.
 
 Tests the classifier against:
   1. Raw object blobs (ground-truth ISA known from directory structure)
@@ -56,7 +62,8 @@ FAMILY_TO_ISA = {
 
 # Acceptable aliases — if classifier returns any of these, count as correct
 ACCEPTABLE_ALIASES = {
-    "arm": {"arm", "aarch64"},  # some ARM code can look like AArch64
+    # Same ISA family, different bitwidth/endianness variant. ARM and AArch64
+    # are different ISAs and are deliberately NOT aliases.
     "mips": {"mips", "mips64"},
     "mips64": {"mips", "mips64"},
     "riscv32": {"riscv32", "riscv64"},
@@ -65,6 +72,8 @@ ACCEPTABLE_ALIASES = {
     "ppc64": {"ppc", "ppc64"},
     "sparc": {"sparc", "sparc64"},
     "sparc64": {"sparc", "sparc64"},
+    "x86": {"x86", "x86_64"},
+    "x86_64": {"x86", "x86_64"},
 }
 
 
@@ -86,8 +95,7 @@ def run_classifier(path: str, mode: str = "thorough") -> dict:
     """Run the classifier on a single file and return parsed JSON."""
     try:
         result = subprocess.run(
-            [str(CLASSIFIER_BIN), "-f", "json", "-m", mode,
-             "--min-confidence", "0.01", str(path)],
+            [str(CLASSIFIER_BIN), "-f", "json", "-m", mode, str(path)],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
@@ -139,9 +147,6 @@ def classify_blob(args: tuple) -> ClassifyResult:
     # Alias match
     if not correct and expected_lower in ACCEPTABLE_ALIASES:
         correct = detected_lower in ACCEPTABLE_ALIASES[expected_lower]
-    # Also check if detected is a sub-variant
-    if not correct:
-        correct = expected_lower in detected_lower or detected_lower in expected_lower
 
     return ClassifyResult(
         path=path, expected_isa=expected_isa,
@@ -213,16 +218,14 @@ def classify_firmware_section(args: tuple) -> ClassifyResult:
     # For display purposes, show all detected ISAs joined
     detected_display = "+".join(sorted(detected_set)) if detected_set else "none"
 
-    # Build acceptable set from ground truth
-    acceptable = set()
-    for fam in all_families:
-        isa_name = FAMILY_TO_ISA.get(fam, fam).lower()
-        acceptable.add(isa_name)
-        if isa_name in ACCEPTABLE_ALIASES:
-            acceptable.update(ACCEPTABLE_ALIASES[isa_name])
+    # Correct iff the detected ISA families are exactly the expected ones:
+    # every ISA in the image found, nothing else claimed.
+    def family(name):
+        return min(ACCEPTABLE_ALIASES.get(name, {name}))
 
-    # Correct if ANY expected ISA is in the detected set
-    correct = bool(detected_set & acceptable)
+    expected_families = {family(FAMILY_TO_ISA.get(f, f).lower()) for f in all_families}
+    detected_families = {family(d) for d in detected_set}
+    correct = detected_families == expected_families
 
     return ClassifyResult(
         path=bin_path, expected_isa=expected_isa,

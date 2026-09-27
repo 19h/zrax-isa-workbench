@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/syscall_fork_exec.o",
+    "size_bytes": 7592,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "syscall_fork_exec",
+    "language": "c",
+    "category": "syscall",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/syscall_fork_exec.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/syscall_fork_exec.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/syscall_fork_exec.c"
+  },
+  "hashes": {
+    "sha256": "5f518dfa5665086335e7d0314762d0f71ea34e3844cd7de52a449a64d5847f33",
+    "md5": "a7e5c1cc4530c58660ff26c96a72eb69"
+  },
+  "build_timestamp": "2026-02-26T10:16:34.583325+00:00"
+}

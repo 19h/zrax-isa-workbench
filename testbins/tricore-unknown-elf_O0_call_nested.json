@@ -1,0 +1,33 @@
+{
+  "binary": {
+    "path": "/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/call_nested.o",
+    "size_bytes": 4524,
+    "format": "elf32"
+  },
+  "source": {
+    "program": "call_nested",
+    "language": "c",
+    "category": "calling_convention",
+    "file": "/Users/int/dev/isa-harvester/armgen/programs/call_nested.c"
+  },
+  "target": {
+    "triple": "tricore-unknown-elf",
+    "arch": "tricore",
+    "endianness": "little",
+    "pointer_width": 32
+  },
+  "compilation": {
+    "optimization": "O0",
+    "debug": "none",
+    "lto": "none",
+    "pic": "none",
+    "stack_protection": "none",
+    "cpu": "generic",
+    "command": "orb -m x86 /mnt/mac/Users/int/dev/isa-harvester/armgen/tools/tricore/bin/tricore-elf-gcc -c -O0 -std=c11 -Wall -Wextra -o /mnt/mac/Users/int/dev/isa-harvester/armgen/objects/tricore-unknown-elf/O0/call_nested.o /mnt/mac/Users/int/dev/isa-harvester/armgen/programs/call_nested.c"
+  },
+  "hashes": {
+    "sha256": "21ded1855f6404369186dcc6fb2012c33e07c336016af66c0931e4c8ea49cb26",
+    "md5": "60cc05dcb344caa86e7fa87b6446bd1c"
+  },
+  "build_timestamp": "2026-02-26T10:15:31.816173+00:00"
+}
