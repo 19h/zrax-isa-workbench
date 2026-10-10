@@ -113,6 +113,10 @@
     border-color: var(--text-3);
     background: var(--bg-surface);
   }
+  .dropzone:focus-within {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
   .dropzone.dragover {
     border-color: var(--accent);
     background: var(--accent-dim);
@@ -186,6 +190,112 @@
     0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
     40% { opacity: 1; transform: scale(1); }
   }
+
+  /* ---- Batch queue ---- */
+  .batch {
+    margin-top: 1.5rem;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .batch-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem;
+  }
+  .batch-header h2 {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .batch-summary {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--text-3);
+  }
+  .batch-clear {
+    flex-shrink: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.375rem 0.625rem;
+    color: var(--text-2);
+    font: 0.75rem var(--sans);
+    cursor: pointer;
+  }
+  .batch-clear:hover { background: var(--bg-hover); color: var(--text); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .batch-progress {
+    display: block;
+    width: 100%;
+    height: 3px;
+    border: 0;
+    appearance: none;
+    background: var(--border-dim);
+    accent-color: var(--accent);
+  }
+  .batch-progress::-webkit-progress-bar { background: var(--border-dim); }
+  .batch-progress::-webkit-progress-value { background: var(--accent); }
+  .batch-progress::-moz-progress-bar { background: var(--accent); }
+  .batch-table-wrap { max-height: 360px; overflow: auto; }
+  .batch-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .batch-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-surface);
+    text-align: left;
+    font-size: 0.625rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+    padding: 0.625rem 1rem;
+  }
+  .batch-table th:first-child { width: 43%; }
+  .batch-table th:last-child { width: 100px; }
+  .batch-table td {
+    padding: 0.625rem 1rem;
+    border-top: 1px solid var(--border-dim);
+    font-size: 0.75rem;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+  .batch-table tbody tr { cursor: pointer; }
+  .batch-table tbody tr:hover { background: var(--bg-hover); }
+  .batch-table tbody tr.selected { background: var(--accent-dim); }
+  .batch-file {
+    display: block;
+    width: 100%;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: 0.75rem var(--mono);
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  .batch-file-size { margin-top: 0.1875rem; font-size: 0.6875rem; color: var(--text-3); }
+  .batch-status { font-size: 0.6875rem; white-space: nowrap; }
+  .batch-status.queued { color: var(--text-3); }
+  .batch-status.analyzing { color: var(--accent); }
+  .batch-status.done { color: var(--green); }
+  .batch-status.error { color: var(--red); }
+  .result-message {
+    padding: 1.25rem;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+  .result-message strong { display: block; margin-bottom: 0.375rem; color: var(--text); }
+  .result-message.error { border-color: rgba(248, 113, 113, 0.2); color: var(--red); }
 
   /* ---- Error ---- */
   .error-banner {
@@ -694,6 +804,9 @@
     .hero-isa { font-size: 1.25rem; }
     .hero-grid { grid-template-columns: 1fr 1fr; }
     .cand-row { grid-template-columns: 120px 1fr 56px; }
+    .batch-table th, .batch-table td { padding: 0.625rem 0.5rem; }
+    .batch-table th:first-child { width: 38%; }
+    .batch-table th:last-child { width: 80px; }
   }
 </style>
 </head>
@@ -720,100 +833,284 @@
         <line x1="12" y1="3" x2="12" y2="15"/>
       </svg>
     </div>
-    <div class="dropzone-text">Drop a binary file here, or <strong>browse</strong></div>
-    <div class="dropzone-hint">ELF, PE, Mach-O, raw firmware, or any binary blob</div>
-    <input type="file" id="fileinput">
+    <div class="dropzone-text">Drop binary files here, or <strong>browse</strong></div>
+    <div class="dropzone-hint" id="dropzone-hint">Select multiple files. Drop more at any time to add to the queue.</div>
+    <input type="file" id="fileinput" multiple aria-label="Choose binary files" aria-describedby="dropzone-hint">
   </div>
 
   <!-- Loading -->
-  <div class="loading" id="loading">
-    <div class="loading-dot"></div>
-    <div class="loading-dot"></div>
-    <div class="loading-dot"></div>
+  <div class="loading" id="loading" role="status">
+    <div class="loading-dot" aria-hidden="true"></div>
+    <div class="loading-dot" aria-hidden="true"></div>
+    <div class="loading-dot" aria-hidden="true"></div>
+    <span id="loading-text"></span>
   </div>
 
   <!-- Error -->
-  <div class="error-banner" id="error"></div>
+  <div class="error-banner" id="error" role="alert"></div>
+
+  <!-- Batch queue -->
+  <section class="batch" id="batch" aria-label="File queue" hidden>
+    <div class="batch-header">
+      <div>
+        <h2>Files</h2>
+        <p class="batch-summary" id="batch-summary" role="status"></p>
+      </div>
+      <button class="batch-clear" id="clear-files" type="button">Clear files</button>
+    </div>
+    <progress class="batch-progress" id="batch-progress" value="0" max="1" aria-label="Files processed"></progress>
+    <div class="batch-table-wrap">
+      <table class="batch-table" aria-label="Classification results">
+        <thead><tr><th scope="col">File</th><th scope="col">Architecture</th><th scope="col">Format</th><th scope="col">Status</th></tr></thead>
+        <tbody id="file-list"></tbody>
+      </table>
+    </div>
+  </section>
 
   <!-- Results -->
-  <div class="results" id="results"></div>
+  <div class="results" id="results" role="region" aria-label="Selected file details"></div>
 </div>
 
 <script type="module">
 import init, { classify, classifier_version } from '../pkg/isa_classifier.js';
 
-let wasmReady = false;
-
-async function boot() {
-  try {
-    await init();
-    wasmReady = true;
-    const ver = classifier_version();
-    document.getElementById('version').textContent = `v${ver}`;
-  } catch (e) {
-    showError(`Failed to load WASM module: ${e.message || e}`);
-  }
-}
-boot();
-
 const dropzone  = document.getElementById('dropzone');
 const fileinput = document.getElementById('fileinput');
 const loading   = document.getElementById('loading');
+const loadingText = document.getElementById('loading-text');
 const errorEl   = document.getElementById('error');
 const resultsEl = document.getElementById('results');
+const batchEl = document.getElementById('batch');
+const fileList = document.getElementById('file-list');
+const batchSummary = document.getElementById('batch-summary');
+const batchProgress = document.getElementById('batch-progress');
 
-['dragenter', 'dragover'].forEach(ev =>
-  dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('dragover'); })
-);
-['dragleave', 'drop'].forEach(ev =>
-  dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('dragover'); })
-);
-dropzone.addEventListener('drop', e => {
-  const file = e.dataTransfer?.files?.[0];
-  if (file) analyzeFile(file);
+let classifierState = 'loading';
+let processing = false;
+let generation = 0;
+let nextId = 1;
+let selectedId = null;
+let queue = [];
+let queueIndex = 0;
+let completed = 0;
+let failed = 0;
+const entries = new Map();
+let dragDepth = 0;
+
+// Prevent the browser from navigating to files dropped outside the drop zone.
+window.addEventListener('dragover', e => {
+  if (Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault();
 });
-fileinput.addEventListener('change', e => {
-  const file = e.target.files?.[0];
-  if (file) analyzeFile(file);
+window.addEventListener('drop', e => {
+  if (Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault();
+  dragDepth = 0;
+  dropzone.classList.remove('dragover');
+});
+
+dropzone.addEventListener('dragenter', e => {
+  if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+  e.preventDefault();
+  dragDepth++;
+  dropzone.classList.add('dragover');
+});
+dropzone.addEventListener('dragover', e => {
+  if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+dropzone.addEventListener('dragleave', e => {
+  e.preventDefault();
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) dropzone.classList.remove('dragover');
+});
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  enqueueFiles(e.dataTransfer?.files || []);
+});
+fileinput.addEventListener('change', () => {
+  enqueueFiles(fileinput.files || []);
+  // Permit selecting the same files again, including after clearing the queue.
   fileinput.value = '';
 });
-
-async function analyzeFile(file) {
-  if (!wasmReady) { showError('WASM module not loaded yet.'); return; }
-
-  errorEl.classList.remove('visible');
+fileList.addEventListener('click', e => {
+  const row = e.target.closest('tr[data-file-id]');
+  if (row) selectFile(Number(row.dataset.fileId));
+});
+document.getElementById('clear-files').addEventListener('click', () => {
+  // Invalidate an outstanding read so its result cannot enter a new batch.
+  generation++;
+  queue = [];
+  queueIndex = 0;
+  entries.clear();
+  completed = failed = 0;
+  selectedId = null;
+  fileList.replaceChildren();
+  resultsEl.replaceChildren();
   resultsEl.classList.remove('visible');
-  resultsEl.innerHTML = '';
-  loading.classList.add('active');
+  if (classifierState !== 'error') errorEl.classList.remove('visible');
+  updateBatch();
+});
 
+function enqueueFiles(files) {
+  if (!files.length) return;
+  if (classifierState === 'error') {
+    showError('Classifier unavailable. Reload the page to try again.');
+    return;
+  }
+  errorEl.classList.remove('visible');
+  const rows = document.createDocumentFragment();
+  for (const file of Array.from(files)) {
+    const entry = {
+      id: nextId++, file, name: file.name, size: file.size,
+      status: 'queued', payload: null, elapsed: 0, error: '',
+      row: document.createElement('tr'),
+    };
+    entry.row.dataset.fileId = entry.id;
+    entry.row.innerHTML = `<td>
+      <button class="batch-file" type="button" title="${esc(entry.name)}" aria-controls="results">${esc(entry.name)}</button>
+      <div class="batch-file-size">${fmtSize(entry.size)}</div>
+    </td><td class="batch-architecture">&mdash;</td><td class="batch-format">&mdash;</td>
+    <td><span class="batch-status queued">Queued</span></td>`;
+    entries.set(entry.id, entry);
+    queue.push(entry);
+    rows.append(entry.row);
+  }
+  fileList.append(rows);
+  if (selectedId === null) selectFile(entries.keys().next().value);
+  updateBatch();
+  processQueue();
+}
+
+async function processQueue() {
+  if (processing || classifierState !== 'ready') return;
+  processing = true;
   try {
-    const buf  = await file.arrayBuffer();
-    const data = new Uint8Array(buf);
-
-    const t0 = performance.now();
-    const jsonStr = classify(data);
-    const elapsed = performance.now() - t0;
-
-    const payload = JSON.parse(jsonStr);
-    if (payload.error) { showError(payload.error); return; }
-
-    render(payload, file.name, data.length, elapsed, jsonStr);
-  } catch (e) {
-    showError(`Analysis failed: ${e.message || e}`);
+    while (queueIndex < queue.length) {
+      const entry = queue[queueIndex++];
+      const batchGeneration = generation;
+      entry.status = 'analyzing';
+      updateEntry(entry);
+      updateBatch(entry);
+      // Yield before synchronous classification so status and user input can render.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (batchGeneration !== generation) continue;
+      try {
+        const data = new Uint8Array(await entry.file.arrayBuffer());
+        if (batchGeneration !== generation) continue;
+        const start = performance.now();
+        const payload = JSON.parse(classify(data));
+        entry.elapsed = performance.now() - start;
+        if (payload.error) throw new Error(payload.error);
+        entry.payload = payload;
+        entry.status = 'done';
+        completed++;
+      } catch (e) {
+        if (batchGeneration !== generation) continue;
+        entry.status = 'error';
+        entry.error = String(e.message || e);
+        failed++;
+      } finally {
+        // Retain classification data, not all the original binary contents.
+        entry.file = null;
+      }
+      updateEntry(entry);
+      updateBatch();
+    }
   } finally {
-    loading.classList.remove('active');
+    queue = [];
+    queueIndex = 0;
+    processing = false;
+    updateBatch();
+  }
+}
+
+function updateEntry(entry) {
+  const status = entry.row.querySelector('.batch-status');
+  status.className = `batch-status ${entry.status}`;
+  status.textContent = { queued: 'Queued', analyzing: 'Analyzing', done: 'Done', error: 'Failed' }[entry.status];
+  if (entry.payload) {
+    const p = entry.payload;
+    entry.row.querySelector('.batch-architecture').textContent = p.slices?.length > 1
+      ? p.slices.map(s => isaName(s.isa)).join(' + ') : isaName(p.primary.isa);
+    entry.row.querySelector('.batch-format').textContent = fmtFormat(p.format);
+  }
+  if (selectedId === entry.id) renderSelected();
+}
+
+function updateBatch(activeEntry) {
+  const total = entries.size;
+  const pending = total - completed - failed;
+  batchEl.hidden = !total;
+  batchSummary.textContent = `${total} file${total === 1 ? '' : 's'} · ${completed} done · ${failed} failed${pending ? ` · ${pending} pending` : ''}`;
+  batchProgress.max = total || 1;
+  batchProgress.value = completed + failed;
+  batchEl.setAttribute('aria-busy', String(pending > 0));
+  loading.classList.toggle('active', classifierState === 'loading' || pending > 0);
+  loadingText.textContent = classifierState === 'loading' ? 'Loading classifier…'
+    : activeEntry ? `Analyzing ${activeEntry.name}`
+    : pending ? 'Processing file queue…' : '';
+}
+
+function selectFile(id) {
+  if (!entries.has(id)) return;
+  const previous = entries.get(selectedId);
+  if (previous) {
+    previous.row.classList.remove('selected');
+    previous.row.querySelector('button').removeAttribute('aria-current');
+  }
+  selectedId = id;
+  const entry = entries.get(id);
+  entry.row.classList.add('selected');
+  entry.row.querySelector('button').setAttribute('aria-current', 'true');
+  renderSelected();
+}
+
+function renderSelected() {
+  const entry = entries.get(selectedId);
+  if (!entry) return;
+  if (entry.status === 'done') {
+    render(entry.payload, entry.name, entry.size, entry.elapsed);
+  } else {
+    const message = entry.status === 'error' ? `Analysis failed: ${entry.error}`
+      : entry.status === 'analyzing' ? 'Analyzing this file…' : 'Queued for analysis.';
+    resultsEl.innerHTML = `<div class="result-message ${entry.status === 'error' ? 'error' : ''}"><strong>${esc(entry.name)}</strong>${esc(message)}</div>`;
+    resultsEl.classList.add('visible');
   }
 }
 
 function showError(msg) {
-  loading.classList.remove('active');
   errorEl.textContent = msg;
   errorEl.classList.add('visible');
 }
 
+async function boot() {
+  updateBatch();
+  try {
+    await init();
+    document.getElementById('version').textContent = `v${classifier_version()}`;
+    classifierState = 'ready';
+    updateBatch();
+    processQueue();
+  } catch (e) {
+    classifierState = 'error';
+    for (const entry of entries.values()) {
+      entry.file = null;
+      entry.status = 'error';
+      entry.error = 'Classifier could not be loaded.';
+      failed++;
+      updateEntry(entry);
+    }
+    queue = [];
+    queueIndex = 0;
+    updateBatch();
+    showError(`Failed to load classifier: ${e.message || e}`);
+  }
+}
+boot();
+
 // ==== Rendering ====
 
-function render(p, filename, size, elapsed, rawJson) {
+function render(p, filename, size, elapsed) {
   let html = '';
 
   // -- File banner
@@ -981,7 +1278,7 @@ function render(p, filename, size, elapsed, rawJson) {
       </svg>
       Raw JSON
     </button>
-    <div class="json-panel" id="jsonRaw">${esc(JSON.stringify(JSON.parse(rawJson), null, 2))}</div>
+    <div class="json-panel" id="jsonRaw">${esc(JSON.stringify(p, null, 2))}</div>
   </div>`;
 
   // -- Footer
@@ -1026,15 +1323,15 @@ function collapsible(title, count, body) {
 
 function esc(s) {
   if (s == null) return '';
-  const el = document.createElement('span');
-  el.textContent = String(s);
-  return el.innerHTML;
+  const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(s).replace(/[&<>"']/g, c => entities[c]);
 }
 
 function fmtSize(n) {
   if (n < 1024) return `${n} B`;
-  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1048576).toFixed(2)} MB`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KiB`;
+  if (n < 1073741824) return `${(n / 1048576).toFixed(2)} MiB`;
+  return `${(n / 1073741824).toFixed(2)} GiB`;
 }
 
 const ISA_NAMES = {
