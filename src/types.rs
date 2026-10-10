@@ -644,6 +644,8 @@ pub enum FileFormat {
     Bcf,
     /// VAG/Simos encrypted container (SOX)
     Sox,
+    /// AOR AR-DV10 firmware container
+    D10,
     /// Raw binary (no recognized format)
     Raw,
 
@@ -797,6 +799,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Frf => write!(f, "VW/Audi FRF"),
             FileFormat::Bcf => write!(f, "SMS-Soft BCF"),
             FileFormat::Sox => write!(f, "VAG SOX"),
+            FileFormat::D10 => write!(f, "AOR D10"),
             FileFormat::Raw => write!(f, "Raw"),
             // Unix/POSIX Legacy
             FileFormat::Aout => write!(f, "a.out"),
@@ -1209,6 +1212,9 @@ impl ClassifierOptions {
 /// An architecture slice within a multi-architecture container (e.g., fat Mach-O).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainedArch {
+    /// Component label when the container distinguishes CPU/DSP payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     /// ISA classification for this slice
     pub isa: Isa,
     /// Register width in bits

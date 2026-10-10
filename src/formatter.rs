@@ -4,7 +4,7 @@
 //! in various output formats (human-readable, JSON, compact).
 
 use crate::types::{
-    DetectionPayload, ExtensionDetection, FormatDetection, IsaCandidate, IsaClassification,
+    ContainedArch, DetectionPayload, ExtensionDetection, FormatDetection, IsaCandidate, IsaClassification,
     MetadataEntry, Note, NoteLevel,
 };
 use std::path::Path;
@@ -35,6 +35,9 @@ pub trait PayloadFormatter {
     /// Format analysis notes.
     fn format_notes(&self, notes: &[Note]) -> Option<String>;
 
+    /// Format individual architecture payloads. Existing formatters may omit them.
+    fn format_slices(&self, _slices: &[ContainedArch]) -> Option<String> { None }
+
     /// Format the complete payload.
     ///
     /// Default implementation concatenates all component outputs.
@@ -47,6 +50,9 @@ pub trait PayloadFormatter {
             parts.push(s);
         }
         if let Some(s) = self.format_isa(&payload.primary) {
+            parts.push(s);
+        }
+        if let Some(s) = self.format_slices(&payload.slices) {
             parts.push(s);
         }
         if let Some(s) = self.format_extensions(&payload.extensions) {
@@ -113,6 +119,13 @@ impl HumanFormatter {
 }
 
 impl PayloadFormatter for HumanFormatter {
+    fn format_slices(&self, slices: &[ContainedArch]) -> Option<String> {
+        if self.quiet || slices.is_empty() { return None; }
+        Some(slices.iter().map(|s| format!(
+            "  Payload:    {}: {} ({}-bit, {}), offset 0x{:X}, {} B\n",
+            s.label.as_deref().unwrap_or("Architecture"), s.isa, s.bitwidth, s.endianness, s.offset, s.size,
+        )).collect())
+    }
     fn format_file(&self, path: &Path) -> String {
         if self.quiet {
             String::new()
@@ -251,6 +264,9 @@ impl PayloadFormatter for HumanFormatter {
         if let Some(s) = self.format_format(&payload.format) {
             parts.push(s);
         }
+        if let Some(s) = self.format_slices(&payload.slices) {
+            parts.push(s);
+        }
         if let Some(s) = self.format_extensions(&payload.extensions) {
             parts.push(s);
         }
@@ -339,6 +355,8 @@ impl PayloadFormatter for JsonFormatter {
             extensions: Vec<ExtensionJson<'a>>,
             metadata: Vec<MetadataJson<'a>>,
             candidates: Vec<CandidateJson>,
+            #[serde(skip_serializing_if = "<[ContainedArch]>::is_empty")]
+            slices: &'a [ContainedArch],
             notes: Vec<NoteJson<'a>>,
         }
 
@@ -414,6 +432,7 @@ impl PayloadFormatter for JsonFormatter {
                     confidence: c.confidence,
                 })
                 .collect(),
+            slices: &payload.slices,
             notes: payload
                 .notes
                 .iter()
@@ -636,6 +655,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Frf => "VW/Audi FRF",
         FileFormat::Bcf => "SMS-Soft BCF",
         FileFormat::Sox => "VAG SOX",
+        FileFormat::D10 => "AOR D10",
     }
 }
 

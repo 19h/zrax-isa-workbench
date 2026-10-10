@@ -54,6 +54,9 @@ pub mod batch;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+#[cfg(feature = "wasm")]
+mod workbench;
+
 pub use error::{ClassifierError, Result};
 pub use formatter::{
     CandidatesFormatter, HumanFormatter, JsonFormatter, PayloadFormatter, ShortFormatter,
@@ -137,6 +140,7 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
     let mut payload = DetectionPayload::new(c.format, primary).with_candidates(c.candidates);
     payload.slices = c.slices;
     payload.metadata = extract_metadata(r);
+    payload.metadata.extend(c.metadata);
     payload.extensions = c.extensions;
     payload.notes = r.metadata.notes.iter().cloned().map(Note::info).collect();
     payload.notes.extend(c.notes);
@@ -151,6 +155,7 @@ struct Classified {
     slices: Vec<ContainedArch>,
     extensions: Vec<ExtensionDetection>,
     notes: Vec<Note>,
+    metadata: Vec<MetadataEntry>,
 }
 
 /// Run the code model and return the result plus the ranked candidates.
@@ -190,6 +195,8 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
     let mut notes = Vec::new();
     let mut candidates = Vec::new();
     let mut slices = Vec::new();
+    let mut metadata = Vec::new();
+    let mut code_payload = None;
 
     let result = match detected {
         formats::DetectedFormat::Raw => {
@@ -205,6 +212,7 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
             slices = entries
                 .iter()
                 .map(|e| ContainedArch {
+                    label: None,
                     isa: e.classification.isa,
                     bitwidth: e.classification.bitwidth,
                     endianness: e.classification.endianness,
@@ -225,6 +233,73 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
                 entries.len()
             )));
             first.classification.clone()
+        }
+        formats::DetectedFormat::D10 => {
+            // CPU classification must not include FPGA/DSP data, record
+            // headers, or encoded CPU bytes. A damaged D10 is an error.
+            let container = formats::d10::parse_container(data)?;
+            let r = container.classification();
+            metadata = container.metadata();
+            let code = container.cpu_code();
+            let (h, c) = heuristic(&code, options);
+            let result = match h {
+                Ok(h) => {
+                    candidates = c;
+                    let mut result = adopt_heuristic(&r, h);
+                    result.metadata.section_count = r.metadata.section_count;
+                    result.metadata.code_size = r.metadata.code_size;
+                    result
+                }
+                Err(_) => {
+                    notes.push(Note::warning("D10 CPU payload ISA could not be determined"));
+                    r
+                }
+            };
+            slices.push(ContainedArch {
+                label: Some("CPU 5:0".into()),
+                isa: result.isa,
+                bitwidth: result.bitwidth,
+                endianness: result.endianness,
+                variant: (result.variant != Variant::default()).then(|| result.variant.clone()),
+                offset: container.block(5, 0).unwrap().offset as u64,
+                size: code.len() as u64,
+                extensions: Vec::new(),
+            });
+            for section in 1..=4 {
+                let Some(block) = container.block(section, 0).filter(|b| !b.data.is_empty()) else {
+                    continue;
+                };
+                let (dsp, _) = heuristic(block.data, options);
+                let dsp = match dsp {
+                    Ok(dsp) => dsp,
+                    Err(_) => {
+                        notes.push(Note::warning(format!("D10 DSP {section}:0 ISA could not be determined")));
+                        ClassificationResult::from_format(Isa::Unknown(0), 0, Endianness::Little, FileFormat::D10)
+                    }
+                };
+                let dsp_extensions = if options.detect_extensions && !matches!(dsp.isa, Isa::Unknown(_)) {
+                    extensions::detect_from_code(block.data, dsp.isa, dsp.endianness)
+                        .iter()
+                        .map(|e| ExtensionDetection::from_code(&e.name, e.category, e.confidence))
+                        .collect()
+                } else { Vec::new() };
+                notes.push(Note::info(format!(
+                    "DSP {section}:0: {} ({}-bit, {}), classified from its own code",
+                    dsp.isa, dsp.bitwidth, dsp.endianness,
+                )));
+                slices.push(ContainedArch {
+                    label: Some(format!("DSP {section}:0")),
+                    isa: dsp.isa,
+                    bitwidth: dsp.bitwidth,
+                    endianness: dsp.endianness,
+                    variant: (dsp.variant != Variant::default()).then(|| dsp.variant.clone()),
+                    offset: block.offset as u64,
+                    size: block.data.len() as u64,
+                    extensions: dsp_extensions,
+                });
+            }
+            code_payload = Some(code);
+            result
         }
         formats::DetectedFormat::Epr | formats::DetectedFormat::Vbf | formats::DetectedFormat::Hex { .. } => {
             // Containers whose firmware payload can be extracted: header and
@@ -291,12 +366,18 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
         .collect();
     let mut result = result;
     if options.detect_extensions && !matches!(result.isa, Isa::Unknown(_)) {
-        for ext in extensions::detect_from_code(data, result.isa, result.endianness) {
+        for ext in extensions::detect_from_code(code_payload.as_deref().unwrap_or(data), result.isa, result.endianness) {
             if !result.extensions.iter().any(|e| e.name == ext.name) {
                 extensions.push(ExtensionDetection::from_code(&ext.name, ext.category, ext.confidence));
                 result.extensions.push(ext);
             }
         }
+    }
+
+    if result.format == FileFormat::D10 {
+        // The slice locates the stored CPU code; its ISA/extensions come from
+        // the decoded payload. Encoded status is explicit in D10 metadata.
+        slices[0].extensions = extensions.clone();
     }
 
     Ok(Classified {
@@ -306,6 +387,7 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
         slices,
         extensions,
         notes,
+        metadata,
     })
 }
 
@@ -393,6 +475,7 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::Frf => FormatDetection::new(FileFormat::Frf),
         DetectedFormat::Bcf => FormatDetection::new(FileFormat::Bcf),
         DetectedFormat::Sox => FormatDetection::new(FileFormat::Sox),
+        DetectedFormat::D10 => FormatDetection::new(FileFormat::D10),
         DetectedFormat::Raw => FormatDetection::raw(),
     }
 }
@@ -443,6 +526,9 @@ fn extract_metadata(result: &ClassificationResult) -> Vec<MetadataEntry> {
     }
     if let Some(sections) = result.metadata.section_count {
         entries.push(MetadataEntry::section_count(sections));
+    }
+    if let Some(size) = result.metadata.code_size {
+        entries.push(MetadataEntry::new(MetadataKey::CodeSize, MetadataValue::Integer(size), "Code Size (B)"));
     }
     if let Some(flags) = result.metadata.flags {
         entries.push(MetadataEntry::flags(flags));

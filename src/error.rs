@@ -28,6 +28,10 @@ pub enum ClassifierError {
     #[error("ELF parse error: {message}")]
     ElfParseError { message: String },
 
+    /// Error parsing AOR AR-DV10 firmware.
+    #[error("D10 parse error: {message}")]
+    D10ParseError { message: String },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },

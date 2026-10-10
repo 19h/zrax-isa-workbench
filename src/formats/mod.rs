@@ -27,6 +27,7 @@ pub mod bcf;
 pub mod bflt;
 pub mod coff;
 pub mod console;
+pub mod d10;
 pub mod dex;
 pub mod ecoff;
 pub mod elf;
@@ -235,6 +236,8 @@ pub enum DetectedFormat {
     Bcf,
     /// VAG/Simos SOX encrypted container
     Sox,
+    /// AOR AR-DV10 firmware container
+    D10,
     /// SNES SPC700 sound file
     Spc,
     /// TriMedia object module
@@ -414,6 +417,11 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Sox;
     }
 
+    // AOR AR-DV10 firmware revision/build header and record ID.
+    if d10::detect(data) {
+        return DetectedFormat::D10;
+    }
+
     // ar archive
     if let Some(variant) = ar::detect(data) {
         return DetectedFormat::Ar { variant };
@@ -583,6 +591,7 @@ pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<Classifica
         DetectedFormat::Frf => frf::parse(data),
         DetectedFormat::Bcf => bcf::parse(data),
         DetectedFormat::Sox => sox::parse(data),
+        DetectedFormat::D10 => d10::parse(data),
         DetectedFormat::Spc => spc::parse(data),
         DetectedFormat::TmObj => tmobj::parse(data),
         DetectedFormat::Lod => lod::parse(data),
