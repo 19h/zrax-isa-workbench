@@ -45,6 +45,23 @@ CSS and WASM URLs. Reload an open page after rebuilding. A startup handshake
 checks the worker protocol and spatial kernel, exposing incompatible cached
 assets as a loading error.
 
+The same build restores the pre-workbench **ISA Classifier** at
+<http://localhost:8080/classic/>. Use **CLASSIC** at the bottom right of the
+workbench status bar to open it; its header links back to the workbench.
+
+| Interface | Build output | Served path |
+| --- | --- | --- |
+| Zrax Workbench | `dist/index.html` | `/` |
+| Classic ISA Classifier | `dist/classic/index.html` | `/classic/` |
+
+Classic retains the original cards, collapsible sections, confidence/evidence
+bars, Raw JSON control and multi-file queue from the last pre-workbench UI.
+It uses the current classifier and shared WASM, including D10 component support.
+Its original Inter and JetBrains Mono fonts and license notices are packaged
+locally. Deploy the entire `dist/` tree: classic imports shared assets from its
+parent directory. Relative links also support hosting under a project prefix.
+See [classic implementation, provenance and validation boundaries](web/classic/README.md).
+
 The default interface incorporates the preferred 125% sizing. With a 16 px
 browser base font, body text is 16.25 px and hex rows are 25 px tall. Use 100%
 browser zoom for that default; browser zoom still scales the interface further.
@@ -499,6 +516,7 @@ zrax-isa-workbench/
 |   |-- wasm.rs                 browser bindings
 |   `-- workbench/apeiron/      vendored entropy, byte and Hilbert kernels
 |-- web/                        HTML, CSS, ES modules, fonts and browser tests
+|   `-- classic/                restored classifier UI and original font families
 |-- tests/                      native integration and D10 regressions
 |-- testbins/                   tracked binary regression fixtures
 |-- examples/                   training, evaluation and inspection tools

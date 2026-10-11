@@ -646,6 +646,8 @@ pub enum FileFormat {
     Sox,
     /// AOR AR-DV10 firmware container
     D10,
+    /// TI C55x serial boot table (hex55 -v5505, signature 0x09AA).
+    TiC55xBoot,
     /// Raw binary (no recognized format)
     Raw,
 
@@ -800,6 +802,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Bcf => write!(f, "SMS-Soft BCF"),
             FileFormat::Sox => write!(f, "VAG SOX"),
             FileFormat::D10 => write!(f, "AOR D10"),
+            FileFormat::TiC55xBoot => write!(f, "TI C55x Boot Table"),
             FileFormat::Raw => write!(f, "Raw"),
             // Unix/POSIX Legacy
             FileFormat::Aout => write!(f, "a.out"),

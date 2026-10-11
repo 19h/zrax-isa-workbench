@@ -10,7 +10,8 @@ export let baseUrl;
 export async function setup() {
   server = createServer(async (req, res) => {
     try {
-      const path = resolve(root, '.' + new URL(req.url, 'http://localhost').pathname);
+      const pathname = new URL(req.url, 'http://localhost').pathname;
+      const path = resolve(root, '.' + pathname + (pathname.endsWith('/') ? 'index.html' : ''));
       if (!path.startsWith(root)) { res.writeHead(403).end(); return; }
       const body = await readFile(path);
       const mime = path.endsWith('.wasm') ? 'application/wasm' : path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.ttf') ? 'font/ttf' : 'text/html';

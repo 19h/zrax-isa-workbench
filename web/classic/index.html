@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ISA Classifier</title>
+<meta name="color-scheme" content="dark">
+<link rel="stylesheet" href="./classic.css">
+</head>
+<body>
+
+<div class="app">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-row">
+      <div class="header-mark">
+        <svg viewBox="0 0 16 16"><path d="M2 4a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V4zm3 1a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 005 5zm3 0a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 008 5zm3 0a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 0011 5zM5 9a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 005 9zm3 0a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 008 9zm3 0a.5.5 0 00-.5.5v1a.5.5 0 001 0v-1A.5.5 0 0011 9z"/></svg>
+      </div>
+      <h1>ISA Classifier</h1>
+      <a class="workbench-link" href="../index.html">Workbench</a>
+    </div>
+    <p class="header-sub">Identify processor architectures from binary files <span class="ver" id="version"></span></p>
+  </header>
+
+  <!-- Drop zone -->
+  <div class="dropzone" id="dropzone">
+    <div class="dropzone-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+    </div>
+    <div class="dropzone-text">Drop binary files here, or <strong>browse</strong></div>
+    <div class="dropzone-hint" id="dropzone-hint">Select multiple files. Drop more at any time to add to the queue.</div>
+    <input type="file" id="fileinput" multiple aria-label="Choose binary files" aria-describedby="dropzone-hint">
+  </div>
+
+  <!-- Loading -->
+  <div class="loading" id="loading" role="status">
+    <div class="loading-dot" aria-hidden="true"></div>
+    <div class="loading-dot" aria-hidden="true"></div>
+    <div class="loading-dot" aria-hidden="true"></div>
+    <span id="loading-text"></span>
+  </div>
+
+  <!-- Error -->
+  <div class="error-banner" id="error" role="alert"></div>
+
+  <!-- Batch queue -->
+  <section class="batch" id="batch" aria-label="File queue" hidden>
+    <div class="batch-header">
+      <div>
+        <h2>Files</h2>
+        <p class="batch-summary" id="batch-summary" role="status"></p>
+      </div>
+      <button class="batch-clear" id="clear-files" type="button">Clear files</button>
+    </div>
+    <progress class="batch-progress" id="batch-progress" value="0" max="1" aria-label="Files processed"></progress>
+    <div class="batch-table-wrap">
+      <table class="batch-table" aria-label="Classification results">
+        <thead><tr><th scope="col">File</th><th scope="col">Architecture</th><th scope="col">Format</th><th scope="col">Status</th></tr></thead>
+        <tbody id="file-list"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <div class="results" id="results" role="region" aria-label="Selected file details"></div>
+</div>
+
+<script type="module" src="./classic.js"></script>
+</body>
+</html>

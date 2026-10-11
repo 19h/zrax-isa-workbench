@@ -17,6 +17,16 @@ Content-derived asset revisions keep the module graph and WASM consistent after
 rebuilds. A protocol handshake and spatial-kernel check report incompatible
 assets explicitly. Reload an already-open page after rebuilding.
 
+The build also packages the classic ISA Classifier into `dist/classic/`.
+Open <http://localhost:8080/classic/> or use the **CLASSIC** link at the bottom
+right of the workbench status bar. The classic header links back to the workbench.
+It restores the pre-workbench cards, disclosures, Raw JSON and multi-file queue
+while using the current classifier. Its original font families are self-hosted;
+both interfaces share the revisioned WASM and formatting module in `dist/`.
+Deploy the complete directory, including the parent assets. All navigation and
+asset references are relative, including deployments under a project prefix.
+See [classic provenance and assumptions](classic/README.md).
+
 The default interface now uses the preferred 125% size: typography, spacing,
 controls and panels share root-relative dimensions. With the browser's usual
 16 px base font, body text is 16.25 px and hex rows are 25 px tall. Browser zoom

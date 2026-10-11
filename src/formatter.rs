@@ -656,6 +656,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Bcf => "SMS-Soft BCF",
         FileFormat::Sox => "VAG SOX",
         FileFormat::D10 => "AOR D10",
+        FileFormat::TiC55xBoot => "TI C55x Boot Table",
     }
 }
 

@@ -234,6 +234,11 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
             )));
             first.classification.clone()
         }
+        formats::DetectedFormat::TiC55xBoot => {
+            let container = formats::ti_c55x::parse_container(data)?;
+            metadata = container.metadata();
+            container.classification()
+        }
         formats::DetectedFormat::D10 => {
             // CPU classification must not include FPGA/DSP data, record
             // headers, or encoded CPU bytes. A damaged D10 is an error.
@@ -476,6 +481,7 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::Bcf => FormatDetection::new(FileFormat::Bcf),
         DetectedFormat::Sox => FormatDetection::new(FileFormat::Sox),
         DetectedFormat::D10 => FormatDetection::new(FileFormat::D10),
+        DetectedFormat::TiC55xBoot => FormatDetection::new(FileFormat::TiC55xBoot),
         DetectedFormat::Raw => FormatDetection::raw(),
     }
 }

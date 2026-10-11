@@ -55,6 +55,7 @@ pub mod som;
 pub mod sox;
 pub mod spc;
 pub mod tds;
+pub mod ti_c55x;
 pub mod tmobj;
 pub mod vbf;
 pub mod wasm;
@@ -238,6 +239,8 @@ pub enum DetectedFormat {
     Sox,
     /// AOR AR-DV10 firmware container
     D10,
+    /// TI C55x serial boot table with validated load records.
+    TiC55xBoot,
     /// SNES SPC700 sound file
     Spc,
     /// TriMedia object module
@@ -422,6 +425,11 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::D10;
     }
 
+    // TI C55x serial boot table: validate structure because the magic is only 16 bits.
+    if ti_c55x::detect(data) {
+        return DetectedFormat::TiC55xBoot;
+    }
+
     // ar archive
     if let Some(variant) = ar::detect(data) {
         return DetectedFormat::Ar { variant };
@@ -592,6 +600,7 @@ pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<Classifica
         DetectedFormat::Bcf => bcf::parse(data),
         DetectedFormat::Sox => sox::parse(data),
         DetectedFormat::D10 => d10::parse(data),
+        DetectedFormat::TiC55xBoot => ti_c55x::parse(data),
         DetectedFormat::Spc => spc::parse(data),
         DetectedFormat::TmObj => tmobj::parse(data),
         DetectedFormat::Lod => lod::parse(data),

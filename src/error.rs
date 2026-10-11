@@ -32,6 +32,10 @@ pub enum ClassifierError {
     #[error("D10 parse error: {message}")]
     D10ParseError { message: String },
 
+    /// Error parsing a TI C55x serial boot table.
+    #[error("TI C55x boot-table parse error: {message}")]
+    TiC55xBootParseError { message: String },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },
