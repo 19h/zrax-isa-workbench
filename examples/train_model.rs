@@ -16,7 +16,7 @@
 //! code from other compilers fits a sibling class better (LLVM-built MIPS32
 //! looking more like the LLVM-heavy MIPS64 model than the GCC-heavy MIPS32 one).
 
-use isa_classifier::heuristics::model::{class_info, Model, ModelBuilder, COST_SCALE};
+use zrax::heuristics::model::{class_info, Model, ModelBuilder, COST_SCALE};
 use std::collections::BTreeMap;
 use std::io::BufRead;
 

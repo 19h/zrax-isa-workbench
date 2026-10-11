@@ -1,9 +1,9 @@
-//! ISA Classifier CLI
+//! Zrax CLI
 //!
 //! Command-line tool for identifying processor architectures in binary files.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use isa_classifier::{
+use zrax::{
     detect_multi_isa, detect_payload, CandidatesFormatter, ClassifierOptions, DetectionPayload,
     HumanFormatter, JsonFormatter, PayloadFormatter, ShortFormatter,
 };
@@ -15,7 +15,7 @@ use std::process::ExitCode;
 /// Identifies processor architectures, ISA variants, and extensions
 /// from ELF, PE, Mach-O, and raw binary files.
 #[derive(Parser, Debug)]
-#[command(name = "isa-classify")]
+#[command(name = "zrax")]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -208,7 +208,7 @@ fn main() -> ExitCode {
     // Initialize logging if verbose
     if cli.verbose {
         tracing_subscriber::fmt()
-            .with_env_filter("isa_classifier=debug")
+            .with_env_filter("zrax=debug")
             .init();
     }
 
@@ -252,7 +252,7 @@ fn main() -> ExitCode {
 
 #[cfg(feature = "batch")]
 fn run_batch(args: &BatchArgs) -> ExitCode {
-    use isa_classifier::batch::{
+    use zrax::batch::{
         pipeline::{run_pipeline, PipelineConfig},
         routing::RoutingConfig,
         stats::PipelineStats,
@@ -264,7 +264,7 @@ fn run_batch(args: &BatchArgs) -> ExitCode {
     // Initialize logging
     if args.verbose {
         tracing_subscriber::fmt()
-            .with_env_filter("isa_classifier=debug")
+            .with_env_filter("zrax=debug")
             .init();
     }
 
@@ -291,9 +291,9 @@ fn run_batch(args: &BatchArgs) -> ExitCode {
     let detect_extensions = args.extensions && !args.no_extensions;
 
     let mut classifier_opts = if args.deep_scan {
-        isa_classifier::ClassifierOptions::thorough()
+        zrax::ClassifierOptions::thorough()
     } else {
-        isa_classifier::ClassifierOptions::new()
+        zrax::ClassifierOptions::new()
     };
     classifier_opts.detect_extensions = detect_extensions;
     classifier_opts.min_confidence = args.min_confidence;
@@ -329,7 +329,7 @@ fn run_batch(args: &BatchArgs) -> ExitCode {
     let _ = ctrlc_handler(shutdown_ctrlc);
 
     if !args.quiet {
-        eprintln!("ISA Harvester Batch Classifier");
+        eprintln!("Zrax Batch Classifier");
         eprintln!("  Run ID:   {}", run_id);
         eprintln!("  Input:    {}", args.input.display());
         eprintln!("  Output:   {}", args.output.display());
@@ -352,7 +352,7 @@ fn run_batch(args: &BatchArgs) -> ExitCode {
             std::thread::Builder::new()
                 .name("tui".into())
                 .spawn(move || {
-                    let _ = isa_classifier::batch::tui::run_tui(
+                    let _ = zrax::batch::tui::run_tui(
                         tui_stats,
                         tui_shutdown,
                         &tui_run_id,
@@ -370,7 +370,7 @@ fn run_batch(args: &BatchArgs) -> ExitCode {
             std::thread::Builder::new()
                 .name("progress".into())
                 .spawn(move || {
-                    isa_classifier::batch::tui::run_simple_progress(
+                    zrax::batch::tui::run_simple_progress(
                         progress_stats,
                         progress_shutdown,
                         std::time::Duration::from_secs(10),
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn test_args_parsing() {
-        let cli = Cli::try_parse_from(["isa-classify", "test.bin"]).unwrap();
+        let cli = Cli::try_parse_from(["zrax", "test.bin"]).unwrap();
         assert_eq!(cli.files.len(), 1);
         assert!(!cli.verbose);
         assert!(!cli.multi_isa);
@@ -593,19 +593,19 @@ mod tests {
 
     #[test]
     fn test_multiple_files() {
-        let cli = Cli::try_parse_from(["isa-classify", "a.bin", "b.bin"]).unwrap();
+        let cli = Cli::try_parse_from(["zrax", "a.bin", "b.bin"]).unwrap();
         assert_eq!(cli.files.len(), 2);
     }
 
     #[test]
     fn test_format_options() {
-        let cli = Cli::try_parse_from(["isa-classify", "-f", "json", "test.bin"]).unwrap();
+        let cli = Cli::try_parse_from(["zrax", "-f", "json", "test.bin"]).unwrap();
         assert!(matches!(cli.format, OutputFormat::Json));
     }
 
     #[test]
     fn test_multi_isa_flag() {
-        let cli = Cli::try_parse_from(["isa-classify", "--multi-isa", "test.bin"]).unwrap();
+        let cli = Cli::try_parse_from(["zrax", "--multi-isa", "test.bin"]).unwrap();
         assert!(cli.multi_isa);
         assert_eq!(cli.window_size, 1024);
     }
@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn test_window_size() {
         let cli = Cli::try_parse_from([
-            "isa-classify",
+            "zrax",
             "--multi-isa",
             "--window-size",
             "2048",

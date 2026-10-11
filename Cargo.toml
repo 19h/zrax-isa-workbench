@@ -1,11 +1,11 @@
 [package]
-name = "isa-classifier"
+name = "zrax"
 version = "0.1.0"
 edition = "2021"
 authors = ["ISA Harvester Team"]
-description = "Universal binary architecture classifier supporting all major ISAs"
+description = "Zrax binary architecture classifier and browser analysis workbench"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/isa-harvester/classifier"
+repository = "https://github.com/19h/zrax-isa-workbench"
 keywords = ["binary", "isa", "architecture", "elf", "mach-o"]
 categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.70"
@@ -14,12 +14,12 @@ rust-version = "1.70"
 wasm-opt = false
 
 [lib]
-name = "isa_classifier"
+name = "zrax"
 path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [[bin]]
-name = "isa-classify"
+name = "zrax"
 path = "src/main.rs"
 required-features = ["cli"]
 

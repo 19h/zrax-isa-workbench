@@ -1,11 +1,11 @@
-//! Error types for the ISA classifier.
+//! Error types for the Zrax classifier.
 //!
 //! This module defines all error types used throughout the classifier,
 //! providing detailed error information for debugging and user feedback.
 
 use thiserror::Error;
 
-/// Primary error type for the ISA classifier.
+/// Primary error type for the Zrax classifier.
 #[derive(Debug, Error)]
 pub enum ClassifierError {
     /// IO error during file operations.

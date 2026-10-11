@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build the ISA Classifier web app into dist/
+# Build the Zrax web app into dist/
 # Output: dist/ folder containing index.html + JS glue + .wasm (ready to upload)
 
 echo "Building WASM..."
@@ -11,13 +11,13 @@ echo "Assembling dist/..."
 rm -rf dist
 mkdir -p dist
 
-cp pkg/isa_classifier.js dist/
-cp pkg/isa_classifier_bg.wasm dist/
+cp pkg/zrax.js dist/
+cp pkg/zrax_bg.wasm dist/
 
 # Runtime files are native browser ES modules. No frontend bundler is required.
 cp web/index.html web/workbench.css dist/
 for source in web/*.js; do
-    sed "s|from '../pkg/isa_classifier.js'|from './isa_classifier.js'|" "$source" > "dist/$(basename "$source")"
+    sed "s|from '../pkg/zrax.js'|from './zrax.js'|" "$source" > "dist/$(basename "$source")"
 done
 cp src/workbench/apeiron/LICENSE dist/APEIRON-LICENSE.txt
 cp -R web/fonts dist/fonts

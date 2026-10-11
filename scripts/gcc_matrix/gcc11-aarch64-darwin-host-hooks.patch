@@ -1,0 +1,14 @@
+--- a/gcc/config.host	2026-09-27 02:09:08
++++ b/gcc/config.host	2026-09-27 02:09:08
+@@ -251,6 +251,11 @@
+     host_extra_gcc_objs="${host_extra_gcc_objs} driver-mingw32.o"
+     host_lto_plugin_soname=liblto_plugin.dll
+     ;;
++  aarch64*-*-darwin*)
++    # No aarch64-darwin host hooks before GCC 12: use the defaults, or cc1
++    # fails to link (undefined _host_hooks).
++    out_host_hook_obj="${out_host_hook_obj} host-default.o"
++    ;;
+   i[34567]86-*-darwin* | x86_64-*-darwin*)
+     out_host_hook_obj="${out_host_hook_obj} host-i386-darwin.o"
+     host_xmake_file="${host_xmake_file} i386/x-darwin"

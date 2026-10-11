@@ -4,7 +4,7 @@
 # Usage: ./scripts/validate_firmware.sh <directory> [max_files]
 #
 # For each firmware file:
-#   1. Classify with isa-classify
+#   1. Classify with zrax
 #   2. Extract a sample of non-zero bytes
 #   3. Disassemble with rasm2 using the predicted ISA
 #   4. Compute decode success rate
@@ -14,7 +14,7 @@ set -euo pipefail
 
 DIR="${1:?Usage: $0 <directory> [max_files]}"
 MAX_FILES="${2:-0}"  # 0 = unlimited
-CLASSIFIER="./target/release/isa-classify"
+CLASSIFIER="./target/release/zrax"
 SAMPLE_SIZE=256  # bytes to sample for validation
 MIN_DECODE_RATE=40  # percent — below this is suspicious
 

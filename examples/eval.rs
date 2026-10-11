@@ -11,7 +11,7 @@
 //! cargo run --release --example train_model -- --corpus DIR --split train --out /tmp/m.bin
 //! cargo run --release --example eval -- --corpus DIR --model /tmp/m.bin [--snippets 128,512,2048]
 //!     [--csv out.csv] [--verbose]
-//! cargo run --release --example eval -- --firmware ../armgen/firmware [--model M]
+//! cargo run --release --example eval -- --firmware /path/to/armgen/firmware [--model M]
 //! ```
 //!
 //! `--firmware` evaluates multi-ISA detection on synthetic firmware images
@@ -21,8 +21,8 @@
 //! Without `--model` the embedded model is used, which has seen the test
 //! split and therefore only measures fit, not generalisation.
 
-use isa_classifier::heuristics::{self, class_info, ClassKind, Model};
-use isa_classifier::ClassifierOptions;
+use zrax::heuristics::{self, class_info, ClassKind, Model};
+use zrax::ClassifierOptions;
 use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::sync::atomic::{AtomicUsize, Ordering};

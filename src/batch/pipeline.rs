@@ -99,7 +99,7 @@ pub struct PipelineResult {
 
 /// Run the batch ingestion pipeline.
 ///
-/// This is the main entry point for `isa-classify batch`.
+/// This is the main entry point for `zrax batch`.
 pub fn run_pipeline(
     config: PipelineConfig,
     stats: Arc<PipelineStats>,

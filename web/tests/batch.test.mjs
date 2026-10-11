@@ -62,14 +62,14 @@ test('read errors stay local and hostile filenames stay literal', async t => {
 
 test('files dropped before initialization wait and then classify', async t => {
   const page = await openPage(t); let release; const gate = new Promise(resolve => { release = resolve; });
-  await page.route('**/isa_classifier_bg.wasm', async route => { await gate; await route.continue(); });
+  await page.route('**/zrax_bg.wasm', async route => { await gate; await route.continue(); });
   await page.goto(baseUrl + '/web/index.html'); await drop(page, [elf('early.o'), elf('early-arm.o', 183)]);
   assert.deepEqual(await page.locator('.batch-status').allTextContents(), ['[ ]', '[ ]']); release(); await finished(page, 2);
 });
 
 test('initialization failure terminates pending entries and rejects additions', async t => {
   const page = await openPage(t); let release; const gate = new Promise(resolve => { release = resolve; });
-  await page.route('**/isa_classifier_bg.wasm', async route => { await gate; await route.abort(); });
+  await page.route('**/zrax_bg.wasm', async route => { await gate; await route.abort(); });
   await page.goto(baseUrl + '/web/index.html'); await drop(page, [elf('queued.o')]); release(); await finished(page, 1);
   assert.equal(await page.locator('.batch-status').textContent(), '[-]'); assert.match(await page.locator('#error').textContent(), /Failed to load classifier/);
   await drop(page, [elf('rejected.o')]); assert.equal(await page.locator('.batch-file').count(), 1);

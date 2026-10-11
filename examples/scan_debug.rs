@@ -2,7 +2,7 @@
 //!
 //! `cargo run --release --example scan_debug -- FILE [--model M] [--window N] [--top K]`
 
-use isa_classifier::heuristics::{self, Model, WindowKind};
+use zrax::heuristics::{self, Model, WindowKind};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

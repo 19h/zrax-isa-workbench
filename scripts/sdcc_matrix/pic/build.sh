@@ -6,8 +6,8 @@
 #   scripts/sdcc_matrix/pic/build.sh WORK [sdk|programs|libs|all] [JOBS]
 #
 # Environment:
-#   ARMGEN            armgen checkout (default: ../../../../armgen from here)
-#   OUT               output root     (default: classifier/corpus_extra/sdcc-objects)
+#   ARMGEN            external checkout (default: ../../../../isa-harvester/armgen)
+#   OUT               output root     (default: repository corpus_extra/sdcc-objects)
 #   SDCC_SRC_TARBALL  SDCC 4.6.0 source (default: WORK/sdcc-src-4.6.0.tar.bz2,
 #                     downloaded from SourceForge if missing; only device/ is used)
 #
@@ -63,7 +63,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 work="${1:?usage: $0 WORK [sdk|programs|libs|all] [JOBS]}"
 stage="${2:-all}"
 jobs="${3:-8}"
-armgen="${ARMGEN:-$here/../../../../armgen}"
+armgen="${ARMGEN:-$here/../../../../isa-harvester/armgen}"
 out="${OUT:-$here/../../../corpus_extra/sdcc-objects}"
 mkdir -p "$work" "$out"
 work="$(cd "$work" && pwd)"

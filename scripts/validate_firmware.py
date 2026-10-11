@@ -2,7 +2,7 @@
 """
 Firmware classification validation script.
 
-Phase 1: Classify all firmware files using isa-classify (fast, bulk)
+Phase 1: Classify all firmware files using zrax (fast, bulk)
 Phase 2: Validate predictions by disassembling samples with rasm2
 Phase 3: Report suspected misclassifications
 
@@ -351,7 +351,7 @@ def main():
         "..",
         "target",
         "release",
-        "isa-classify",
+        "zrax",
     )
     if not os.path.isfile(classifier):
         print("Building release binary...")

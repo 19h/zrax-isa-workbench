@@ -18,7 +18,7 @@ Output layout:
                              {id, class, group, split, source, size}
 
 Usage:
-    scripts/build_corpus.py --out /path/to/corpus [--data ../data] [--armgen ../armgen]
+    scripts/build_corpus.py --out /path/to/corpus [--data /path/to/data] [--armgen /path/to/armgen]
                             [--gen DIR ...] [--raw CLASS=GLOB ...]
 """
 
@@ -674,8 +674,8 @@ def program_of(path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--data", default=os.path.join(REPO, "..", "data"))
-    ap.add_argument("--armgen", default=os.path.join(REPO, "..", "armgen"))
+    ap.add_argument("--data", default=os.path.join(REPO, "..", "isa-harvester", "data"))
+    ap.add_argument("--armgen", default=os.path.join(REPO, "..", "isa-harvester", "armgen"))
     ap.add_argument("--gen", action="append", default=[], help="extra dir of <class>/**/*.o compiler output")
     ap.add_argument("--raw", action="append", default=[], help="CLASS=GLOB of raw code dumps")
     ap.add_argument("--isadetect-per-arch", type=int, default=400)

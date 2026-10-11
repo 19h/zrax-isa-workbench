@@ -1,0 +1,36 @@
+# Build products; Cargo.lock is committed for reproducible application builds.
+/target/
+/pkg/
+/dist/
+node_modules/
+test-results/
+playwright-report/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.DS_Store
+._*
+.env
+.env.*
+.claude/
+
+# Local reference corpora and analysis outputs are retained outside Git.
+/idaref/
+/corpus_extra/
+/reports/
+/research_notes/
+/accuracy_report.json
+/demo.txt
+/payload.bin
+/Archive.zip
+/test_ols
+/test_ols.rs
+
+# Existing tracked binary regression fixtures remain in version control.
+/test_binaries/*/
+/testbins/*.o
+*.rs.bk
+*.log
+*.tmp
+*.swp
+*.swo

@@ -1,4 +1,4 @@
-# ISA Workbench
+# Zrax Workbench
 
 The reference workbench is implemented with semantic HTML, CSS, native ES
 modules, a dedicated worker, Rust/WASM, and Canvas 2D. No frontend framework,
@@ -16,6 +16,18 @@ It packages the application, WASM, self-hosted fonts and licenses into `dist/`.
 Content-derived asset revisions keep the module graph and WASM consistent after
 rebuilds. A protocol handshake and spatial-kernel check report incompatible
 assets explicitly. Reload an already-open page after rebuilding.
+
+The default interface now uses the preferred 125% size: typography, spacing,
+controls and panels share root-relative dimensions. With the browser's usual
+16 px base font, body text is 16.25 px and hex rows are 25 px tall. Browser zoom
+still applies on top; use 100% browser zoom to obtain the new default size.
+Canvas fitting measures padding and hex virtualization measures displayed row
+heights. Responsive thresholds and initial sidebar visibility follow the larger
+layout, with compact tab spacing on narrow screens.
+The completed scale validation passed all 35 browser/viewport regressions,
+including source and packaged layouts, exact hex capacity/EOF and canvas bounds.
+Controlled layout inspection covered viewport widths 390, 800, 1000, 1440 and
+1800 px. The build prints the current content-derived asset revision.
 
 ## Implemented controls
 
@@ -49,7 +61,7 @@ assets explicitly. Reload an already-open page after rebuilding.
 
 ```text
 File handles -> queue -> worker -> resident WASM binary
-                           |         |-- existing ISA classifier
+                           |         |-- existing Zrax classifier
                            |         |-- Apeiron entropy / byte kernels
                            |         `-- Apeiron Hilbert coordinates
                            v
@@ -152,6 +164,7 @@ and file read phases instead of presenting them as computed cells.
 | A8 | Browser File handles can be retained and reread during this session. File switching/downloads depend on this. | Switch files and restore cursor/camera; download exact selected bytes; injected read failure remains per-file. |
 | A9 | File drops expose individual File objects; recursive directory traversal is outside this implementation. | Picker has `multiple`; global drag consumes the FileList; no directory-upload attribute or traversal API. |
 | A10 | Viewport history is session-local; UI preferences are persisted, file content is not. | Reload restores layout preference with an empty queue; return to prior file restores its current camera and cursor. |
+| A11 | The preferred 125% browser screenshot defines the default UI scale. Exact pixel measurements assume the browser's usual 16 px base font; user font settings may change them. | Check source/packaged typography and panel dimensions; verify visible hex capacity and EOF, canvas bounds, closed initial sidebar at 1000 px, and reachable tabs at 390 px. |
 
 ## Bounded scope findings
 
@@ -169,6 +182,10 @@ and file read phases instead of presenting them as computed cells.
   patches and visible wait/read phases constrain and disclose those limits.
 - **Medium impact:** failed ISA classification does not imply unavailable byte
   inspection. Entropy and hex remain usable for unclassified binary blobs.
+- **Medium impact:** browser zoom compounds the interface's new default scale.
+  Root-relative dimensions preserve proportions, and measured canvas/hex
+  geometry avoids fixed-pixel navigation assumptions. The equivalent of the
+  supplied 125% screenshot is now obtained at 100% browser zoom.
 - **Low impact:** HTML filename escaping, complete CP037 decoding, stale-response
   rejection, transparent EOF holes and mobile tick clipping cover independent
   presentation edge cases.
@@ -192,7 +209,7 @@ fixed-coordinate zoom, pan, minimap, history, raster reuse and protocol errors.
 The Rust suite includes Apeiron's original kernel/Hilbert tests and wrapper tests
 for entropy, class fractions, EOF, compression and spatial block invariants.
 
-The final controlled run passes 30 browser/viewport regressions and 29 Rust
+The initial workbench run passed 30 browser/viewport regressions and 29 Rust
 kernel/wrapper tests. The packaged UI also classified the host's actual
 `/bin/ls` Mach-O universal binary. A 32 MiB ELF-header fixture with structured
 and seeded xorshift32 regions generated its initial map in 77 ms in one warm

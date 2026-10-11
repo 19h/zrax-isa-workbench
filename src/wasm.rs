@@ -1,4 +1,4 @@
-//! WebAssembly bindings for the ISA classifier.
+//! WebAssembly bindings for the Zrax classifier.
 //!
 //! Exposes `classify` as a JS-callable function via wasm-bindgen.
 //! Accepts a `Uint8Array` and returns a JSON string with the full
@@ -15,8 +15,8 @@ use crate::{detect_payload, version};
 /// * `data` - raw file bytes (`Uint8Array` from JS)
 ///
 /// # Returns
-/// A JSON string containing the `DetectionPayload`, or an error message string
-/// prefixed with `"ERROR: "` if classification fails.
+/// A JSON string containing the `DetectionPayload`, or an object with an
+/// `error` property if classification fails.
 #[wasm_bindgen]
 pub fn classify(data: &[u8]) -> String {
     let options = ClassifierOptions::new();

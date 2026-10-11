@@ -1,0 +1,23 @@
+--- a/gcc/config/m32c/m32c.cc	2026-02-11 16:59:32
++++ b/gcc/config/m32c/m32c.cc	2026-09-25 19:58:19
+@@ -4014,12 +4014,17 @@
+ static int
+ m32c_leaf_function_p (void)
+ {
+-  int rv;
++  rtx_insn *insn;
+ 
++  /* Walk the outermost insn chain directly: leaf_function_p asserts
++     that we are not inside a sequence.  */
+   push_topmost_sequence ();
+-  rv = leaf_function_p ();
++  insn = get_insns ();
+   pop_topmost_sequence ();
+-  return rv;
++  for (; insn; insn = NEXT_INSN (insn))
++    if (CALL_P (insn) && ! SIBLING_CALL_P (insn) && ! FAKE_CALL_P (insn))
++      return 0;
++  return 1;
+ }
+ 
+ /* Returns TRUE if the current function needs to use the ENTER/EXIT

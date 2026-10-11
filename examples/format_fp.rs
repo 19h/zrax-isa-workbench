@@ -3,7 +3,7 @@
 //!
 //! `cargo run --release --example format_fp -- --corpus DIR`
 
-use isa_classifier::formats::{detect_format, DetectedFormat};
+use zrax::formats::{detect_format, DetectedFormat};
 use std::collections::BTreeMap;
 use std::io::BufRead;
 

@@ -8,10 +8,39 @@ const value = (page, type) => page.locator(`[data-value-type="${type}"] .value`)
 async function goto(page, offset) { await page.locator('#goto-offset').fill(String(offset)); await page.locator('#goto-offset').press('Enter'); await page.waitForFunction(offset => document.getElementById('hex-location').textContent.includes('· ' + offset), offset); }
 function patterned(name = 'pattern.o', size = 32768) { const file = elf(name, 62, size); for (let i = size / 2; i < size; i++) file.buffer[i] = i % 256; return file; }
 
+test('preferred 125% UI size keeps hex rows, canvas bounds and narrow-screen tabs usable', async t => {
+  for (const path of ['/web/index.html', '/dist/index.html']) {
+    const page = await openPage(t, { viewport: { width: 1800, height: 1000 } }); await load(page, path);
+    await page.locator('#fileinput').setInputFiles(patterned()); await finished(page, 1);
+    const type = await page.evaluate(() => ({ body: parseFloat(getComputedStyle(document.body).fontSize), hero: parseFloat(getComputedStyle(document.querySelector('.hero-isa')).fontSize), side: document.getElementById('files-panel').getBoundingClientRect().width }));
+    assert.deepEqual(type, { body: 16.25, hero: 35, side: 330 });
+    await page.getByRole('tab', { name: 'hex', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#hex-rows .hex-row'));
+    const rows = await page.evaluate(() => {
+      const viewport = document.getElementById('hex-viewport'), head = document.getElementById('hex-head'), rows = [...document.querySelectorAll('#hex-rows .hex-row')];
+      const rowHeight = rows[0].getBoundingClientRect().height;
+      return { rowHeight, count: rows.length, capacity: Math.floor((viewport.clientHeight - head.getBoundingClientRect().height) / rowHeight), overflow: rows.at(-1).getBoundingClientRect().bottom - viewport.getBoundingClientRect().bottom };
+    });
+    assert.equal(rows.rowHeight, 25); assert.equal(rows.count, rows.capacity); assert.ok(rows.overflow <= 1);
+    await goto(page, 32767);
+    await page.waitForFunction(() => document.querySelector('#hex-rows [data-offset="32767"]'));
+    await page.getByRole('tab', { name: 'entropy', exact: true }).click(); await mapReady(page);
+    const fits = await page.locator('#map-stage').evaluate(stage => { const a = stage.getBoundingClientRect(), b = document.getElementById('map-frame').getBoundingClientRect(), style = getComputedStyle(stage); return b.right <= a.right - parseFloat(style.paddingRight) + 1 && b.bottom <= a.bottom - parseFloat(style.paddingBottom) + 1; });
+    assert.equal(fits, true);
+    const narrow = await openPage(t, { viewport: { width: 1000, height: 844 } }); await load(narrow, path);
+    assert.equal(await narrow.locator('#files-panel').isVisible(), false);
+    const phone = await openPage(t, { viewport: { width: 390, height: 844 } }); await load(phone, path);
+    await phone.locator('#fileinput').setInputFiles(elf('phone.o')); await finished(phone, 1);
+    assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.equal(await phone.locator('.file-view > .tabs').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+    for (const tab of ['entropy', 'hex', 'json', 'classification']) await phone.getByRole('tab', { name: tab, exact: true }).click();
+  }
+});
+
 test('WASM kernels return exact reference entropies, class fractions and a Hilbert permutation', async t => {
   const page = await openPage(t); await load(page);
   const data = await page.evaluate(async () => {
-    const m = await import('/pkg/isa_classifier.js'); await m.default();
+    const m = await import('/pkg/zrax.js'); await m.default();
     const zero = new m.WorkbenchEngine(new Uint8Array(4096));
     const uniform = new m.WorkbenchEngine(Uint8Array.from({ length: 4096 }, (_, i) => i % 256));
     const binary = new m.WorkbenchEngine(Uint8Array.from({ length: 4096 }, (_, i) => i % 2));

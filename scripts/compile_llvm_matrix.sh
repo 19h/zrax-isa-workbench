@@ -12,7 +12,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 out="${1:?usage: $0 OUT [CLANG] [JOBS]}"
 clang="${2:-/opt/homebrew/opt/llvm/bin/clang}"
 jobs="${3:-12}"
-armgen="${ARMGEN:-$here/../../armgen}"
+armgen="${ARMGEN:-$here/../../isa-harvester/armgen}"
 mkdir -p "$out"
 jobfile="$(mktemp)"
 n=0

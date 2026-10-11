@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ISA classifier accuracy analysis (CLI-level, armgen blobs + synthetic firmware).
+Zrax classifier accuracy analysis (CLI-level, armgen blobs + synthetic firmware).
 
 The primary, held-out evaluation is `cargo run --release --example eval`
 (see docs/architecture/raw-code-model.md); this script measures the CLI end to
@@ -31,9 +31,9 @@ from pathlib import Path
 # Configuration
 # ---------------------------------------------------------------------------
 
-CLASSIFIER_BIN = Path(__file__).parent / "target" / "release" / "isa-classify"
-OBJECTS_DIR = Path(__file__).parent.parent / "armgen" / "objects"
-FIRMWARE_DIR = Path(__file__).parent.parent / "armgen" / "firmware"
+CLASSIFIER_BIN = Path(__file__).parent / "target" / "release" / "zrax"
+OBJECTS_DIR = Path(__file__).parent.parent / "isa-harvester" / "armgen" / "objects"
+FIRMWARE_DIR = Path(__file__).parent.parent / "isa-harvester" / "armgen" / "firmware"
 
 # Map from oracle family names to classifier ISA names
 FAMILY_TO_ISA = {
@@ -449,7 +449,7 @@ def print_summary_json(blob_results, fw_results, output_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Rigorous ISA classifier accuracy analysis"
+        description="Rigorous Zrax classifier accuracy analysis"
     )
     parser.add_argument(
         "--objects-dir", type=Path, default=OBJECTS_DIR,

@@ -6,7 +6,7 @@
 //! Columns: class, sample, is_code, window_len, verdict (code/ambiguous/data/padding),
 //! predicted family, correct (1/0), margin (bits/byte).
 
-use isa_classifier::heuristics::{self, class_info, Model, WindowKind};
+use zrax::heuristics::{self, class_info, Model, WindowKind};
 use std::io::BufRead;
 
 fn main() {

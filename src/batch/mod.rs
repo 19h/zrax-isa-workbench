@@ -14,7 +14,7 @@
 //! # Usage
 //!
 //! ```bash
-//! isa-classify batch -i /data/firmware -o /staging/run-001 -j 16
+//! zrax batch -i /data/firmware -o /staging/run-001 -j 16
 //! ```
 
 pub mod keys;

@@ -8,7 +8,7 @@
 # Environment:
 #   GCC_SRC       GCC source tree        (default: ~/hexrays/gcc, GCC 16)
 #   BINUTILS_SRC  binutils source tree   (default: ~/hexrays/binutils-2.43)
-#   ARMGEN        armgen checkout        (default: ../../../armgen from here)
+#   ARMGEN        external armgen checkout (default: ../../../isa-harvester/armgen)
 #
 # Classes, targets and flag variants are in variants.txt, one per line:
 #   class target flags [gcc-source]
@@ -63,7 +63,7 @@ shift $(( $# < 3 ? $# : 3 ))
 only_targets=" $* "
 gcc_src="${GCC_SRC:-$HOME/hexrays/gcc}"
 binutils_src="${BINUTILS_SRC:-$HOME/hexrays/binutils-2.43}"
-armgen="${ARMGEN:-$here/../../../armgen}"
+armgen="${ARMGEN:-$here/../../../isa-harvester/armgen}"
 stub="$here/../stubinc"
 mkdir -p "$work"/{build,logs,out,prefix}
 work="$(cd "$work" && pwd)"

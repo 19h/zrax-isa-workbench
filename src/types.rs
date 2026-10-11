@@ -1,4 +1,4 @@
-//! Core types for the ISA classifier.
+//! Core types for the Zrax classifier.
 //!
 //! This module defines all fundamental types used to represent
 //! binary classification results, including ISA identifiers,

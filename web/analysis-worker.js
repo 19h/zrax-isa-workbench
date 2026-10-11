@@ -1,4 +1,4 @@
-import init, { WorkbenchEngine, hilbert_indices, classifier_version } from '../pkg/isa_classifier.js';
+import init, { WorkbenchEngine, hilbert_indices, classifier_version } from '../pkg/zrax.js';
 import { WORKBENCH_PROTOCOL } from './protocol.js';
 
 const files = new Map();

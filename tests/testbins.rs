@@ -1,11 +1,11 @@
-//! Integration test suite for the ISA classifier using ground-truth test binaries.
+//! Integration test suite for the Zrax classifier using ground-truth test binaries.
 //!
 //! Iterates all files in `testbins/` and classifies each one, comparing the result
 //! against the expected ISA derived from the filename prefix.
 //!
 //! Run with: `cargo test --test testbins -- --nocapture` for full output.
 
-use isa_classifier::{classify_file, ClassifierError, Isa};
+use zrax::{classify_file, ClassifierError, Isa};
 use std::collections::HashMap;
 use std::path::Path;
 

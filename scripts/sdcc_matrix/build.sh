@@ -7,7 +7,7 @@
 #
 #   scripts/sdcc_matrix/build.sh WORK [prep|libs|progs|dedupe|summary|check|all] [JOBS]
 #
-# Environment: ARMGEN (default ../../../armgen from here), OUT (default
+# Environment: ARMGEN (default ../../../isa-harvester/armgen), OUT (default
 # corpus_extra/sdcc-objects), FORCE=1 to redo finished jobs.
 # Needs sdcc (4.6: mcs51 ds390 hc08 s08 z80 z180 ez80 r800 sm83 stm8 mos6502
 # mos65c02 ports), cc65 (cc65/ca65/ld65/ar65/od65) and python3 with pycparser.
@@ -85,7 +85,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 work="${1:?usage: $0 WORK [prep|libs|progs|dedupe|summary|check|all] [JOBS]}"
 stage="${2:-all}"
 jobs="${3:-$(sysctl -n hw.ncpu 2>/dev/null || nproc)}"
-armgen="${ARMGEN:-$here/../../../armgen}"
+armgen="${ARMGEN:-$here/../../../isa-harvester/armgen}"
 out="${OUT:-$here/../../corpus_extra/sdcc-objects}"
 py="python3 $here/extract.py"
 force=""; [ "${FORCE:-0}" = 1 ] && force="--force"

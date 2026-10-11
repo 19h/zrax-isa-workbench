@@ -240,7 +240,7 @@ fn draw_dashboard(
     let header = Paragraph::new(header_text).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" ISA Harvester Batch Classifier ")
+            .title(" Zrax Batch Classifier ")
             .title_style(
                 Style::default()
                     .fg(Color::Cyan)

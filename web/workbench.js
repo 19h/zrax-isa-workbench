@@ -14,7 +14,7 @@ try { saved = JSON.parse(localStorage.getItem('isawb.v2')) || {}; } catch { /* S
 const choose = (value, options, fallback) => options.includes(value) ? value : fallback;
 const ui = {
   view: 'file', tab: choose(saved.tab, ['classification', 'entropy', 'hex', 'json'], 'classification'),
-  sideOpen: typeof saved.sideOpen === 'boolean' ? saved.sideOpen : innerWidth >= 1000,
+  sideOpen: typeof saved.sideOpen === 'boolean' ? saved.sideOpen : innerWidth >= 1250,
   logOpen: saved.logOpen === true, curve: choose(saved.curve, ['hilbert', 'linear'], 'hilbert'),
   mode: choose(saved.mode, ['entropy', 'bytes'], 'entropy'),
   columns: choose(saved.columns, [8, 16, 24, 32], 16), group: choose(saved.group, [1, 2, 4, 8], 4),
@@ -238,7 +238,11 @@ function syncView() {
 function sizeMap() {
   if (ui.tab !== 'entropy' || ui.view !== 'file') return;
   const stage = $('map-stage');
-  const size = Math.max(64, Math.floor(Math.min(stage.clientWidth - 32, stage.clientHeight - 32)));
+  const style = getComputedStyle(stage);
+  const size = Math.max(64, Math.floor(Math.min(
+    stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+    stage.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+  )));
   $('map-frame').style.width = $('map-frame').style.height = `${size}px`;
   applyCamera();
 }
@@ -458,7 +462,10 @@ function renderStatusCursor() {
   const h = cellAt(probeOffset())?.h;
   text('status-cursor', selected()?.size ? `${ui.hover == null ? 'cursor' : 'hover'} 0x${hx(probeOffset())}${Number.isFinite(h) ? ` · ${h.toFixed(2)} bits/byte` : ''}` : '');
 }
-function hexVisibleRows() { return Math.max(1, Math.floor(($('hex-viewport').clientHeight - 28) / 20)); }
+function hexRowHeight() { return parseFloat(getComputedStyle($('hex-head')).lineHeight); }
+function hexVisibleRows() {
+  return Math.max(1, Math.floor(($('hex-viewport').clientHeight - parseFloat(getComputedStyle($('hex-head')).height)) / hexRowHeight()));
+}
 function clampHexTop(top) { return Math.max(0, Math.min(Math.max(0, Math.ceil((selected()?.size || 0) / ui.columns) - hexVisibleRows()), Math.floor(top))); }
 function requestHex() {
   const entry = selected(); if (!entry) return;
@@ -491,12 +498,12 @@ function renderHex() {
   const cols = ui.columns, group = ui.group, utf16 = ui.encoding.startsWith('utf16');
   const selection = ui.anchor == null ? null : [Math.min(ui.anchor, ui.cursor), Math.max(ui.anchor, ui.cursor)];
   const classes = (offset, b) => `${byteClass(b)} ${offset === ui.cursor ? 'byte-cursor' : selection && offset >= selection[0] && offset <= selection[1] ? 'byte-selected' : ''}`;
-  const gap = c => c < cols - 1 && (c + 1) % group === 0 ? 8 : 0;
-  $('hex-head').innerHTML = `<span class="hex-off">offset</span><span class="hex-bytes">${Array.from({ length: cols }, (_, c) => `<span class="hex-byte" style="margin-right:${gap(c)}px">${hx(c, 2)}</span>`).join('')}</span><span class="hex-text">${esc(ui.encoding)}</span>`;
+  const gap = c => c < cols - 1 && (c + 1) % group === 0 ? .5 : 0;
+  $('hex-head').innerHTML = `<span class="hex-off">offset</span><span class="hex-bytes">${Array.from({ length: cols }, (_, c) => `<span class="hex-byte" style="margin-right:${gap(c)}rem">${hx(c, 2)}</span>`).join('')}</span><span class="hex-text">${esc(ui.encoding)}</span>`;
   let html = '';
   for (let r = 0; r < Math.ceil(bytes.length / cols); r++) {
     const offset = start + r * cols, chunk = bytes.subarray(r * cols, r * cols + cols);
-    const hex = Array.from({ length: cols }, (_, c) => c < chunk.length ? `<span data-offset="${offset + c}" class="hex-byte ${classes(offset + c, chunk[c])}" style="margin-right:${gap(c)}px">${hx(chunk[c], 2)}</span>` : `<span class="hex-byte" style="margin-right:${gap(c)}px"></span>`).join('');
+    const hex = Array.from({ length: cols }, (_, c) => c < chunk.length ? `<span data-offset="${offset + c}" class="hex-byte ${classes(offset + c, chunk[c])}" style="margin-right:${gap(c)}rem">${hx(chunk[c], 2)}</span>` : `<span class="hex-byte" style="margin-right:${gap(c)}rem"></span>`).join('');
     let chars = '';
     for (let c = 0; c < chunk.length; c += utf16 ? 2 : 1) {
       let ch;
@@ -505,7 +512,7 @@ function renderHex() {
         else { const value = ui.encoding === 'utf16le' ? chunk[c] | chunk[c + 1] << 8 : chunk[c] << 8 | chunk[c + 1]; ch = value >= 32 && (value < 127 || value >= 160 && value < 0xd800 || value > 0xdfff && value < 0xfffe) ? String.fromCharCode(value) : '.'; }
       } else ch = encChar(ui.encoding, chunk[c])[0];
       const hit = ui.cursor === offset + c || utf16 && ui.cursor === offset + c + 1;
-      chars += `<span data-offset="${offset + c}" class="hex-char ${hit ? 'byte-cursor' : classes(offset + c, chunk[c])}" style="width:${utf16 ? 18 : 9}px">${esc(ch)}</span>`;
+      chars += `<span data-offset="${offset + c}" class="hex-char ${hit ? 'byte-cursor' : classes(offset + c, chunk[c])}" style="width:${utf16 ? 1.125 : .5625}rem">${esc(ch)}</span>`;
     }
     const off = ui.offsetBase === 'hex' ? hx(offset) : String(offset).padStart(String(entry.size).length, ' ');
     html += `<div class="hex-row"><span class="hex-off ${ui.cursor >= offset && ui.cursor < offset + cols ? 'accent-text' : ''}">${off}</span><span class="hex-bytes">${hex}</span><span class="hex-text">${chars}</span></div>`;
@@ -575,7 +582,7 @@ worker.addEventListener('message', ({ data }) => {
       for (let d = 0; d < indices.length; d++) inverse[indices[d]] = d;
       layouts.set(side, { indices, inverse });
     }
-    text('version', version); text('status-engine', `isa-classifier ${version} · Apeiron/WASM`);
+    text('version', version); text('status-engine', `zrax ${version} · Apeiron/WASM`);
     text('loading', 'engine ready · ELF, PE, Mach-O, firmware, or any binary blob');
     pushLog('info', `classifier ${version} and Apeiron analysis engine ready`); syncView();
     return;
@@ -773,7 +780,7 @@ $('map-frame').addEventListener('wheel', event => {
   camera.zoomAt(Math.exp(Math.max(-1, Math.min(1, -delta * .002))), ax, ay, Math.max(8, map.worldSide / 16));
   ui.hover = offsetAt(event); applyCamera(); scheduleHistory(); renderEntropyInspector(); requestHex(); requestProbe();
 }, { passive: false });
-$('map-frame').addEventListener('contextmenu', event => { if (event.target.closest('#map-overview')) return; event.preventDefault(); const offset = offsetAt(event); if (offset != null) setCursor(offset); const menu = $('context-menu'); menu.hidden = false; menu.style.left = `${Math.min(event.clientX, innerWidth - 184)}px`; menu.style.top = `${Math.min(event.clientY, innerHeight - menu.offsetHeight - 4)}px`; menu.querySelector('button').focus(); });
+$('map-frame').addEventListener('contextmenu', event => { if (event.target.closest('#map-overview')) return; event.preventDefault(); const offset = offsetAt(event); if (offset != null) setCursor(offset); const menu = $('context-menu'); menu.hidden = false; menu.style.left = `${Math.max(0, Math.min(event.clientX, innerWidth - menu.offsetWidth - 4))}px`; menu.style.top = `${Math.max(0, Math.min(event.clientY, innerHeight - menu.offsetHeight - 4))}px`; menu.querySelector('button').focus(); });
 $('map-overview').addEventListener('pointerdown', event => {
   if (!map || event.button !== 0) return;
   event.preventDefault(); event.stopPropagation(); rememberView(); const el = event.currentTarget; el.setPointerCapture(event.pointerId);
@@ -783,7 +790,7 @@ $('map-overview').addEventListener('pointerdown', event => {
   el.addEventListener('pointerup', end, { once: true }); el.addEventListener('pointercancel', end, { once: true });
 });
 for (const id of ['hero-profile', 'entropy-profile']) $(id).addEventListener('click', event => { const e = selected(); if (!e?.size) return; const rect = event.currentTarget.getBoundingClientRect(); const offset = Math.floor(Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) * (e.size - 1)); if (id === 'hero-profile') changeTab('entropy'); setCursor(offset); });
-$('hex-viewport').addEventListener('wheel', event => { if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return; event.preventDefault(); ui.hexTop = clampHexTop(ui.hexTop + Math.sign(event.deltaY) * Math.max(1, Math.floor(Math.abs(event.deltaY) / 20))); requestHex(); }, { passive: false });
+$('hex-viewport').addEventListener('wheel', event => { if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return; event.preventDefault(); const delta = event.deltaY * (event.deltaMode === 1 ? hexRowHeight() : event.deltaMode === 2 ? $('hex-viewport').clientHeight : 1); ui.hexTop = clampHexTop(ui.hexTop + Math.sign(delta) * Math.max(1, Math.floor(Math.abs(delta) / hexRowHeight()))); requestHex(); }, { passive: false });
 $('hex-viewport').addEventListener('pointerdown', event => { const byte = event.target.closest('[data-offset]'); if (event.button !== 0 || !byte) return; event.preventDefault(); hexDragging = true; hexDragAnchor = event.shiftKey ? ui.anchor ?? ui.cursor : Number(byte.dataset.offset); setCursor(Number(byte.dataset.offset), hexDragAnchor); });
 $('hex-viewport').addEventListener('pointermove', event => { const byte = event.target.closest('[data-offset]'); if (hexDragging && event.buttons & 1 && byte) setCursor(Number(byte.dataset.offset), hexDragAnchor); });
 window.addEventListener('pointerup', () => { hexDragging = false; if (ui.anchor === ui.cursor) { ui.anchor = null; requestSelection(); } });

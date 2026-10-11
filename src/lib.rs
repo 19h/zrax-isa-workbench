@@ -1,4 +1,4 @@
-//! ISA Classifier - Universal Binary Architecture Identification
+//! Zrax - Universal Binary Architecture Identification
 //!
 //! Identifies the processor architecture of a binary: from container headers
 //! when there is one (ELF, PE/COFF, Mach-O and ~40 other formats), and from
@@ -8,7 +8,7 @@
 //! # Quick Start
 //!
 //! ```rust,no_run
-//! use isa_classifier::{classify_file, classify_bytes};
+//! use zrax::{classify_file, classify_bytes};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let result = classify_file("path/to/binary")?;
@@ -76,11 +76,11 @@ use std::path::Path;
 /// # Example
 ///
 /// ```rust,no_run
-/// use isa_classifier::classify_file;
+/// use zrax::classify_file;
 ///
 /// let result = classify_file("/bin/ls")?;
 /// println!("Architecture: {}", result.isa.name());
-/// # Ok::<(), isa_classifier::ClassifierError>(())
+/// # Ok::<(), zrax::ClassifierError>(())
 /// ```
 pub fn classify_file<P: AsRef<Path>>(path: P) -> Result<ClassificationResult> {
     let data = std::fs::read(path)?;
@@ -97,7 +97,7 @@ pub fn classify_bytes(data: &[u8]) -> Result<ClassificationResult> {
 /// # Example
 ///
 /// ```rust
-/// use isa_classifier::{classify_bytes_with_options, ClassifierOptions};
+/// use zrax::{classify_bytes_with_options, ClassifierOptions};
 ///
 /// let options = ClassifierOptions::thorough();
 /// // let result = classify_bytes_with_options(&data, &options)?;

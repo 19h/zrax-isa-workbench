@@ -1,6 +1,6 @@
 //! Comprehensive Example: Recursive Directory Analysis with Explicit Field Access
 //!
-//! This example demonstrates how to use the `isa_classifier` library to:
+//! This example demonstrates how to use the `zrax` library to:
 //! 1. Recursively iterate over all files in a directory
 //! 2. Analyze each binary file for its architecture and format
 //! 3. Access and print EVERY field from the detection results
@@ -21,7 +21,7 @@
 //! cargo run --example recursive_analysis -- --synthetic
 //! ```
 
-use isa_classifier::{
+use zrax::{
     classify_bytes,
     classify_bytes_with_options,
     // Main entry points for detection
@@ -97,7 +97,7 @@ fn main() {
 }
 
 fn print_usage(program: &str) {
-    println!("ISA Classifier - Comprehensive Example");
+    println!("Zrax - Comprehensive Example");
     println!();
     println!("Usage:");
     println!(
@@ -126,7 +126,7 @@ fn print_usage(program: &str) {
 fn enumerate_all_types() {
     println!("{}", separator('=', 80));
     println!("ISA CLASSIFIER - COMPLETE TYPE ENUMERATION");
-    println!("Library version: {}", isa_classifier::version());
+    println!("Library version: {}", zrax::version());
     println!("{}", separator('=', 80));
 
     enumerate_all_isas();
@@ -1284,7 +1284,7 @@ fn enumerate_classifier_options() {
 fn demonstrate_all_scenarios() {
     println!("{}", separator('=', 80));
     println!("ISA CLASSIFIER - SYNTHETIC BINARY DEMONSTRATION");
-    println!("Library version: {}", isa_classifier::version());
+    println!("Library version: {}", zrax::version());
     println!("{}", separator('=', 80));
     println!();
     println!("This demonstrates all possible detection scenarios using synthetic binaries.");
@@ -1730,7 +1730,7 @@ fn demonstrate_all_metadata_keys_in_action() {
     println!("  =========================================");
     println!();
 
-    use isa_classifier::{MetadataEntry, MetadataKey, MetadataValue};
+    use zrax::{MetadataEntry, MetadataKey, MetadataValue};
 
     let entries = [
         MetadataEntry::new(
@@ -1817,7 +1817,7 @@ fn demonstrate_all_extension_categories_in_action() {
     println!("  Example extensions by category:");
     println!();
 
-    use isa_classifier::ExtensionDetection;
+    use zrax::ExtensionDetection;
 
     let category_examples: &[(&str, ExtensionCategory, &[&str])] = &[
         (
@@ -2537,8 +2537,8 @@ fn demonstrate_programmatic_iteration() {
 
 fn run_directory_analysis(target_dir: &Path) {
     println!("{}", separator('=', 80));
-    println!("ISA Classifier - Recursive Directory Analysis");
-    println!("Library version: {}", isa_classifier::version());
+    println!("Zrax - Recursive Directory Analysis");
+    println!("Library version: {}", zrax::version());
     println!("Target directory: {}", target_dir.display());
     println!("{}", separator('=', 80));
     println!();
@@ -2870,7 +2870,7 @@ fn print_summary(stats: &AnalysisStats) {
 fn run_reliability_validation() {
     println!("{}", separator('=', 80));
     println!("ISA CLASSIFIER - RELIABILITY VALIDATION");
-    println!("Library version: {}", isa_classifier::version());
+    println!("Library version: {}", zrax::version());
     println!("{}", separator('=', 80));
     println!();
     println!("This validates 100% reliability in detection by systematically testing:");

@@ -14,7 +14,7 @@
 //! `IDAREF_DIR=/path/to/ida/tests/input` runs it on IDA's full test corpus
 //! (`idaref/` is a subset of it).
 
-use isa_classifier::{detect_payload, ClassificationSource, ClassifierError, ClassifierOptions, Isa};
+use zrax::{detect_payload, ClassificationSource, ClassifierError, ClassifierOptions, Isa};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
