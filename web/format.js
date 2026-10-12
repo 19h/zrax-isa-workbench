@@ -46,9 +46,12 @@ function isaName(tag) {
 function fmtEndian(e) {
   if (e === 'little') return 'Little-endian';
   if (e === 'big') return 'Big-endian';
-  if (e === 'bi_endian') return 'Bi-endian';
+  if (e === 'biendian' || e === 'bi_endian') return 'Bi-endian';
   return String(e);
 }
+
+// Short byte-order word for compact rows: 'little', 'big' or 'bi-endian'.
+const fmtEndianShort = e => (e === 'biendian' || e === 'bi_endian' ? 'bi-endian' : String(e));
 
 function fmtSource(s) {
   const m = { file_format: 'File format', heuristic: 'Heuristic', combined: 'Combined', user_specified: 'User specified' };
@@ -122,4 +125,4 @@ function fmtExtSrc(s) {
   return m[s] || String(s);
 }
 
-export { esc, fmtSize, isaName, fmtEndian, fmtSource, fmtFormatName, fmtFormat, fmtVariant, fmtMetaValue, fmtCat, fmtExtSrc, FORMAT_NAMES };
+export { esc, fmtSize, isaName, fmtEndian, fmtEndianShort, fmtSource, fmtFormatName, fmtFormat, fmtVariant, fmtMetaValue, fmtCat, fmtExtSrc, FORMAT_NAMES };

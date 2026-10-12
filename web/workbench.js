@@ -1,4 +1,4 @@
-import { esc, fmtSize, isaName, fmtEndian, fmtSource, fmtFormatName, fmtVariant, fmtMetaValue, fmtCat } from './format.js';
+import { esc, fmtSize, isaName, fmtEndian, fmtEndianShort, fmtSource, fmtFormatName, fmtVariant, fmtMetaValue, fmtCat } from './format.js';
 import { hx, ENC, encChar, parseGoto, fmtF, unixT, utf8At } from './hex-utils.js';
 import { drawMap, drawProfile, drawLegend, drawHistogram, entropyClass, complexityClass } from './canvas.js';
 import { Viewport, worldSide, baseScale, bytePosition, xy2d } from './viewport.js';
@@ -95,7 +95,7 @@ function createEntry(entry) {
 }
 function updateEntry(entry) {
   const { status, payload: p } = entry;
-  const sub = p ? `${archLabel(p)} · ${p.primary.bitwidth}-bit ${p.primary.endianness} · ${fmtFormatName(p.format.format).toLowerCase()}`
+  const sub = p ? `${archLabel(p)} · ${p.primary.bitwidth}-bit ${fmtEndianShort(p.primary.endianness)} · ${fmtFormatName(p.format.format).toLowerCase()}`
     : entry.error || statusLabel(status);
   entry.button.title = `${entry.name}\n${sub}`;
   entry.button.querySelector('.file-glyph').className = `file-glyph ${status}`;
@@ -104,7 +104,7 @@ function updateEntry(entry) {
   const cell = (className, value) => { entry.tr.querySelector('.' + className).textContent = value; };
   const st = entry.tr.querySelector('.batch-status'); st.className = `batch-status ${status}`; st.textContent = glyph(status); st.title = statusLabel(status);
   cell('batch-error', entry.error); cell('batch-architecture', p ? archLabel(p) : '—');
-  cell('batch-bits', p?.primary.bitwidth ?? '—'); cell('batch-endian', p?.primary.endianness ?? '—');
+  cell('batch-bits', p?.primary.bitwidth ?? '—'); cell('batch-endian', p ? fmtEndianShort(p.primary.endianness) : '—');
   cell('batch-format', p ? fmtFormatName(p.format.format).toLowerCase() : '—');
   cell('batch-confidence', p ? `${(p.primary.confidence * 100).toFixed(1)}%` : '—');
   cell('batch-source', p ? fmtSource(p.primary.source).toLowerCase() : '—');
@@ -159,7 +159,7 @@ function renderChrome() {
   $('hex-columns').value = ui.columns; $('hex-group').value = ui.group; $('hex-encoding').value = ui.encoding; $('hex-offset').value = ui.offsetBase;
   text('status-mode', ui.view === 'batch' ? 'BATCH' : ui.tab === 'classification' ? 'CLASSIFY' : ui.tab.toUpperCase());
   text('status-file', entry?.name || 'no file');
-  text('status-classification', entry?.payload ? `${archLabel(entry.payload)} · ${entry.payload.primary.bitwidth}-bit ${entry.payload.primary.endianness} · ${fmtFormatName(entry.payload.format.format).toLowerCase()}` : '');
+  text('status-classification', entry?.payload ? `${archLabel(entry.payload)} · ${entry.payload.primary.bitwidth}-bit ${fmtEndianShort(entry.payload.primary.endianness)} · ${fmtFormatName(entry.payload.format.format).toLowerCase()}` : '');
   persist();
   requestAnimationFrame(() => { sizeMap(); syncView(); });
 }
@@ -202,7 +202,7 @@ function renderClassification(entry) {
   let html = '<div class="classification-grid">' + panel('format', row('format', fmtFormatName(p.format.format)) + row('confidence', `${(p.format.confidence * 100).toFixed(1)}%`) + (p.format.magic_offset == null ? '' : row('magic offset', '0x' + hx(p.format.magic_offset))) + (p.format.variant_name ? row('variant', p.format.variant_name) : ''));
   if (p.metadata?.length) html += panel('metadata', p.metadata.map(m => row(m.label, fmtMetaValue(m))).join(''), p.metadata.length);
   html += '</div>';
-  if (p.slices?.length) html += panel('contained architectures', p.slices.map(s => row(`${s.label ? s.label + ' · ' : ''}${isaName(s.isa)}`, `${s.bitwidth}-bit ${s.endianness} · 0x${hx(s.offset)} · ${fmtSize(s.size)}${s.variant ? ' · ' + fmtVariant(s.variant) : ''}`)).join(''), p.slices.length);
+  if (p.slices?.length) html += panel('contained architectures', p.slices.map(s => row(`${s.label ? s.label + ' · ' : ''}${isaName(s.isa)}`, `${s.bitwidth}-bit ${fmtEndianShort(s.endianness)} · 0x${hx(s.offset)} · ${fmtSize(s.size)}${s.variant ? ' · ' + fmtVariant(s.variant) : ''}`)).join(''), p.slices.length);
   if (p.extensions?.length) {
     const groups = Map.groupBy ? Map.groupBy(p.extensions, x => x.category) : p.extensions.reduce((m, x) => m.set(x.category, [...(m.get(x.category) || []), x]), new Map());
     html += panel('isa extensions', [...groups].map(([category, extensions]) => `<div class="metadata-row"><span>${esc(fmtCat(category).toLowerCase())}</span><span class="tags">${extensions.map(x => `<span class="tag" title="${esc(`${(x.confidence * 100).toFixed(0)}% · ${x.source}`)}">${esc(x.name)}</span>`).join('')}</span></div>`).join(''), p.extensions.length);
@@ -601,7 +601,7 @@ worker.addEventListener('message', ({ data }) => {
     setStatus(entry, entry.payload ? 'done' : 'error');
     if (entry.payload) { tally(archTally, archLabel(entry.payload), 1); tally(formatTally, fmtFormatName(entry.payload.format.format).toLowerCase(), 1); }
     updateEntry(entry); renderSummary(); if (ui.sort !== 'queue') renderBatchOrder();
-    pushLog(entry.payload ? 'done' : 'error', `${entry.name} · ${entry.payload ? `${archLabel(entry.payload)} · ${entry.payload.primary.bitwidth}-bit ${entry.payload.primary.endianness}` : entry.error}${entry.elapsed == null ? '' : ` · ${entry.elapsed.toFixed(1)} ms`}`);
+    pushLog(entry.payload ? 'done' : 'error', `${entry.name} · ${entry.payload ? `${archLabel(entry.payload)} · ${entry.payload.primary.bitwidth}-bit ${fmtEndianShort(entry.payload.primary.endianness)}` : entry.error}${entry.elapsed == null ? '' : ` · ${entry.elapsed.toFixed(1)} ms`}`);
     text('announcement', `${entry.name}: ${statusLabel(entry.status)}`);
     if (ui.selected === entry.id) { renderSelected(); renderChrome(); }
   } else if (data.type === 'operation-status' && ui.selected === entry.id) {

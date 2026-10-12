@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, after, test } from 'node:test';
 import { setup, teardown, openPage, baseUrl } from './helpers.mjs';
-import { FORMAT_NAMES } from '../format.js';
+import { FORMAT_NAMES, fmtEndian, fmtEndianShort } from '../format.js';
 before(setup); after(teardown);
 
 function crc32(bytes) {
@@ -65,6 +65,7 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
       ['uimage-be', uimage(armElf(true))],
       ['zimage', zimage()],
       ['bzimage', bzimage()],
+      ['uimage-unknown-order', uimage(Buffer.alloc(64))],
     ].map(([name, bytes]) => ({ name, bytes: [...bytes] }));
     const payloads = await page.evaluate(async ({ module, fixtures }) => {
       const wasm = await import(module);
@@ -80,5 +81,10 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
     assert.equal(payloads['uimage-be'].slices[0].offset, 64);
     assert.deepEqual([payloads.zimage.format.format, payloads.zimage.primary.isa], ['zimage', 'arm']);
     assert.deepEqual([payloads.bzimage.primary.isa, payloads.bzimage.primary.bitwidth], ['x86_64', 64]);
+    // An Arm uImage without decodable code leaves the code byte order open.
+    const open = payloads['uimage-unknown-order'].primary.endianness;
+    assert.equal(open, 'biendian');
+    assert.equal(fmtEndian(open), 'Bi-endian');
+    assert.equal(fmtEndianShort(open), 'bi-endian');
   });
 }
