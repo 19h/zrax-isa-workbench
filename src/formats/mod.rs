@@ -69,6 +69,7 @@ pub mod pe;
 pub mod pef;
 pub mod retro;
 pub mod rofs;
+pub mod router;
 pub mod sgo;
 pub mod socboot2;
 pub mod socboot;
@@ -657,6 +658,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Router firmware wrappers with a magic at offset 0: Broadcom TRX,
+    // Netgear CHK and D-Link SEAMA.
+    if let Some(layout) = router::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Router(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -882,6 +891,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = coreboot::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Coreboot(layout),
+        };
+    }
+
+    // TP-Link firmware headers and SafeLoader images have no magic; the
+    // whole header structure must validate.
+    if let Some(layout) = router::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Router(layout),
         };
     }
 

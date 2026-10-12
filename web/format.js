@@ -98,6 +98,7 @@ const FORMAT_NAMES = {
   ext: 'ext filesystem',
   uefifv: 'UEFI Firmware Volume', uefite: 'UEFI TE Image', intelifd: 'Intel Flash Descriptor',
   fmap: 'Chromium FMAP', cbfs: 'coreboot CBFS',
+  trx: 'Broadcom TRX', netgearchk: 'Netgear CHK', seama: 'D-Link SEAMA', tplink: 'TP-Link firmware',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

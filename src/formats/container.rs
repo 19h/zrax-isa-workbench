@@ -15,7 +15,7 @@
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
     archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, coreboot, ext, huawei, mcu,
-    mtd, nintendo, optionrom, rofs, socboot, socboot2, uefi, zxtape, MAX_PAYLOAD,
+    mtd, nintendo, optionrom, rofs, router, socboot, socboot2, uefi, zxtape, MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -90,6 +90,8 @@ pub enum Kind {
     Uefi(uefi::Layout),
     /// A Chromium FMAP flash image or a coreboot CBFS.
     Coreboot(coreboot::Layout),
+    /// A router firmware wrapper.
+    Router(router::Layout),
 }
 
 impl Kind {
@@ -117,6 +119,7 @@ impl Kind {
             Self::Ext(layout) => layout.format(),
             Self::Uefi(layout) => layout.format(),
             Self::Coreboot(layout) => layout.format(),
+            Self::Router(layout) => layout.format(),
         }
     }
 
@@ -144,6 +147,7 @@ impl Kind {
             Self::Ext(layout) => layout.label(),
             Self::Uefi(layout) => layout.label(),
             Self::Coreboot(layout) => layout.label(),
+            Self::Router(layout) => layout.label(),
         }
     }
 
@@ -171,6 +175,7 @@ impl Kind {
             Self::Ext(layout) => layout.is_weak(),
             Self::Uefi(layout) => layout.is_weak(),
             Self::Coreboot(layout) => layout.is_weak(),
+            Self::Router(layout) => layout.is_weak(),
         }
     }
 }
@@ -203,6 +208,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Ext(layout) => ext::parse_container(data, layout),
         Kind::Uefi(layout) => uefi::parse_container(data, layout),
         Kind::Coreboot(layout) => coreboot::parse_container(data, layout),
+        Kind::Router(layout) => router::parse_container(data, layout),
     }
 }
 

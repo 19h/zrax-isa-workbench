@@ -69,6 +69,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a router firmware wrapper (Broadcom TRX, Netgear CHK,
+    /// D-Link SEAMA, TP-Link firmware headers and `SafeLoader` images).
+    #[error("Router firmware parse error: {message}")]
+    RouterImageParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a UEFI firmware volume (FFS files and sections), a TE
     /// image or an Intel flash descriptor image.
     #[error("UEFI firmware parse error: {message}")]

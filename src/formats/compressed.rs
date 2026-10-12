@@ -858,15 +858,27 @@ pub fn detect_weak(data: &[u8]) -> Option<Codec> {
     complete.then_some(codec)
 }
 
+/// LZMA properties byte of `lc=3 lp=0 pb=2`, the xz-utils and LZMA SDK
+/// default.
+const LZMA_DEFAULT_PROPERTIES: u8 = 0x5d;
+
 /// LZMA-alone files written by xz-utils and the LZMA SDK use the default
 /// properties `lc=3 lp=0 pb=2` (`0x5D`) and a power-of-two dictionary of
 /// at least 4 KiB; anything else is not tried without a container.
 pub(crate) fn is_plausible_lzma(data: &[u8]) -> bool {
-    let [properties, d0, d1, d2, d3, ..] = *data else {
+    has_lzma_header(data, LZMA_DEFAULT_PROPERTIES)
+}
+
+/// Does `data` start with an LZMA-alone header with this properties byte
+/// and a power-of-two dictionary of at least 4 KiB? Containers whose
+/// producers document other properties (`lc=1 lp=2 pb=2` router kernels
+/// built by `OpenWrt`) test for those.
+pub(crate) fn has_lzma_header(data: &[u8], properties: u8) -> bool {
+    let [found, d0, d1, d2, d3, ..] = *data else {
         return false;
     };
     let dict = u32::from_le_bytes([d0, d1, d2, d3]);
-    properties == 0x5d && dict >= 4096 && dict.is_power_of_two()
+    found == properties && dict >= 4096 && dict.is_power_of_two()
 }
 
 /// Erased flash or zero fill.

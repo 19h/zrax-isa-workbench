@@ -984,6 +984,16 @@ pub enum FileFormat {
     Fmap,
     /// coreboot file system (CBFS) region or ROM
     Cbfs,
+
+    // Router firmware wrappers
+    /// Broadcom TRX firmware image (`HDR0`)
+    Trx,
+    /// Netgear CHK firmware image
+    NetgearChk,
+    /// D-Link SEAMA firmware image (entity or seal)
+    Seama,
+    /// TP-Link firmware image (`mktplinkfw` headers and `SafeLoader`)
+    TpLink,
 }
 
 impl fmt::Display for FileFormat {
@@ -1174,6 +1184,11 @@ impl fmt::Display for FileFormat {
             // Coreboot
             FileFormat::Fmap => write!(f, "Chromium FMAP"),
             FileFormat::Cbfs => write!(f, "coreboot CBFS"),
+            // Router firmware wrappers
+            FileFormat::Trx => write!(f, "Broadcom TRX"),
+            FileFormat::NetgearChk => write!(f, "Netgear CHK"),
+            FileFormat::Seama => write!(f, "D-Link SEAMA"),
+            FileFormat::TpLink => write!(f, "TP-Link firmware"),
         }
     }
 }

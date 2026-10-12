@@ -742,6 +742,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::IntelIfd => "Intel flash descriptor",
         FileFormat::Fmap => "Chromium FMAP",
         FileFormat::Cbfs => "coreboot CBFS",
+        FileFormat::Trx => "Broadcom TRX",
+        FileFormat::NetgearChk => "Netgear CHK",
+        FileFormat::Seama => "D-Link SEAMA",
+        FileFormat::TpLink => "TP-Link firmware",
     }
 }
 

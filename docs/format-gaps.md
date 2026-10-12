@@ -125,7 +125,11 @@ and AMD PSP regions stay opaque; see [UEFI and PC flash images](uefi.md).
 Chromium FMAP (at offset 0, or found by a bounded search) and coreboot CBFS
 (`LARCHIVE` regions and master-header ROMs; LZMA/LZ4 stages, SELF segments,
 SHA-2 hash attributes verified) are implemented; see [coreboot](coreboot.md).
-Other rows are updated as their families land.
+Router wrappers (Broadcom TRX v1/v2, Netgear CHK, D-Link SEAMA, TP-Link
+mktplinkfw v1/v2/v3 and SafeLoader; TRX CRC and CHK checksums verified, MD5
+digests not verified; LZMA kernels decoded by the OpenWrt convention) are
+implemented; see [router firmware](router.md). Every row of this section is
+now implemented.
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |
