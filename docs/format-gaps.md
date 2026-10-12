@@ -13,6 +13,12 @@ Impact reflects how much existing coverage a fix unlocks, not format popularity.
 
 ## 1. Defects in existing kernel and boot-image support
 
+**Resolved 2026-10-12.** All five defects are fixed: uImage byte order,
+`XLF_KERNEL_64`, Arm zImage (little-endian, BE8 and BE32), FIT `/images`, and
+decoded kernel payloads classified recursively. bFLT no longer defaults to
+Arm. See [kernel and boot images](kernel-images.md). The table is kept as the
+original record.
+
 | Impact | Input | Current result | Location | Expected |
 | --- | --- | --- | --- | --- |
 | High | U-Boot uImage, any architecture | Reports `big` endianness for every image; an ARM/Linux uImage yields `arm 32 big 100%` | `src/formats/kernel.rs:427` | Header byte order (always big-endian) is kept separate from code byte order, as TI COFF already does; code order comes from the arch ID or the payload |

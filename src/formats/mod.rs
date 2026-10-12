@@ -655,6 +655,20 @@ pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<Classifica
     }
 }
 
+/// Parse a format built on the shared container model. Returns `None` for
+/// formats that are classified by their own path in `lib.rs`.
+pub fn parse_container_model<'a>(
+    data: &'a [u8],
+    format: &DetectedFormat,
+) -> Option<Result<container::Container<'a>>> {
+    match *format {
+        DetectedFormat::Container { kind } => Some(container::parse(data, kind)),
+        DetectedFormat::Kernel { variant } => Some(kernel::parse_container(data, variant)),
+        DetectedFormat::Bflt => Some(bflt::parse_container(data)),
+        _ => None,
+    }
+}
+
 /// Read bytes with bounds checking.
 pub fn read_bytes<'a>(data: &'a [u8], offset: usize, len: usize) -> Result<&'a [u8]> {
     if offset + len > data.len() {

@@ -81,7 +81,7 @@ pub struct Target {
 
 impl Target {
     /// A target whose byte order the format determines.
-    pub fn new(isa: Isa, bits: u8, endianness: Endianness) -> Self {
+    pub const fn new(isa: Isa, bits: u8, endianness: Endianness) -> Self {
         Self {
             isa,
             bits,
@@ -90,7 +90,7 @@ impl Target {
     }
 
     /// A target whose byte order the format leaves open.
-    pub fn without_byte_order(isa: Isa, bits: u8) -> Self {
+    pub const fn without_byte_order(isa: Isa, bits: u8) -> Self {
         Self {
             isa,
             bits,
@@ -233,6 +233,9 @@ pub struct Container<'a> {
     /// A codec wrapper: the single child is the content and its
     /// classification is reported as the container's own.
     pub transparent: bool,
+    /// Load sections hold code for the code model and are never a nested
+    /// container (kernel images whose section is the file itself).
+    pub code_sections: bool,
     /// Prefix of generated metadata keys (`<prefix>_section_0`).
     pub key_prefix: &'static str,
 }
@@ -252,6 +255,7 @@ impl<'a> Container<'a> {
             consumed: 0,
             opaque: false,
             transparent: false,
+            code_sections: false,
             key_prefix,
         }
     }

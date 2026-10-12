@@ -398,8 +398,13 @@ fn apply_target(
     let code_order = (same_family(r.isa, target.isa) && !is_unknown(r.isa)).then_some(r.endianness);
     let endianness = match (target.endianness, code_order) {
         (Some(field), Some(code)) if field != code => {
+            let evidence = if own_header {
+                format!("contained {} is {code}", r.format)
+            } else {
+                format!("code model found {code}")
+            };
             notes.push(Note::warning(format!(
-                "{label}: container byte order is {field}; code model found {code}"
+                "{label}: container byte order is {field}; {evidence}"
             )));
             field
         }
@@ -544,7 +549,7 @@ fn classify_container(
     }
     // Byte order and extensions for a named target come from the first
     // component of the same family.
-    let mut target_evidence: Option<(Endianness, Vec<ExtensionDetection>, String)> = None;
+    let mut target_evidence: Option<TargetEvidence> = None;
     let mut unlisted = 0usize;
     for child in &container.children {
         if out.slices.len() >= formats::container::MAX_COMPONENTS {
@@ -558,11 +563,14 @@ fn classify_container(
         let isa = component.result.isa;
         match container.target {
             Some(target) if same_family(isa, target.isa) && target_evidence.is_none() => {
-                target_evidence = Some((
-                    component.result.endianness,
-                    component.extensions.clone(),
-                    child.label.clone(),
-                ));
+                target_evidence = Some(TargetEvidence {
+                    endianness: component.result.endianness,
+                    extensions: component.extensions.clone(),
+                    source: child.label.clone(),
+                    // The container states this child's code byte order
+                    // separately (Arm BE8 instructions).
+                    separate_order: child.target.is_some_and(|t| t.endianness.is_some()),
+                });
             }
             None if is_unknown(out.result.isa) && !is_unknown(isa) => {
                 if let Some(ranked) = &component.candidates {
@@ -614,9 +622,10 @@ fn classify_sections(
     options: &ClassifierOptions,
     depth: usize,
     out: &mut ContainerOutcome,
-    target_evidence: &mut Option<(Endianness, Vec<ExtensionDetection>, String)>,
+    target_evidence: &mut Option<TargetEvidence>,
 ) {
-    let inner = if depth < MAX_NESTING && container.sections.len() == 1 {
+    let nested = !container.code_sections && container.sections.len() == 1;
+    let inner = if depth < MAX_NESTING && nested {
         classify_depth(payload, options, depth + 1)
     } else {
         let (result, candidates) = heuristic(payload, options);
@@ -649,11 +658,12 @@ fn classify_sections(
                     target.isa, inner.result.isa
                 )));
             } else if target_evidence.is_none() {
-                *target_evidence = Some((
-                    inner.result.endianness,
-                    inner.extensions,
-                    "the loaded code".to_string(),
-                ));
+                *target_evidence = Some(TargetEvidence {
+                    endianness: inner.result.endianness,
+                    extensions: inner.extensions,
+                    source: "the loaded code".to_string(),
+                    separate_order: false,
+                });
             }
         }
         None if is_unknown(out.result.isa) => {
@@ -670,15 +680,26 @@ fn classify_sections(
     }
 }
 
+/// What the first same-family component says about a container's named
+/// target.
+struct TargetEvidence {
+    endianness: Endianness,
+    extensions: Vec<ExtensionDetection>,
+    source: String,
+    /// The container states this component's code byte order separately,
+    /// so it cannot contradict the container's own.
+    separate_order: bool,
+}
+
 /// A named target that leaves the code byte order open takes it from the
 /// first same-family component; otherwise the order is reported as
 /// undetermined (bi-endian).
 fn resolve_target_order(
     target: formats::container::Target,
-    evidence: Option<(Endianness, Vec<ExtensionDetection>, String)>,
+    evidence: Option<TargetEvidence>,
     out: &mut ContainerOutcome,
 ) {
-    let Some((endianness, extensions, source)) = evidence else {
+    let Some(evidence) = evidence else {
         if target.endianness.is_none() {
             out.notes.push(Note::info(
                 "Code byte order is not encoded in the header and could not be determined from the code",
@@ -688,17 +709,21 @@ fn resolve_target_order(
     };
     match target.endianness {
         None => {
-            out.result.endianness = endianness;
+            out.result.endianness = evidence.endianness;
             out.notes.push(Note::info(format!(
-                "Code byte order {endianness} determined from {source}"
+                "Code byte order from {}: {}",
+                evidence.source, evidence.endianness
             )));
         }
-        Some(field) if field != endianness => out.notes.push(Note::warning(format!(
-            "Header byte order is {field}; {source} classifies as {endianness}"
-        ))),
+        Some(field) if field != evidence.endianness && !evidence.separate_order => {
+            out.notes.push(Note::warning(format!(
+                "Header byte order is {field}; {} classifies as {}",
+                evidence.source, evidence.endianness
+            )));
+        }
         Some(_) => {}
     }
-    out.extensions = Some(extensions);
+    out.extensions = Some(evidence.extensions);
 }
 
 /// A codec wrapper reports its decoded content as its own: ISA, candidates,
@@ -894,8 +919,11 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
             code_payload = Some(std::borrow::Cow::Owned(scanned));
             r
         }
-        formats::DetectedFormat::Container { kind } => {
-            let container = formats::container::parse(data, kind)?;
+        model @ (formats::DetectedFormat::Container { .. }
+        | formats::DetectedFormat::Kernel { .. }
+        | formats::DetectedFormat::Bflt) => {
+            let container =
+                formats::parse_container_model(data, &model).expect("container-model format")?;
             let outcome = classify_container(&container, options, depth)?;
             candidates = outcome.candidates;
             slices = outcome.slices;
@@ -1251,15 +1279,7 @@ fn format_for_console(variant: &formats::console::ConsoleFormat) -> FileFormat {
 
 /// Get FileFormat for kernel variant.
 fn format_for_kernel(variant: &formats::kernel::KernelFormat) -> FileFormat {
-    use formats::kernel::KernelFormat;
-    match variant {
-        KernelFormat::LinuxX86 { .. } | KernelFormat::LinuxArm64 | KernelFormat::LinuxRiscv => {
-            FileFormat::ZImage
-        }
-        KernelFormat::UImage { .. } => FileFormat::UImage,
-        KernelFormat::Fit => FileFormat::Fit,
-        KernelFormat::Dtb => FileFormat::Dtb,
-    }
+    formats::kernel::file_format(*variant)
 }
 
 /// Get FileFormat for hex variant.

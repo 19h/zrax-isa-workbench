@@ -773,7 +773,7 @@ pub fn detect_weak(data: &[u8]) -> Option<Codec> {
 /// LZMA-alone files written by xz-utils and the LZMA SDK use the default
 /// properties `lc=3 lp=0 pb=2` (`0x5D`) and a power-of-two dictionary of
 /// at least 4 KiB; anything else is not tried without a container.
-fn is_plausible_lzma(data: &[u8]) -> bool {
+pub(crate) fn is_plausible_lzma(data: &[u8]) -> bool {
     let [properties, d0, d1, d2, d3, ..] = *data else {
         return false;
     };

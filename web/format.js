@@ -68,7 +68,7 @@ const FORMAT_NAMES = {
   aout: 'a.out', plan9_aout: 'Plan 9 a.out', plan9aout: 'Plan 9 a.out', minix_aout: 'Minix a.out', minixaout: 'Minix a.out',
   mz: 'MZ/DOS', ne: 'NE', le: 'LE', lx: 'LX', com: 'COM', omf: 'OMF', pef: 'PEF',
   intel_hex: 'Intel HEX', intelhex: 'Intel HEX', srec: 'S-record', ti_txt: 'TI-TXT', titxt: 'TI-TXT',
-  bflt: 'bFLT', dxe: 'DXE', goff: 'GOFF', mvs_load: 'MVS Load', mvsload: 'MVS Load', som: 'SOM',
+  bflt: 'bFLT', dxe: 'DXE', zimage: 'Linux Kernel Image', uimage: 'U-Boot uImage', fit: 'U-Boot FIT', dtb: 'Device Tree Blob', goff: 'GOFF', mvs_load: 'MVS Load', mvsload: 'MVS Load', som: 'SOM',
   rsx11: 'RSX-11', vms: 'VMS',
   gzip: 'gzip', zlib: 'zlib', xz: 'xz', lzma: 'LZMA', lz4: 'LZ4', zstd: 'Zstandard', bzip2: 'bzip2',
   lzop: 'lzop', lzfse: 'LZFSE', lzss: 'Apple LZSS',
