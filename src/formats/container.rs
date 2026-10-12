@@ -14,7 +14,8 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
-    automotive, blackfin_ldr, chiptune, compressed, huawei, optionrom, zxtape, MAX_PAYLOAD,
+    automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, optionrom, zxtape,
+    MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -59,6 +60,8 @@ pub enum Kind {
     Huawei(huawei::Layout),
     /// A ZX Spectrum tape image.
     ZxTape(zxtape::Layout),
+    /// An FPGA configuration bitstream.
+    Bitstream(bitstream::Layout),
 }
 
 impl Kind {
@@ -72,6 +75,7 @@ impl Kind {
             Self::OptionRom(layout) => layout.format(),
             Self::Huawei(layout) => layout.format(),
             Self::ZxTape(layout) => layout.format(),
+            Self::Bitstream(layout) => layout.format(),
         }
     }
 
@@ -85,6 +89,7 @@ impl Kind {
             Self::OptionRom(layout) => layout.label(),
             Self::Huawei(layout) => layout.label(),
             Self::ZxTape(layout) => layout.label(),
+            Self::Bitstream(layout) => layout.label(),
         }
     }
 
@@ -98,6 +103,7 @@ impl Kind {
             Self::OptionRom(layout) => layout.is_weak(),
             Self::Huawei(layout) => layout.is_weak(),
             Self::ZxTape(layout) => layout.is_weak(),
+            Self::Bitstream(layout) => layout.is_weak(),
         }
     }
 }
@@ -116,6 +122,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::OptionRom(layout) => optionrom::parse_container(data, layout),
         Kind::Huawei(layout) => huawei::parse_container(data, layout),
         Kind::ZxTape(layout) => zxtape::parse_container(data, layout),
+        Kind::Bitstream(layout) => bitstream::parse_container(data, layout),
     }
 }
 

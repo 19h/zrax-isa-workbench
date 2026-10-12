@@ -84,6 +84,7 @@ const FORMAT_NAMES = {
   nsf: 'NES Sound Format', sid: 'C64 SID Tune', gbs: 'Game Boy Sound System',
   blackfinldr: 'Blackfin LDR', pcioptionrom: 'Option ROM', huaweiupdate: 'Huawei UPDATE.APP',
   zxtape: 'ZX Spectrum Tape',
+  xilinxbit: 'Xilinx bitstream', latticebitstream: 'Lattice bitstream', intelfpga: 'Intel FPGA configuration',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

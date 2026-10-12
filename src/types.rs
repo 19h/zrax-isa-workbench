@@ -861,6 +861,13 @@ pub enum FileFormat {
     HuaweiUpdate,
     /// ZX Spectrum tape image (TZX or TAP)
     ZxTape,
+    // FPGA bitstreams
+    /// Xilinx `.bit` file or headerless Xilinx configuration data
+    XilinxBit,
+    /// Lattice iCE40 or ECP5/MachXO/Nexus bitstream
+    LatticeBitstream,
+    /// Intel (Altera) FPGA configuration file (Cyclone V `.rbf`, `.pof`)
+    IntelFpga,
 }
 
 impl fmt::Display for FileFormat {
@@ -987,6 +994,10 @@ impl fmt::Display for FileFormat {
             FileFormat::PciOptionRom => write!(f, "Option ROM"),
             FileFormat::HuaweiUpdate => write!(f, "Huawei UPDATE.APP"),
             FileFormat::ZxTape => write!(f, "ZX Spectrum tape"),
+            // FPGA bitstreams
+            FileFormat::XilinxBit => write!(f, "Xilinx bitstream"),
+            FileFormat::LatticeBitstream => write!(f, "Lattice bitstream"),
+            FileFormat::IntelFpga => write!(f, "Intel FPGA configuration"),
         }
     }
 }

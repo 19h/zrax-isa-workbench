@@ -27,6 +27,7 @@ pub mod automotive;
 pub mod bcf;
 pub mod bflt;
 pub mod blackfin_ldr;
+pub mod bitstream;
 pub mod checksum;
 pub mod chiptune;
 pub mod coff;
@@ -507,6 +508,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // FPGA bitstreams: a Xilinx `.bit` header, the POF magic, or a Lattice
+    // comment block immediately followed by its preamble.
+    if let Some(layout) = bitstream::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Bitstream(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -658,6 +667,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = zxtape::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::ZxTape(layout),
+        };
+    }
+
+    // Headerless FPGA bitstreams: the Xilinx synchronization sequence with a
+    // valid packet stream, an iCE40 command stream with its CRC, or a
+    // Cyclone V option frame with its CRC.
+    if let Some(layout) = bitstream::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Bitstream(layout),
         };
     }
 

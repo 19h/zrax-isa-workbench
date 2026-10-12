@@ -54,6 +54,14 @@ pub enum ClassifierError {
         limit: usize,
     },
 
+    /// Error parsing an FPGA configuration bitstream (Xilinx, Lattice,
+    /// Intel).
+    #[error("FPGA bitstream parse error: {message}")]
+    BitstreamParseError {
+        /// What is wrong with the bitstream.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

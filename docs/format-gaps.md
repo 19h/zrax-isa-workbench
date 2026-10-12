@@ -170,6 +170,13 @@ a union bound suggests raising the 16-bit total-evidence threshold by at least
 
 ## 8. Non-code recognizers
 
+**Resolved 2026-10-12**: FPGA bitstreams are recognized and excluded from
+ISA scoring. Xilinx `.bit` (strong) and headerless `.bin` in both word orders
+(weak); Lattice iCE40 (strong with a comment block, weak and CRC-verified
+without one) and ECP5/MachXO/Nexus; Intel Cyclone V `.rbf` (weak, option-frame
+CRC) and `.pof` (strong). `.sof` and Arria 10 `.rbf` have no public layout.
+See [FPGA bitstreams](bitstream.md).
+
 FPGA bitstreams should be recognized and excluded from ISA scoring, as D10 does
 for its FPGA component ([D10 support](d10-container.md)). They currently reach
 the raw-code model.

@@ -7,9 +7,15 @@
 //! `0xFFFF`, no final XOR) is the Nintendo DS header checksum. CRC-64 is
 //! the ECMA-182 / XZ variant (reflected polynomial `0xC96C5795D7870F42`,
 //! initial value and final XOR all ones; XZ file format 1.2.1, section 6).
+//! CRC-16/IBM-3740 (polynomial `0x1021`, most significant bit first,
+//! initial value `0xFFFF`, no final XOR; also called CRC-16/CCITT-FALSE) is
+//! the Lattice iCE40 bitstream CRC.
 
 /// Reflected IEEE 802.3 CRC-32 polynomial.
 const CRC32_POLYNOMIAL: u32 = 0xedb8_8320;
+
+/// CRC-16/IBM-3740 polynomial, most significant bit first.
+const CRC16_CCITT_POLYNOMIAL: u16 = 0x1021;
 
 /// Reflected ECMA-182 CRC-64 polynomial.
 const CRC64_POLYNOMIAL: u64 = 0xc96c_5795_d787_0f42;
@@ -122,6 +128,27 @@ pub fn crc16_modbus(data: &[u8]) -> u16 {
     crc
 }
 
+/// Continue a CRC-16/IBM-3740 over `data`. `crc` is the register (start
+/// with `0xFFFF`); appending the result big-endian brings it to zero.
+pub fn crc16_ibm3740_update(mut crc: u16, data: &[u8]) -> u16 {
+    for &b in data {
+        crc ^= u16::from(b) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 == 0 {
+                crc << 1
+            } else {
+                (crc << 1) ^ CRC16_CCITT_POLYNOMIAL
+            };
+        }
+    }
+    crc
+}
+
+/// CRC-16/IBM-3740 of `data`.
+pub fn crc16_ibm3740(data: &[u8]) -> u16 {
+    crc16_ibm3740_update(0xffff, data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +182,15 @@ mod tests {
             b = (b + a) % u64::from(ADLER_MODULUS);
         }
         assert_eq!(u64::from(adler32(&data)), (b << 16) | a);
+    }
+
+    /// CRC RevEng catalogue check value for CRC-16/IBM-3740, and the zero
+    /// residue after the big-endian CRC that the iCE40 CRC check relies on.
+    #[test]
+    fn crc16_ibm3740_matches_its_check_value_and_residue() {
+        assert_eq!(crc16_ibm3740(b"123456789"), 0x29b1);
+        let mut message = b"123456789".to_vec();
+        message.extend_from_slice(&0x29b1u16.to_be_bytes());
+        assert_eq!(crc16_ibm3740(&message), 0);
     }
 }

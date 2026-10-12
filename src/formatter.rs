@@ -692,6 +692,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::PciOptionRom => "Option ROM",
         FileFormat::HuaweiUpdate => "Huawei UPDATE.APP",
         FileFormat::ZxTape => "ZX Spectrum tape",
+        FileFormat::XilinxBit => "Xilinx bitstream",
+        FileFormat::LatticeBitstream => "Lattice bitstream",
+        FileFormat::IntelFpga => "Intel FPGA configuration",
     }
 }
 
