@@ -833,6 +833,16 @@ pub enum FileFormat {
     Lzfse,
     /// Apple kernelcache LZSS/LZVN image (`complzss`)
     Lzss,
+
+    // Automotive
+    /// ASAM ODX document (ODX-F flash data)
+    Odx,
+    /// Honda RWD calibration file
+    HondaRwd,
+    /// Toyota CUW calibration container
+    ToyotaCuw,
+    /// Mercedes-Benz CFF (Caesar) flash file
+    MercedesCff,
 }
 
 impl fmt::Display for FileFormat {
@@ -945,6 +955,11 @@ impl fmt::Display for FileFormat {
             FileFormat::Lzop => write!(f, "lzop"),
             FileFormat::Lzfse => write!(f, "LZFSE"),
             FileFormat::Lzss => write!(f, "Apple LZSS"),
+            // Automotive
+            FileFormat::Odx => write!(f, "ASAM ODX"),
+            FileFormat::HondaRwd => write!(f, "Honda RWD"),
+            FileFormat::ToyotaCuw => write!(f, "Toyota CUW"),
+            FileFormat::MercedesCff => write!(f, "Mercedes CFF"),
         }
     }
 }

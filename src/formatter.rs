@@ -681,6 +681,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Lzop => "lzop",
         FileFormat::Lzfse => "LZFSE",
         FileFormat::Lzss => "Apple LZSS",
+        FileFormat::Odx => "ASAM ODX",
+        FileFormat::HondaRwd => "Honda RWD",
+        FileFormat::ToyotaCuw => "Toyota CUW",
+        FileFormat::MercedesCff => "Mercedes CFF",
     }
 }
 

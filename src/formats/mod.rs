@@ -23,6 +23,7 @@ pub mod amiga_hunk;
 pub mod aof;
 pub mod aout;
 pub mod ar;
+pub mod automotive;
 pub mod bcf;
 pub mod bflt;
 pub mod checksum;
@@ -451,6 +452,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::TiC55xBoot;
     }
 
+    // Automotive flash containers: ODX root element, CUW magic, or an RWD
+    // signature whose trailing checksum matches.
+    if let Some(layout) = automotive::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Automotive(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -579,6 +588,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     // Checked late because it uses structural heuristics (no magic bytes)
     if epr::detect(data) {
         return DetectedFormat::Epr;
+    }
+
+    // Mercedes CFF has no magic: its checksum and header must be consistent.
+    if let Some(layout) = automotive::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Automotive(layout),
+        };
     }
 
     // zlib and LZMA-alone: two-byte or properties-only signatures,

@@ -54,6 +54,13 @@ pub enum ClassifierError {
         limit: usize,
     },
 
+    /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
+    #[error("Automotive container parse error: {message}")]
+    AutomotiveParseError {
+        /// What is wrong with the container.
+        message: String,
+    },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },

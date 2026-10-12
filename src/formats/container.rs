@@ -13,7 +13,7 @@
 //! `transform` names it and the bytes are owned.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{compressed, MAX_PAYLOAD};
+use crate::formats::{automotive, compressed, MAX_PAYLOAD};
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
     Variant,
@@ -45,6 +45,8 @@ pub fn is_recognized(prefix: &[u8]) -> bool {
 pub enum Kind {
     /// A standalone compressed stream.
     Compressed(compressed::Codec),
+    /// An automotive flash container.
+    Automotive(automotive::Layout),
 }
 
 impl Kind {
@@ -52,6 +54,7 @@ impl Kind {
     pub fn format(self) -> FileFormat {
         match self {
             Self::Compressed(codec) => codec.format(),
+            Self::Automotive(layout) => layout.format(),
         }
     }
 
@@ -59,6 +62,7 @@ impl Kind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Compressed(codec) => codec.label(),
+            Self::Automotive(layout) => layout.label(),
         }
     }
 
@@ -66,6 +70,7 @@ impl Kind {
     pub fn is_weak(self) -> bool {
         match self {
             Self::Compressed(codec) => codec.is_weak(),
+            Self::Automotive(layout) => layout.is_weak(),
         }
     }
 }
@@ -78,6 +83,7 @@ impl Kind {
 pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
     match kind {
         Kind::Compressed(codec) => compressed::parse_container(data, codec),
+        Kind::Automotive(layout) => automotive::parse_container(data, layout),
     }
 }
 

@@ -133,6 +133,10 @@ The SNES CPU (65816) has no model class; `m7700` is the nearest.
 
 These would extend the VBF, SGO, FRF, SOX, EPR, OLS and BCF support.
 
+**Implemented 2026-10-12** for ODX-F, Honda RWD (`0x5A`, `0x31`), Toyota CUW and
+Mercedes CFF; PDX awaits ZIP; SMR-F has no public layout. See
+[automotive containers](automotive.md).
+
 | Impact | Format | Identification | Notes |
 | --- | --- | --- | --- |
 | High | ASAM ODX-F / PDX | PDX is a ZIP with `index.xml`; ODX-F `FLASHDATA` elements declare `DATAFORMAT` (Intel HEX, Motorola S, binary or user-defined), inline or external data, and segments with start addresses | Vendor-neutral; needs ZIP (section 3). Inline hex data can go to the existing hex parsers |

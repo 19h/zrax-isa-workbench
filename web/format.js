@@ -72,6 +72,7 @@ const FORMAT_NAMES = {
   rsx11: 'RSX-11', vms: 'VMS',
   gzip: 'gzip', zlib: 'zlib', xz: 'xz', lzma: 'LZMA', lz4: 'LZ4', zstd: 'Zstandard', bzip2: 'bzip2',
   lzop: 'lzop', lzfse: 'LZFSE', lzss: 'Apple LZSS',
+  odx: 'ASAM ODX', hondarwd: 'Honda RWD', toyotacuw: 'Toyota CUW', mercedescff: 'Mercedes CFF',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }
