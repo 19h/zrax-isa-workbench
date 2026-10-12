@@ -82,6 +82,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Huawei `UPDATE.APP` package.
+    #[error("Huawei package parse error: {message}")]
+    HuaweiParseError {
+        /// What is wrong with the package.
+        message: String,
+    },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },

@@ -44,6 +44,7 @@ pub mod fatelf;
 pub mod frf;
 pub mod goff;
 pub mod hex;
+pub mod huawei;
 pub mod java;
 pub mod kernel;
 pub mod llvm_bc;
@@ -480,6 +481,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = blackfin_ldr::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::BlackfinLdr(layout),
+        };
+    }
+
+    // Huawei UPDATE.APP: entry magic `55 AA 5A A5` after a zero prefix.
+    // Checked before option ROMs, which share the `55 AA` prefix.
+    if let Some(layout) = huawei::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Huawei(layout),
         };
     }
 

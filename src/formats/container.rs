@@ -13,7 +13,9 @@
 //! `transform` names it and the bytes are owned.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{automotive, blackfin_ldr, chiptune, compressed, optionrom, MAX_PAYLOAD};
+use crate::formats::{
+    automotive, blackfin_ldr, chiptune, compressed, huawei, optionrom, MAX_PAYLOAD,
+};
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
     Variant,
@@ -53,6 +55,8 @@ pub enum Kind {
     BlackfinLdr(blackfin_ldr::Layout),
     /// A PCI or legacy option ROM.
     OptionRom(optionrom::Layout),
+    /// A Huawei `UPDATE.APP` package.
+    Huawei(huawei::Layout),
 }
 
 impl Kind {
@@ -64,6 +68,7 @@ impl Kind {
             Self::Chiptune(layout) => layout.format(),
             Self::BlackfinLdr(layout) => layout.format(),
             Self::OptionRom(layout) => layout.format(),
+            Self::Huawei(layout) => layout.format(),
         }
     }
 
@@ -75,6 +80,7 @@ impl Kind {
             Self::Chiptune(layout) => layout.label(),
             Self::BlackfinLdr(layout) => layout.label(),
             Self::OptionRom(layout) => layout.label(),
+            Self::Huawei(layout) => layout.label(),
         }
     }
 
@@ -86,6 +92,7 @@ impl Kind {
             Self::Chiptune(layout) => layout.is_weak(),
             Self::BlackfinLdr(layout) => layout.is_weak(),
             Self::OptionRom(layout) => layout.is_weak(),
+            Self::Huawei(layout) => layout.is_weak(),
         }
     }
 }
@@ -102,6 +109,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Chiptune(layout) => chiptune::parse_container(data, layout),
         Kind::BlackfinLdr(layout) => blackfin_ldr::parse_container(data, layout),
         Kind::OptionRom(layout) => optionrom::parse_container(data, layout),
+        Kind::Huawei(layout) => huawei::parse_container(data, layout),
     }
 }
 

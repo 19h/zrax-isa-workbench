@@ -857,6 +857,8 @@ pub enum FileFormat {
     BlackfinLdr,
     /// PCI expansion ROM or legacy option ROM
     PciOptionRom,
+    /// Huawei `UPDATE.APP` firmware package
+    HuaweiUpdate,
 }
 
 impl fmt::Display for FileFormat {
@@ -981,6 +983,7 @@ impl fmt::Display for FileFormat {
             // Boot streams
             FileFormat::BlackfinLdr => write!(f, "Blackfin LDR"),
             FileFormat::PciOptionRom => write!(f, "Option ROM"),
+            FileFormat::HuaweiUpdate => write!(f, "Huawei UPDATE.APP"),
         }
     }
 }
