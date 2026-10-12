@@ -62,16 +62,14 @@ const MAX_METADATA_RECORDS: usize = 64;
 /// Record type of the file header, which comes first.
 const HEADER_RECORD: u8 = 0x01;
 
-/// Known ECU type strings and their corresponding ISA mappings.
+/// Known ECU type strings and the processor family their product uses.
+/// A product name is not ISA evidence (AGENTS.md 3.1): the table only lets
+/// notes say whether the payload's ISA agrees with the string.
 struct EcuTypeMapping {
     /// Substring to match in EPR metadata
     pattern: &'static [u8],
-    /// Resulting ISA
+    /// ISA of the product's processor family
     isa: Isa,
-    /// Endianness of the ECU's processor
-    endianness: Endianness,
-    /// Bitwidth
-    bitwidth: u8,
     /// Human-readable description
     description: &'static str,
 }
@@ -85,127 +83,93 @@ const ECU_MAPPINGS: &[EcuTypeMapping] = &[
     EcuTypeMapping {
         pattern: b"EDC17",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Bosch EDC17 (TriCore)",
     },
     EcuTypeMapping {
         pattern: b"MED17",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Bosch MED17 (TriCore)",
     },
     EcuTypeMapping {
         pattern: b"MG1C",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Bosch MG1 (TriCore)",
     },
     EcuTypeMapping {
         pattern: b"MD1C",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Bosch MD1 (TriCore)",
     },
     EcuTypeMapping {
         pattern: b"TriCore",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "TriCore (explicit reference)",
     },
     // Bosch EDC16 → Freescale MPC5xx (PowerPC-based)
     EcuTypeMapping {
         pattern: b"EDC16",
         isa: Isa::Ppc,
-        endianness: Endianness::Big,
-        bitwidth: 32,
         description: "Bosch EDC16 (MPC5xx/PowerPC)",
     },
     EcuTypeMapping {
         pattern: b"MPC5",
         isa: Isa::Ppc,
-        endianness: Endianness::Big,
-        bitwidth: 32,
         description: "Freescale MPC5xx (PowerPC)",
     },
     // Bosch EDC15 / ME7 / MSA15 → Infineon/Siemens C16x
     EcuTypeMapping {
         pattern: b"EDC15",
         isa: Isa::C166,
-        endianness: Endianness::Little,
-        bitwidth: 16,
         description: "Bosch EDC15 (C16x)",
     },
     EcuTypeMapping {
         pattern: b"ME7",
         isa: Isa::C166,
-        endianness: Endianness::Little,
-        bitwidth: 16,
         description: "Bosch ME7 (C16x)",
     },
     EcuTypeMapping {
         pattern: b"MSA15",
         isa: Isa::C166,
-        endianness: Endianness::Little,
-        bitwidth: 16,
         description: "Bosch MSA15 (C16x)",
     },
     EcuTypeMapping {
         pattern: b"C167",
         isa: Isa::C166,
-        endianness: Endianness::Little,
-        bitwidth: 16,
         description: "Infineon C167 (C16x family)",
     },
     // Bosch ME9 / MED9 → Infineon TriCore (TC1766)
     EcuTypeMapping {
         pattern: b"MED9",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Bosch MED9 (TriCore TC1766)",
     },
     EcuTypeMapping {
         pattern: b"ME9",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Bosch ME9 (TriCore)",
     },
     // Siemens/Continental SID → various, but often TriCore for SID8xx
     EcuTypeMapping {
         pattern: b"SID80",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Siemens SID80x (TriCore)",
     },
     // Siemens SID2xx → ST10/C16x
     EcuTypeMapping {
         pattern: b"SID20",
         isa: Isa::C166,
-        endianness: Endianness::Little,
-        bitwidth: 16,
         description: "Siemens SID20x (C16x/ST10)",
     },
     // Magneti Marelli → various
     EcuTypeMapping {
         pattern: b"MJ8",
         isa: Isa::Unknown(0),
-        endianness: Endianness::Little,
-        bitwidth: 0,
         description: "Magneti Marelli MJ8 (mixed platforms)",
     },
     // Denso → Renesas SH/V850
     EcuTypeMapping {
         pattern: b"Denso",
         isa: Isa::Sh,
-        endianness: Endianness::Big,
-        bitwidth: 32,
         description: "Denso (SuperH/V850)",
     },
     // VW/Audi EV_ECM variant coding strings
@@ -216,32 +180,24 @@ const ECU_MAPPINGS: &[EcuTypeMapping] = &[
     EcuTypeMapping {
         pattern: b"EV_ECM",
         isa: Isa::Tricore,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "VW/Audi ECM variant coding (likely EDC17/MED17 TriCore)",
     },
     // NEC 78K0R EEPROM references
     EcuTypeMapping {
         pattern: b"78K0R",
         isa: Isa::K78k0r,
-        endianness: Endianness::Little,
-        bitwidth: 16,
         description: "NEC 78K0R",
     },
     // Renesas V850 references
     EcuTypeMapping {
         pattern: b"V850",
         isa: Isa::V850,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Renesas V850",
     },
     // Renesas RH850 references
     EcuTypeMapping {
         pattern: b"RH850",
         isa: Isa::Rh850,
-        endianness: Endianness::Little,
-        bitwidth: 32,
         description: "Renesas RH850",
     },
 ];
@@ -406,23 +362,24 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
     // Phase 3: Extract raw payload data for heuristic analysis
     let payload = extract_payload(data, total_records);
 
-    // Phase 4: Build the result
-    let mut result = if let Some(ecu) = &ecu_match {
-        // We have an ECU type match — use it with high confidence
+    // Phase 4: Build the result from the payload. An ECU type string names
+    // a product, not a processor field, so it is only compared with the
+    // payload's ISA in a note.
+    let mut result = if payload.is_empty() {
+        // No payload at all (all records are padding)
         let mut r = ClassificationResult::from_format(
-            ecu.isa,
-            ecu.bitwidth,
-            ecu.endianness,
+            Isa::Unknown(0),
+            0,
+            Endianness::Little,
             FileFormat::Epr,
         );
-        r.confidence = 0.95;
-        r.source = crate::types::ClassificationSource::Combined;
+        r.confidence = 0.0;
         r.metadata
             .notes
-            .push(format!("ECU type: {}", ecu.description));
+            .push("EPR container detected but contains no data payload".into());
         r
-    } else if !payload.is_empty() {
-        // No ECU string match — fall back to heuristic analysis on extracted payload
+    } else {
+        // Heuristic analysis of the extracted payload
         let options = ClassifierOptions::new();
         match crate::heuristics::analyze(&payload, &options) {
             Ok(mut heuristic_result) => {
@@ -449,20 +406,20 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
                 r
             }
         }
-    } else {
-        // No payload at all (all records are padding)
-        let mut r = ClassificationResult::from_format(
-            Isa::Unknown(0),
-            0,
-            Endianness::Little,
-            FileFormat::Epr,
-        );
-        r.confidence = 0.0;
-        r.metadata
-            .notes
-            .push("EPR container detected but contains no data payload".into());
-        r
     };
+
+    if let Some(ecu) = ecu_match {
+        let name = String::from_utf8_lossy(ecu.pattern);
+        let relation = if result.isa == ecu.isa {
+            ", which agrees with the payload"
+        } else {
+            "; a product name, not ISA evidence"
+        };
+        result.metadata.notes.push(format!(
+            "ECU type string {name} suggests {}{relation}",
+            ecu.description
+        ));
+    }
 
     // Enrich result with metadata
     result
@@ -985,6 +942,22 @@ mod tests {
         assert!(is_vin_string("WV1ZZZ7HZAH219042"));
         assert!(is_vin_string("WAUZZZ4H8BN001546"));
         assert!(!is_vin_string("SHORTVIN"));
+    }
+
+    #[test]
+    fn ecu_type_strings_are_notes_not_isa_evidence() {
+        let mut payload = [0u8; PAYLOAD_SIZE];
+        payload[..6].copy_from_slice(b"EDC17C");
+        let records = vec![
+            (0x01u8, b"04-11-09" as &[u8]),
+            (0x17, &payload[..]),
+            (0x00, &[]),
+            (0x00, &[]),
+        ];
+        let result = parse(&make_test_epr(&records)).unwrap();
+        assert_ne!(result.isa, Isa::Tricore);
+        assert!(result.metadata.notes.iter().any(|n| n
+            == "ECU type string EDC17 suggests Bosch EDC17 (TriCore); a product name, not ISA evidence"));
     }
 
     #[test]
