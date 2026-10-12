@@ -1,4 +1,5 @@
-//! LZO1X decompression and the lzop file format.
+//! LZO1X decompression (lzop blocks and raw streams) and the lzop file
+//! format.
 //!
 //! The LZO1X bitstream follows Linux `Documentation/staging/lzo.rst` and
 //! `lib/lzo/lzo1x_decompress_safe.c` (v6.6), without the Linux-only
@@ -69,9 +70,10 @@ pub(super) fn lzo1x(input: &[u8], expected: usize) -> Result<Vec<u8>> {
     Ok(decoder.out)
 }
 
-/// Decode one raw LZO1X block that has no declared size, as Squashfs
-/// stores data, into at most `limit` bytes. The block ends at its
-/// end-of-stream marker; `consumed` says where.
+/// Decode one raw LZO1X block that has no declared size, as Squashfs,
+/// UBIFS and JFFS2 store data, into at most `limit` bytes. The block ends
+/// at its end-of-stream marker; `consumed` says where, so containers can
+/// compare it and the decoded size with what they stored.
 pub(super) fn lzo1x_block(input: &[u8], limit: usize) -> Result<Decoded> {
     let mut decoder = Lzo1x {
         input,
@@ -478,6 +480,15 @@ mod tests {
         for end in 0..REPEATED.len() {
             assert!(lzo1x_block(&REPEATED[..end], 4096).is_err(), "prefix {end}");
         }
+    }
+
+    #[test]
+    fn raw_lzo1x_blocks_stop_at_the_end_marker() {
+        let mut stream = REPEATED.to_vec();
+        stream.extend_from_slice(b"trailing");
+        let decoded = lzo1x_block(&stream, 4096).unwrap();
+        assert_eq!(decoded.data, b"abcabcabcab");
+        assert_eq!(decoded.consumed, Some(REPEATED.len()));
     }
 
     #[test]

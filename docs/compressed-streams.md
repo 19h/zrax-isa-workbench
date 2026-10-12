@@ -23,8 +23,9 @@ slices and metadata of the decoded content. Decoders live in
 | `lzfse` | LZFSE and LZVN block streams (`bvx2`, `bvx1`, `bvxn`, `bvx-`, end `bvx$`) | Strong: block magic | None in the format | [apple/lzfse `lzfse_internal.h`](https://github.com/lzfse/lzfse/blob/master/src/lzfse_internal.h) |
 | `lzss` | Apple kernelcache `complzss` (Okumura LZSS) and `complzvn` | Strong: 8-byte signature | Adler-32 of the decoded data | Apple BootX `sl.subproj/lzss.c`; img4lib `lzss.c` |
 | — | Brotli | Never recognized standalone (no magic) | None | [RFC 7932](https://www.rfc-editor.org/rfc/rfc7932) |
-| — | Raw LZO1X block without lzop framing, as SquashFS stores it; ends at its end-of-stream marker | Never recognized standalone (no magic) | None | [Linux `lzo.rst`](https://docs.kernel.org/staging/lzo.html); squashfs-tools 4.6.1 `lzo_wrapper.h` |
+| — | Raw LZO1X block without lzop framing, as SquashFS, UBIFS and JFFS2 store it; ends at its end-of-stream marker | Never recognized standalone (no magic) | None | [Linux `lzo.rst`](https://docs.kernel.org/staging/lzo.html); squashfs-tools 4.6.1 `lzo_wrapper.h` |
 | — | Raw LZ4 block without a frame, as SquashFS and Silicon Labs GBL store it | Never recognized standalone (no magic) | None | [lz4 v1.10.0 block format](https://github.com/lz4/lz4/blob/v1.10.0/doc/lz4_Block_format.md); squashfs-tools 4.6.1 `lz4_wrapper.h` |
+| — | JFFS2 rtime (byte-repeat) and rubin (`rubinmips` fixed model, `dynrubin` 8-byte table) data | Never recognized standalone (no magic, no end marker); decoded to the size the node declares | None | Linux v6.11 `fs/jffs2/compr_rtime.c`, `compr_rubin.c` ([flash filesystems](mtd.md)) |
 
 DEFLATE, LZMA, LZ4, Zstandard, bzip2, LZFSE and Brotli bitstreams are decoded
 by the pure-Rust crates `miniz_oxide`, `lzma-rust2`, `lz4_flex`, `ruzstd`,

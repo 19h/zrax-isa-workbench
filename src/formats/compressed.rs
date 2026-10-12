@@ -23,11 +23,13 @@
 //!   [`lz4_block`]). No magic; decoded only where a container names it.
 //! - Nintendo 3DS BLZ (`.code` compression): see [`blz`]. It has no magic
 //!   and is decoded only where a container names it.
-//! - Raw LZO1X blocks: the per-block streams Squashfs stores (squashfs-tools
-//!   4.6.1 `lzo_wrapper.h`; Linux v6.11 `fs/squashfs/lzo_wrapper.c`). Raw
+//! - Raw LZO1X blocks: the per-block streams Squashfs, UBIFS and JFFS2 store
+//!   (squashfs-tools 4.6.1 `lzo_wrapper.h`; Linux v6.11
+//!   `fs/squashfs/lzo_wrapper.c`; see [`lzo`]). Raw
 //!   LZ4 blocks in Squashfs (`lz4_wrapper.h`, `lz4_wrapper.c`) use the LZ4
 //!   block decoder above. Neither has framing; both are decoded only where
 //!   a container names them.
+//! - JFFS2 rtime, rubinmips and dynrubin: see [`jffs2`].
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -42,6 +44,7 @@ use std::borrow::Cow;
 use std::io::{self, Read, Write};
 
 mod blz;
+mod jffs2;
 mod lz4_block;
 mod lzo;
 mod lzss;
@@ -131,6 +134,15 @@ pub enum Codec {
     Blz,
     /// Raw LZO1X block without lzop framing; no magic.
     Lzo1x,
+    /// JFFS2 rtime byte-repeat coding; no magic and no end marker.
+    Rtime,
+    /// JFFS2 rubin arithmetic coding with the fixed `rubinmips` model. It
+    /// has no end marker, so [`decode_limited`] decodes exactly `limit`
+    /// bytes.
+    RubinMips,
+    /// JFFS2 rubin arithmetic coding with an 8-byte probability table
+    /// (`dynrubin`). Decodes exactly `limit` bytes, as [`Codec::RubinMips`].
+    DynRubin,
 }
 
 impl Codec {
@@ -152,6 +164,9 @@ impl Codec {
         Self::Lz4Block,
         Self::Blz,
         Self::Lzo1x,
+        Self::Rtime,
+        Self::RubinMips,
+        Self::DynRubin,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -173,6 +188,9 @@ impl Codec {
             Self::Lz4Block => "LZ4 block",
             Self::Blz => "BLZ",
             Self::Lzo1x => "LZO1X",
+            Self::Rtime => "rtime",
+            Self::RubinMips => "rubinmips",
+            Self::DynRubin => "dynrubin",
         }
     }
 
@@ -194,6 +212,9 @@ impl Codec {
             Self::Brotli | Self::Lz4Block | Self::Lzo1x => FileFormat::Raw,
             // BLZ has no magic either; only a 3DS ExHeader names it.
             Self::Blz => FileFormat::Raw,
+            // The JFFS2 codecs have no magic either; only the containers
+            // that store them name them.
+            Self::Rtime | Self::RubinMips | Self::DynRubin => FileFormat::Raw,
         }
     }
 
@@ -216,6 +237,9 @@ impl Codec {
             Self::Lz4Block => "raw LZ4 block stream",
             Self::Blz => "BLZ stream",
             Self::Lzo1x => "raw LZO1X block",
+            Self::Rtime => "JFFS2 rtime data",
+            Self::RubinMips => "JFFS2 rubinmips data",
+            Self::DynRubin => "JFFS2 dynrubin data",
         }
     }
 
@@ -244,7 +268,7 @@ fn error(message: impl Into<String>) -> ClassifierError {
 }
 
 /// Decimal size with the largest exact binary unit.
-fn size_text(n: usize) -> String {
+pub(crate) fn size_text(n: usize) -> String {
     if n >= 1 << 20 && n % (1 << 20) == 0 {
         format!("{} MiB", n >> 20)
     } else if n >= 1 << 10 && n % (1 << 10) == 0 {
@@ -388,6 +412,9 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::Lz4Block => lz4_block::decode(data, limit),
         Codec::Blz => blz::decode(data, limit),
         Codec::Lzo1x => lzo::lzo1x_block(data, limit),
+        Codec::Rtime => jffs2::rtime(data, limit),
+        Codec::RubinMips => jffs2::rubin(data, limit, jffs2::RubinModel::Mips),
+        Codec::DynRubin => jffs2::rubin(data, limit, jffs2::RubinModel::Dynamic),
     }
 }
 

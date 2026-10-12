@@ -94,6 +94,7 @@ const FORMAT_NAMES = {
   ndsrom: 'Nintendo DS ROM', gbarom: 'Game Boy Advance ROM', gbrom: 'Game Boy ROM', nesrom: 'NES ROM', snesrom: 'SNES ROM', n64rom: 'Nintendo 64 ROM',
   zip: 'ZIP', tar: 'tar', cpio: 'CPIO',
   squashfs: 'SquashFS', cramfs: 'CramFS', romfs: 'romfs',
+  ubi: 'UBI', ubifs: 'UBIFS', jffs2: 'JFFS2',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

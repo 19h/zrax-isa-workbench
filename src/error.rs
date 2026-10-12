@@ -69,6 +69,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a flash filesystem image (UBI, UBIFS or JFFS2).
+    #[error("Flash filesystem parse error: {message}")]
+    MtdParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a read-only filesystem image (Squashfs, Cramfs,
     /// romfs).
     #[error("Read-only filesystem parse error: {message}")]

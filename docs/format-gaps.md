@@ -36,7 +36,9 @@ buffer with the ARM zImage header fields. FIT behavior is from source inspection
 **Implemented 2026-10-12** for gzip, zlib, raw DEFLATE, xz, LZMA-alone, LZ4
 (frame and legacy), Zstandard, bzip2, lzop/LZO1X, LZFSE/LZVN and Apple LZSS,
 plus Brotli for containers that name it; standalone streams are recognized as
-formats. See [compressed streams](compressed-streams.md). The table below is
+formats. Raw LZ4 and LZO1X blocks, 3DS BLZ and the JFFS2 rtime and rubin
+coders followed (2026-10-13) for the containers that store them. See
+[compressed streams](compressed-streams.md). The table below is
 kept as the original register; containers still have to call the layer where
 their header names a codec (sections 1, 3 and 4).
 
@@ -76,7 +78,10 @@ both byte orders; concatenated initramfs) are implemented; see
 [archives](archives.md). SquashFS 4.0 (compressor IDs 1-6; regular files
 listed by path), CramFS (both byte orders, CRC-32 verified) and romfs are
 implemented; SquashFS 1.x-3.x, big-endian and streamed images are recognized
-but not enumerated; see [read-only filesystems](rofs.md). Other rows are
+but not enumerated; see [read-only filesystems](rofs.md). UBI (PEB size
+discovery, volume table, static and dynamic volumes), UBIFS (node scan; the
+index is not walked) and JFFS2 in both byte orders (weak; every node CRC
+verified) are implemented; see [flash filesystems](mtd.md). Other rows are
 updated as their families land.
 
 | Impact | Format | Identification | Notes |

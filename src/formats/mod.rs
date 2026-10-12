@@ -55,6 +55,7 @@ pub mod llvm_bc;
 pub mod lod;
 pub mod macho;
 pub mod mcu;
+pub mod mtd;
 pub mod mz;
 pub mod nintendo;
 pub mod ols;
@@ -611,6 +612,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // UBI erase-counter header (`UBI#`) and UBIFS superblock node.
+    if let Some(layout) = mtd::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Mtd(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -811,6 +819,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = archives::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Archive(layout),
+        };
+    }
+
+    // JFFS2 has a 16-bit node magic, so it is recognized only when every
+    // node in the image validates.
+    if let Some(layout) = mtd::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Mtd(layout),
         };
     }
 

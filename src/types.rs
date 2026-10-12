@@ -958,6 +958,14 @@ pub enum FileFormat {
     Cramfs,
     /// romfs filesystem image
     Romfs,
+
+    // Flash filesystems (MTD)
+    /// UBI image (erase-counter and volume-identifier headers per PEB)
+    Ubi,
+    /// UBIFS volume image
+    Ubifs,
+    /// JFFS2 image
+    Jffs2,
 }
 
 impl fmt::Display for FileFormat {
@@ -1135,6 +1143,10 @@ impl fmt::Display for FileFormat {
             FileFormat::Squashfs => write!(f, "SquashFS"),
             FileFormat::Cramfs => write!(f, "CramFS"),
             FileFormat::Romfs => write!(f, "romfs"),
+            // Flash filesystems
+            FileFormat::Ubi => write!(f, "UBI"),
+            FileFormat::Ubifs => write!(f, "UBIFS"),
+            FileFormat::Jffs2 => write!(f, "JFFS2"),
         }
     }
 }
