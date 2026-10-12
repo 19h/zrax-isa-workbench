@@ -950,6 +950,14 @@ pub enum FileFormat {
     Tar,
     /// CPIO archive (newc, crc, odc or old binary)
     Cpio,
+
+    // Read-only filesystems
+    /// Squashfs filesystem image
+    Squashfs,
+    /// Cramfs filesystem image
+    Cramfs,
+    /// romfs filesystem image
+    Romfs,
 }
 
 impl fmt::Display for FileFormat {
@@ -1123,6 +1131,10 @@ impl fmt::Display for FileFormat {
             FileFormat::Zip => write!(f, "ZIP"),
             FileFormat::Tar => write!(f, "tar"),
             FileFormat::Cpio => write!(f, "CPIO"),
+            // Read-only filesystems
+            FileFormat::Squashfs => write!(f, "SquashFS"),
+            FileFormat::Cramfs => write!(f, "CramFS"),
+            FileFormat::Romfs => write!(f, "romfs"),
         }
     }
 }

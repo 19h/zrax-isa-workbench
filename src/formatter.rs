@@ -730,6 +730,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Zip => "ZIP",
         FileFormat::Tar => "tar",
         FileFormat::Cpio => "CPIO",
+        FileFormat::Squashfs => "SquashFS",
+        FileFormat::Cramfs => "CramFS",
+        FileFormat::Romfs => "romfs",
     }
 }
 

@@ -93,6 +93,7 @@ const FORMAT_NAMES = {
   xilinxbootbin: 'Xilinx BOOT.BIN', imximage: 'NXP i.MX Image', nxpsb: 'NXP Secure Binary',
   ndsrom: 'Nintendo DS ROM', gbarom: 'Game Boy Advance ROM', gbrom: 'Game Boy ROM', nesrom: 'NES ROM', snesrom: 'SNES ROM', n64rom: 'Nintendo 64 ROM',
   zip: 'ZIP', tar: 'tar', cpio: 'CPIO',
+  squashfs: 'SquashFS', cramfs: 'CramFS', romfs: 'romfs',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

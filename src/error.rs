@@ -69,6 +69,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a read-only filesystem image (Squashfs, Cramfs,
+    /// romfs).
+    #[error("Read-only filesystem parse error: {message}")]
+    RofsParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a system-on-chip boot ROM image (Allwinner eGON or TOC0,
     /// Rockchip, `MediaTek` preloader, Qualcomm MBN).
     #[error("SoC loader parse error: {message}")]

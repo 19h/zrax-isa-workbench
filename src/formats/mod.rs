@@ -65,6 +65,7 @@ pub mod palm;
 pub mod pe;
 pub mod pef;
 pub mod retro;
+pub mod rofs;
 pub mod sgo;
 pub mod socboot2;
 pub mod socboot;
@@ -599,6 +600,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = archives::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Archive(layout),
+        };
+    }
+
+    // Read-only filesystem images: the SquashFS, CramFS or romfs magic.
+    // A CramFS superblock may also follow a 512-byte boot-code pad.
+    if let Some(layout) = rofs::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Rofs(layout),
         };
     }
 

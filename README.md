@@ -258,6 +258,7 @@ enumeration additionally represents header-derived architectures.
 | FPGA bitstreams | Xilinx `.bit` and headerless configuration data (both word orders), Lattice iCE40 and ECP5/MachXO/Nexus, Intel Cyclone V `.rbf` and `.pof`; recognized and excluded from ISA scoring ([FPGA bitstreams](docs/bitstream.md)) |
 | Compressed streams | gzip, zlib, xz, LZMA-alone, LZ4 (frame and legacy), Zstandard, bzip2, lzop, LZFSE/LZVN, Apple LZSS kernelcaches; decoded and classified by their content |
 | ZIP, tar and CPIO | ZIP (ZIP64; stored, deflate, bzip2, LZMA, Zstandard and xz members with CRC-32 verified; APK, JAR, IPA, Nordic DFU and PDX labels), tar (ustar, pax, GNU), CPIO (newc, crc, odc, old binary) ([archives](docs/archives.md)); members classified on their own bytes |
+| Filesystem images | SquashFS 4.0 (gzip, LZMA, LZO, xz, LZ4, zstd), CramFS (both byte orders, CRC-32 verified) and romfs, with recognized regular files listed by path; SquashFS 1.x-3.x, big-endian and streamed images recognized but not enumerated ([read-only filesystems](docs/rofs.md)) |
 
 [Compressed streams and the shared container model](docs/compressed-streams.md)
 describe the codecs, coordinates and bounds;

@@ -4,7 +4,9 @@
 //! `lib/lzo/lzo1x_decompress_safe.c` (v6.6), without the Linux-only
 //! run-length extension (bitstream version 1, which lzop never writes).
 //! The lzop header and block framing follow lzop 1.04 `src/lzop.c`
-//! (`write_header`, `p_header` and `x_decompress`).
+//! (`write_header`, `p_header` and `x_decompress`). Squashfs stores raw
+//! LZO1X blocks without lzop framing (squashfs-tools 4.6.1
+//! `lzo_wrapper.h`).
 
 use super::*;
 
@@ -48,6 +50,7 @@ pub(super) fn lzo1x(input: &[u8], expected: usize) -> Result<Vec<u8>> {
         ip: 0,
         out: Vec::with_capacity(expected),
         limit: expected,
+        limit_kind: OutputLimit::Declared,
     };
     decoder.run()?;
     if decoder.ip != input.len() {
@@ -66,11 +69,41 @@ pub(super) fn lzo1x(input: &[u8], expected: usize) -> Result<Vec<u8>> {
     Ok(decoder.out)
 }
 
+/// Decode one raw LZO1X block that has no declared size, as Squashfs
+/// stores data, into at most `limit` bytes. The block ends at its
+/// end-of-stream marker; `consumed` says where.
+pub(super) fn lzo1x_block(input: &[u8], limit: usize) -> Result<Decoded> {
+    let mut decoder = Lzo1x {
+        input,
+        ip: 0,
+        out: Vec::new(),
+        limit,
+        limit_kind: OutputLimit::Caller,
+    };
+    decoder.run()?;
+    Ok(Decoded {
+        data: decoder.out,
+        consumed: Some(decoder.ip),
+        check: None,
+    })
+}
+
+/// Where a decoder's output limit comes from, which decides the error
+/// reported when the output would pass it.
+#[derive(Clone, Copy)]
+enum OutputLimit {
+    /// The lzop block header declares the decoded size.
+    Declared,
+    /// The caller's extraction limit.
+    Caller,
+}
+
 struct Lzo1x<'a> {
     input: &'a [u8],
     ip: usize,
     out: Vec<u8>,
     limit: usize,
+    limit_kind: OutputLimit,
 }
 
 /// What follows a decoded match or literal run.
@@ -111,15 +144,29 @@ impl Lzo1x<'_> {
         Ok(zeros * 255 + base + last)
     }
 
+    /// Fail unless `count` more output bytes fit within the limit.
+    fn reserve(&self, count: usize) -> Result<()> {
+        let fits = self
+            .out
+            .len()
+            .checked_add(count)
+            .is_some_and(|end| end <= self.limit);
+        if fits {
+            return Ok(());
+        }
+        Err(match self.limit_kind {
+            OutputLimit::Declared => error("LZO1X output exceeds the declared block size"),
+            OutputLimit::Caller => exceeds(self.limit),
+        })
+    }
+
     fn literals(&mut self, count: usize) -> Result<()> {
         let end = self
             .ip
             .checked_add(count)
             .filter(|end| *end <= self.input.len())
             .ok_or_else(|| error("Truncated LZO1X literal run"))?;
-        if self.out.len() + count > self.limit {
-            return Err(error("LZO1X output exceeds the declared block size"));
-        }
+        self.reserve(count)?;
         self.out.extend_from_slice(&self.input[self.ip..end]);
         self.ip = end;
         Ok(())
@@ -130,9 +177,7 @@ impl Lzo1x<'_> {
         if distance == 0 || distance > self.out.len() {
             return Err(error("Invalid LZO1X match distance"));
         }
-        if self.out.len() + length > self.limit {
-            return Err(error("LZO1X output exceeds the declared block size"));
-        }
+        self.reserve(length)?;
         let start = self.out.len() - distance;
         for i in 0..length {
             let b = self.out[start + i];
@@ -422,6 +467,17 @@ mod tests {
         }
         assert!(lzo1x(REPEATED, 10).is_err());
         assert!(lzo1x(REPEATED, 12).is_err());
+    }
+
+    #[test]
+    fn raw_lzo1x_blocks_decode_up_to_the_limit() {
+        let decoded = lzo1x_block(REPEATED, 4096).unwrap();
+        assert_eq!(decoded.data, b"abcabcabcab");
+        assert_eq!(decoded.consumed, Some(REPEATED.len()));
+        assert!(lzo1x_block(REPEATED, 10).is_err());
+        for end in 0..REPEATED.len() {
+            assert!(lzo1x_block(&REPEATED[..end], 4096).is_err(), "prefix {end}");
+        }
     }
 
     #[test]

@@ -23,6 +23,11 @@
 //!   [`lz4_block`]). No magic; decoded only where a container names it.
 //! - Nintendo 3DS BLZ (`.code` compression): see [`blz`]. It has no magic
 //!   and is decoded only where a container names it.
+//! - Raw LZO1X blocks: the per-block streams Squashfs stores (squashfs-tools
+//!   4.6.1 `lzo_wrapper.h`; Linux v6.11 `fs/squashfs/lzo_wrapper.c`). Raw
+//!   LZ4 blocks in Squashfs (`lz4_wrapper.h`, `lz4_wrapper.c`) use the LZ4
+//!   block decoder above. Neither has framing; both are decoded only where
+//!   a container names them.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -124,6 +129,8 @@ pub enum Codec {
     Lz4Block,
     /// Nintendo 3DS backward LZ (`.code` compression); no magic.
     Blz,
+    /// Raw LZO1X block without lzop framing; no magic.
+    Lzo1x,
 }
 
 impl Codec {
@@ -144,6 +151,7 @@ impl Codec {
         Self::Brotli,
         Self::Lz4Block,
         Self::Blz,
+        Self::Lzo1x,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -164,6 +172,7 @@ impl Codec {
             Self::Brotli => "Brotli",
             Self::Lz4Block => "LZ4 block",
             Self::Blz => "BLZ",
+            Self::Lzo1x => "LZO1X",
         }
     }
 
@@ -180,11 +189,9 @@ impl Codec {
             Self::Lzop => FileFormat::Lzop,
             Self::Lzfse => FileFormat::Lzfse,
             Self::Lzss => FileFormat::Lzss,
-            // Brotli and raw LZ4 blocks have no magic and are never
-            // recognized standalone.
-            Self::Brotli | Self::Lz4Block => FileFormat::Raw,
-            // Brotli has no magic and is never recognized standalone.
-            Self::Brotli => FileFormat::Raw,
+            // Brotli, raw LZ4 blocks and raw LZO1X blocks have no magic and
+            // are never recognized standalone.
+            Self::Brotli | Self::Lz4Block | Self::Lzo1x => FileFormat::Raw,
             // BLZ has no magic either; only a 3DS ExHeader names it.
             Self::Blz => FileFormat::Raw,
         }
@@ -208,6 +215,7 @@ impl Codec {
             Self::Brotli => "Brotli stream",
             Self::Lz4Block => "raw LZ4 block stream",
             Self::Blz => "BLZ stream",
+            Self::Lzo1x => "raw LZO1X block",
         }
     }
 
@@ -379,6 +387,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         }
         Codec::Lz4Block => lz4_block::decode(data, limit),
         Codec::Blz => blz::decode(data, limit),
+        Codec::Lzo1x => lzo::lzo1x_block(data, limit),
     }
 }
 
@@ -921,6 +930,17 @@ mod tests {
         let decoded = decode(Codec::Lz4Legacy, &frame).unwrap();
         assert_eq!(decoded.data, payload);
         assert_eq!(decoded.consumed, Some(stream_end));
+    }
+
+    #[test]
+    fn raw_lz4_blocks_decode_within_the_limit() {
+        let payload = b"block block block block block".repeat(20);
+        let block = lz4_flex::block::compress(&payload);
+        let decoded = decode_limited(Codec::Lz4Block, &block, 4096).unwrap();
+        assert_eq!(decoded.data, payload);
+        assert_eq!(decoded.consumed, Some(block.len()));
+        assert!(decode_limited(Codec::Lz4Block, &block, payload.len() - 1).is_err());
+        assert!(decode_limited(Codec::Lz4Block, &block[..block.len() - 1], 4096).is_err());
     }
 
     #[test]

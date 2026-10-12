@@ -15,7 +15,7 @@
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
     archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, nintendo,
-    optionrom, socboot, socboot2, zxtape, MAX_PAYLOAD,
+    optionrom, rofs, socboot, socboot2, zxtape, MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -80,6 +80,8 @@ pub enum Kind {
     Nintendo(nintendo::Layout),
     /// A ZIP, tar or CPIO archive.
     Archive(archives::Layout),
+    /// A read-only filesystem image (Squashfs, Cramfs, romfs).
+    Rofs(rofs::Layout),
 }
 
 impl Kind {
@@ -102,6 +104,7 @@ impl Kind {
             Self::SocBoot(layout) => layout.format(),
             Self::Nintendo(layout) => layout.format(),
             Self::Archive(layout) => layout.format(),
+            Self::Rofs(layout) => layout.format(),
         }
     }
 
@@ -124,6 +127,7 @@ impl Kind {
             Self::SocBoot(layout) => layout.label(),
             Self::Nintendo(layout) => layout.label(),
             Self::Archive(layout) => layout.label(),
+            Self::Rofs(layout) => layout.label(),
         }
     }
 
@@ -146,6 +150,7 @@ impl Kind {
             Self::SocBoot(layout) => layout.is_weak(),
             Self::Nintendo(layout) => layout.is_weak(),
             Self::Archive(layout) => layout.is_weak(),
+            Self::Rofs(layout) => layout.is_weak(),
         }
     }
 }
@@ -173,6 +178,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::SocBoot(layout) => socboot::parse_container(data, layout),
         Kind::Nintendo(layout) => nintendo::parse_container(data, layout),
         Kind::Archive(layout) => archives::parse_container(data, layout),
+        Kind::Rofs(layout) => rofs::parse_container(data, layout),
     }
 }
 
