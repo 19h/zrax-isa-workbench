@@ -26,6 +26,7 @@ pub mod ar;
 pub mod automotive;
 pub mod bcf;
 pub mod bflt;
+pub mod blackfin_ldr;
 pub mod checksum;
 pub mod chiptune;
 pub mod coff;
@@ -474,6 +475,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Blackfin LDR streams with signed, checksummed BF54x block headers.
+    if let Some(layout) = blackfin_ldr::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::BlackfinLdr(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -608,6 +616,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = automotive::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Automotive(layout),
+        };
+    }
+
+    // BF53x/BF56x LDR streams have no signature: a complete block walk is
+    // required.
+    if let Some(layout) = blackfin_ldr::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::BlackfinLdr(layout),
         };
     }
 

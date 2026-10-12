@@ -13,7 +13,7 @@
 //! `transform` names it and the bytes are owned.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{automotive, chiptune, compressed, MAX_PAYLOAD};
+use crate::formats::{automotive, blackfin_ldr, chiptune, compressed, MAX_PAYLOAD};
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
     Variant,
@@ -49,6 +49,8 @@ pub enum Kind {
     Automotive(automotive::Layout),
     /// A chiptune program file.
     Chiptune(chiptune::Layout),
+    /// A Blackfin LDR boot stream.
+    BlackfinLdr(blackfin_ldr::Layout),
 }
 
 impl Kind {
@@ -58,6 +60,7 @@ impl Kind {
             Self::Compressed(codec) => codec.format(),
             Self::Automotive(layout) => layout.format(),
             Self::Chiptune(layout) => layout.format(),
+            Self::BlackfinLdr(layout) => layout.format(),
         }
     }
 
@@ -67,6 +70,7 @@ impl Kind {
             Self::Compressed(codec) => codec.label(),
             Self::Automotive(layout) => layout.label(),
             Self::Chiptune(layout) => layout.label(),
+            Self::BlackfinLdr(layout) => layout.label(),
         }
     }
 
@@ -76,6 +80,7 @@ impl Kind {
             Self::Compressed(codec) => codec.is_weak(),
             Self::Automotive(layout) => layout.is_weak(),
             Self::Chiptune(layout) => layout.is_weak(),
+            Self::BlackfinLdr(layout) => layout.is_weak(),
         }
     }
 }
@@ -90,6 +95,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Compressed(codec) => compressed::parse_container(data, codec),
         Kind::Automotive(layout) => automotive::parse_container(data, layout),
         Kind::Chiptune(layout) => chiptune::parse_container(data, layout),
+        Kind::BlackfinLdr(layout) => blackfin_ldr::parse_container(data, layout),
     }
 }
 

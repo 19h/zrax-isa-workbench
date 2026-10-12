@@ -82,6 +82,7 @@ const FORMAT_NAMES = {
   selfps4: 'PS4 SELF', selfps5: 'PS5 SELF', nso: 'NSO', nro: 'NRO', dol: 'DOL', rel: 'REL',
   odx: 'ASAM ODX', hondarwd: 'Honda RWD', toyotacuw: 'Toyota CUW', mercedescff: 'Mercedes CFF',
   nsf: 'NES Sound Format', sid: 'C64 SID Tune', gbs: 'Game Boy Sound System',
+  blackfinldr: 'Blackfin LDR',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

@@ -688,6 +688,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Nsf => "NSF",
         FileFormat::Sid => "C64 SID",
         FileFormat::Gbs => "GBS",
+        FileFormat::BlackfinLdr => "Blackfin LDR",
     }
 }
 

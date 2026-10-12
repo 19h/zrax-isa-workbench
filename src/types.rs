@@ -851,6 +851,10 @@ pub enum FileFormat {
     Sid,
     /// Game Boy Sound System tune
     Gbs,
+
+    // Boot streams
+    /// Analog Devices Blackfin LDR boot stream
+    BlackfinLdr,
 }
 
 impl fmt::Display for FileFormat {
@@ -972,6 +976,8 @@ impl fmt::Display for FileFormat {
             FileFormat::Nsf => write!(f, "NSF"),
             FileFormat::Sid => write!(f, "C64 SID"),
             FileFormat::Gbs => write!(f, "GBS"),
+            // Boot streams
+            FileFormat::BlackfinLdr => write!(f, "Blackfin LDR"),
         }
     }
 }

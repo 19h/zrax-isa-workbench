@@ -68,6 +68,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Blackfin LDR boot stream.
+    #[error("Blackfin LDR parse error: {message}")]
+    BlackfinLdrParseError {
+        /// What is wrong with the stream.
+        message: String,
+    },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },
