@@ -27,6 +27,7 @@ pub mod automotive;
 pub mod bcf;
 pub mod bflt;
 pub mod checksum;
+pub mod chiptune;
 pub mod coff;
 pub mod compressed;
 pub mod console;
@@ -463,6 +464,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = automotive::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Automotive(layout),
+        };
+    }
+
+    // Chiptune programs: NSF, NSFe, PSID/RSID and GBS headers.
+    if let Some(layout) = chiptune::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Chiptune(layout),
         };
     }
 

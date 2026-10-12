@@ -843,6 +843,14 @@ pub enum FileFormat {
     ToyotaCuw,
     /// Mercedes-Benz CFF (Caesar) flash file
     MercedesCff,
+
+    // Chiptune programs
+    /// NES Sound Format (NSF/NSFe)
+    Nsf,
+    /// Commodore 64 PSID/RSID tune
+    Sid,
+    /// Game Boy Sound System tune
+    Gbs,
 }
 
 impl fmt::Display for FileFormat {
@@ -960,6 +968,10 @@ impl fmt::Display for FileFormat {
             FileFormat::HondaRwd => write!(f, "Honda RWD"),
             FileFormat::ToyotaCuw => write!(f, "Toyota CUW"),
             FileFormat::MercedesCff => write!(f, "Mercedes CFF"),
+            // Chiptune programs
+            FileFormat::Nsf => write!(f, "NSF"),
+            FileFormat::Sid => write!(f, "C64 SID"),
+            FileFormat::Gbs => write!(f, "GBS"),
         }
     }
 }

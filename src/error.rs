@@ -61,6 +61,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a chiptune program file (NSF, SID, GBS).
+    #[error("Chiptune parse error: {message}")]
+    ChiptuneParseError {
+        /// What is wrong with the file.
+        message: String,
+    },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },

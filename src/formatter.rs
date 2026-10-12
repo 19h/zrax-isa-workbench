@@ -685,6 +685,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::HondaRwd => "Honda RWD",
         FileFormat::ToyotaCuw => "Toyota CUW",
         FileFormat::MercedesCff => "Mercedes CFF",
+        FileFormat::Nsf => "NSF",
+        FileFormat::Sid => "C64 SID",
+        FileFormat::Gbs => "GBS",
     }
 }
 

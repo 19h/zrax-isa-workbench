@@ -13,7 +13,7 @@
 //! `transform` names it and the bytes are owned.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{automotive, compressed, MAX_PAYLOAD};
+use crate::formats::{automotive, chiptune, compressed, MAX_PAYLOAD};
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
     Variant,
@@ -47,6 +47,8 @@ pub enum Kind {
     Compressed(compressed::Codec),
     /// An automotive flash container.
     Automotive(automotive::Layout),
+    /// A chiptune program file.
+    Chiptune(chiptune::Layout),
 }
 
 impl Kind {
@@ -55,6 +57,7 @@ impl Kind {
         match self {
             Self::Compressed(codec) => codec.format(),
             Self::Automotive(layout) => layout.format(),
+            Self::Chiptune(layout) => layout.format(),
         }
     }
 
@@ -63,6 +66,7 @@ impl Kind {
         match self {
             Self::Compressed(codec) => codec.label(),
             Self::Automotive(layout) => layout.label(),
+            Self::Chiptune(layout) => layout.label(),
         }
     }
 
@@ -71,6 +75,7 @@ impl Kind {
         match self {
             Self::Compressed(codec) => codec.is_weak(),
             Self::Automotive(layout) => layout.is_weak(),
+            Self::Chiptune(layout) => layout.is_weak(),
         }
     }
 }
@@ -84,6 +89,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
     match kind {
         Kind::Compressed(codec) => compressed::parse_container(data, codec),
         Kind::Automotive(layout) => automotive::parse_container(data, layout),
+        Kind::Chiptune(layout) => chiptune::parse_container(data, layout),
     }
 }
 
