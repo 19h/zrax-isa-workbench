@@ -886,6 +886,21 @@ pub enum FileFormat {
     MediatekPreloader,
     /// Qualcomm MBN image with a legacy 40-byte or 80-byte SBL header
     QualcommMbn,
+    // Retro console
+    /// Sega Mega Drive / Genesis cartridge ROM
+    GenesisRom,
+    /// Sony `PlayStation` `PS-X EXE` executable
+    PsxExe,
+    /// Dreamcast `IP.BIN` boot area
+    DreamcastIp,
+    /// Wii U RPX executable or RPL library
+    WiiURpx,
+    /// Nintendo 3DS NCCH partition (CXI or CFA)
+    N3dsNcch,
+    /// Nintendo 3DS homebrew `3DSX` executable
+    N3ds3dsx,
+    /// PSP `EBOOT.PBP` package
+    PspPbp,
 }
 
 impl fmt::Display for FileFormat {
@@ -1026,6 +1041,14 @@ impl fmt::Display for FileFormat {
             FileFormat::RockchipImage => write!(f, "Rockchip image"),
             FileFormat::MediatekPreloader => write!(f, "MediaTek preloader"),
             FileFormat::QualcommMbn => write!(f, "Qualcomm MBN"),
+            // Retro console
+            FileFormat::GenesisRom => write!(f, "Mega Drive ROM"),
+            FileFormat::PsxExe => write!(f, "PS-X EXE"),
+            FileFormat::DreamcastIp => write!(f, "Dreamcast IP.BIN"),
+            FileFormat::WiiURpx => write!(f, "Wii U RPX/RPL"),
+            FileFormat::N3dsNcch => write!(f, "3DS NCCH"),
+            FileFormat::N3ds3dsx => write!(f, "3DSX"),
+            FileFormat::PspPbp => write!(f, "PSP PBP"),
         }
     }
 }

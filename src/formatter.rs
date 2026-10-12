@@ -703,6 +703,13 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::RockchipImage => "Rockchip image",
         FileFormat::MediatekPreloader => "MediaTek preloader",
         FileFormat::QualcommMbn => "Qualcomm MBN",
+        FileFormat::GenesisRom => "Mega Drive ROM",
+        FileFormat::PsxExe => "PS-X EXE",
+        FileFormat::DreamcastIp => "Dreamcast IP.BIN",
+        FileFormat::WiiURpx => "Wii U RPX/RPL",
+        FileFormat::N3dsNcch => "3DS NCCH",
+        FileFormat::N3ds3dsx => "3DSX",
+        FileFormat::PspPbp => "PSP PBP",
     }
 }
 

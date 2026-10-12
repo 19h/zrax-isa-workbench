@@ -60,6 +60,7 @@ pub mod os9;
 pub mod palm;
 pub mod pe;
 pub mod pef;
+pub mod retro;
 pub mod sgo;
 pub mod socboot2;
 pub mod som;
@@ -297,6 +298,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Kernel { variant };
     }
 
+    // Wii U RPX/RPL files have ordinary ELF magic but Cafe OS `e_ident`
+    // bytes and zlib-compressed sections that the ELF parser cannot read.
+    if let Some(layout) = retro::detect_rpx(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Retro(layout),
+        };
+    }
+
     // ELF
     if data[..4] == magic::ELF {
         if data.len() >= 6 {
@@ -532,6 +541,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = socboot2::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::SocBoot2(layout),
+        };
+    }
+
+    // Console executables and ROM images: identification strings at fixed
+    // offsets (`SEGA` at 0x100, `PS-X EXE`, `SEGA SEGAKATANA`, `NCCH` at
+    // 0x100, `3DSX`, `\0PBP`).
+    if let Some(layout) = retro::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Retro(layout),
         };
     }
 

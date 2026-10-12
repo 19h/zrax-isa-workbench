@@ -21,6 +21,8 @@
 //!   container names it.
 //! - Raw LZ4 blocks: lz4 v1.10.0 `doc/lz4_Block_format.md` (see
 //!   [`lz4_block`]). No magic; decoded only where a container names it.
+//! - Nintendo 3DS BLZ (`.code` compression): see [`blz`]. It has no magic
+//!   and is decoded only where a container names it.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -34,6 +36,7 @@ use crate::types::FileFormat;
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
 
+mod blz;
 mod lz4_block;
 mod lzo;
 mod lzss;
@@ -119,6 +122,8 @@ pub enum Codec {
     Brotli,
     /// Raw LZ4 block stream without a frame; no magic.
     Lz4Block,
+    /// Nintendo 3DS backward LZ (`.code` compression); no magic.
+    Blz,
 }
 
 impl Codec {
@@ -138,6 +143,7 @@ impl Codec {
         Self::Lzss,
         Self::Brotli,
         Self::Lz4Block,
+        Self::Blz,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -157,6 +163,7 @@ impl Codec {
             Self::Lzss => "Apple LZSS",
             Self::Brotli => "Brotli",
             Self::Lz4Block => "LZ4 block",
+            Self::Blz => "BLZ",
         }
     }
 
@@ -176,6 +183,10 @@ impl Codec {
             // Brotli and raw LZ4 blocks have no magic and are never
             // recognized standalone.
             Self::Brotli | Self::Lz4Block => FileFormat::Raw,
+            // Brotli has no magic and is never recognized standalone.
+            Self::Brotli => FileFormat::Raw,
+            // BLZ has no magic either; only a 3DS ExHeader names it.
+            Self::Blz => FileFormat::Raw,
         }
     }
 
@@ -196,6 +207,7 @@ impl Codec {
             Self::Lzss => "Apple LZSS kernelcache",
             Self::Brotli => "Brotli stream",
             Self::Lz4Block => "raw LZ4 block stream",
+            Self::Blz => "BLZ stream",
         }
     }
 
@@ -366,6 +378,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
             })
         }
         Codec::Lz4Block => lz4_block::decode(data, limit),
+        Codec::Blz => blz::decode(data, limit),
     }
 }
 

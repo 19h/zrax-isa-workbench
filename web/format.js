@@ -87,6 +87,7 @@ const FORMAT_NAMES = {
   xilinxbit: 'Xilinx bitstream', latticebitstream: 'Lattice bitstream', intelfpga: 'Intel FPGA configuration',
   uf2: 'UF2', dfuse: 'STM32 DfuSe', gbl: 'Silicon Labs GBL', cyacd: 'Cypress CYACD',
   allwinneregon: 'Allwinner eGON', rockchipimage: 'Rockchip image', mediatekpreloader: 'MediaTek preloader', qualcommmbn: 'Qualcomm MBN',
+  genesisrom: 'Mega Drive ROM', psxexe: 'PS-X EXE', dreamcastip: 'Dreamcast IP.BIN', wiiurpx: 'Wii U RPX/RPL', n3dsncch: '3DS NCCH', n3ds3dsx: '3DSX', psppbp: 'PSP PBP',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

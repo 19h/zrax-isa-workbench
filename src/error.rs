@@ -77,6 +77,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a console executable or ROM image (Mega Drive ROM,
+    /// PS-X EXE, Dreamcast IP.BIN, Wii U RPX/RPL, 3DS NCCH/3DSX, PSP PBP).
+    #[error("Console image parse error: {message}")]
+    RetroConsoleParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

@@ -118,6 +118,11 @@ land.
 
 ## 5. Console and retro ROMs
 
+Status 2026-10-12: Mega Drive/Genesis, PS-X EXE, Dreamcast IP.BIN, Wii U
+RPX/RPL (zlib sections inflated), 3DS NCCH/ExeFS (BLZ `.code` decoded) and
+3DSX, and PSP PBP are implemented; see [console images](retro.md). Nintendo
+DS, Game Boy, NES, SNES and N64 are in progress.
+
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as
 labelled training data.

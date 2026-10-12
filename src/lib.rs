@@ -496,8 +496,21 @@ struct ContainerOutcome {
     extensions: Option<Vec<ExtensionDetection>>,
 }
 
+/// The ISA a variant without its own code-model class belongs to: SH-4
+/// extends SuperH, ColdFire is a reduced 68000, and the ARC generations
+/// share one family.
+fn base_isa(isa: Isa) -> Isa {
+    match isa {
+        Isa::Sh4 => Isa::Sh,
+        Isa::ColdFire => Isa::M68k,
+        Isa::ArcCompact | Isa::ArcCompact2 => Isa::Arc,
+        other => other,
+    }
+}
+
 /// Same ISA, or the same code-model family (MIPS32 and MIPS64, SH and SH-4).
 fn same_family(a: Isa, b: Isa) -> bool {
+    let (a, b) = (base_isa(a), base_isa(b));
     a == b || heuristics::family_of(a).is_some_and(|f| Some(f) == heuristics::family_of(b))
 }
 

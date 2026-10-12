@@ -64,6 +64,8 @@ pub enum Kind {
     /// A system-on-chip boot ROM image (Allwinner, Rockchip, `MediaTek`,
     /// Qualcomm).
     SocBoot2(socboot2::Layout),
+    /// A console executable or ROM image.
+    Retro(super::retro::Layout),
 }
 
 impl Kind {
@@ -80,6 +82,7 @@ impl Kind {
             Self::Bitstream(layout) => layout.format(),
             Self::Mcu(layout) => layout.format(),
             Self::SocBoot2(layout) => layout.format(),
+            Self::Retro(layout) => layout.format(),
         }
     }
 
@@ -96,6 +99,7 @@ impl Kind {
             Self::Bitstream(layout) => layout.label(),
             Self::Mcu(layout) => layout.label(),
             Self::SocBoot2(layout) => layout.label(),
+            Self::Retro(layout) => layout.label(),
         }
     }
 
@@ -112,6 +116,7 @@ impl Kind {
             Self::Bitstream(layout) => layout.is_weak(),
             Self::Mcu(layout) => layout.is_weak(),
             Self::SocBoot2(layout) => layout.is_weak(),
+            Self::Retro(layout) => layout.is_weak(),
         }
     }
 }
@@ -133,6 +138,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Bitstream(layout) => bitstream::parse_container(data, layout),
         Kind::Mcu(layout) => mcu::parse_container(data, layout),
         Kind::SocBoot2(layout) => socboot2::parse_container(data, layout),
+        Kind::Retro(layout) => super::retro::parse_container(data, layout),
     }
 }
 
