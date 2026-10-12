@@ -56,6 +56,7 @@ pub mod sox;
 pub mod spc;
 pub mod tds;
 pub mod ti_c55x;
+pub mod ti;
 pub mod tmobj;
 pub mod vbf;
 pub mod wasm;
@@ -241,6 +242,8 @@ pub enum DetectedFormat {
     D10,
     /// TI C55x serial boot table with validated load records.
     TiC55xBoot,
+    /// TI firmware, boot, and hex utility containers.
+    Ti { variant: ti::Variant },
     /// SNES SPC700 sound file
     Spc,
     /// TriMedia object module
@@ -259,6 +262,11 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
             return DetectedFormat::Hex { variant };
         }
         return DetectedFormat::Raw;
+    }
+
+    // TI MCELF has ordinary ELF magic but carries core-mapping notes.
+    if let Some(variant) = ti::detect_strong(data) {
+        return DetectedFormat::Ti { variant };
     }
 
     // ELF
@@ -552,6 +560,10 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Epr;
     }
 
+    if let Some(variant) = ti::detect_weak(data) {
+        return DetectedFormat::Ti { variant };
+    }
+
     DetectedFormat::Raw
 }
 
@@ -601,6 +613,7 @@ pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<Classifica
         DetectedFormat::Sox => sox::parse(data),
         DetectedFormat::D10 => d10::parse(data),
         DetectedFormat::TiC55xBoot => ti_c55x::parse(data),
+        DetectedFormat::Ti { variant } => ti::parse(data, variant),
         DetectedFormat::Spc => spc::parse(data),
         DetectedFormat::TmObj => tmobj::parse(data),
         DetectedFormat::Lod => lod::parse(data),

@@ -36,6 +36,9 @@ pub enum ClassifierError {
     #[error("TI C55x boot-table parse error: {message}")]
     TiC55xBootParseError { message: String },
 
+    #[error("TI container parse error: {message}")]
+    TiContainerParseError { message: String },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },

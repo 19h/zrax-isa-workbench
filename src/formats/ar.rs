@@ -85,59 +85,9 @@ pub fn detect(data: &[u8]) -> Option<ArVariant> {
 
 /// Parse ar archive.
 pub fn parse(data: &[u8], variant: ArVariant) -> Result<ClassificationResult> {
-    if data.len() < 8 {
-        return Err(ClassifierError::TruncatedData {
-            offset: 0,
-            expected: 8,
-            actual: data.len(),
-        });
-    }
-
-    // Count members
-    let mut member_count = 0;
-    let mut offset = 8; // Skip magic
-    let mut member_names: Vec<String> = Vec::new();
-
-    while offset + AR_MEMBER_HEADER_SIZE <= data.len() {
-        // Verify magic at end of header
-        if data[offset + ar_header::FMAG_OFFSET..offset + ar_header::FMAG_OFFSET + 2]
-            != ar_header::FMAG
-        {
-            break;
-        }
-
-        // Read name
-        let name_bytes = &data[offset..offset + 16];
-        let name = String::from_utf8_lossy(name_bytes)
-            .trim_end()
-            .trim_end_matches('/')
-            .to_string();
-
-        // Read size
-        let size_str = String::from_utf8_lossy(
-            &data[offset + ar_header::SIZE_OFFSET
-                ..offset + ar_header::SIZE_OFFSET + ar_header::SIZE_SIZE],
-        );
-        let size: usize = size_str.trim().parse().unwrap_or(0);
-
-        // Skip special entries
-        if !name.is_empty()
-            && !name.starts_with('/')
-            && name != "__.SYMDEF"
-            && !name.starts_with("#1/")
-        {
-            if member_names.len() < 10 {
-                member_names.push(name);
-            }
-            member_count += 1;
-        }
-
-        // Move to next member (aligned to even boundary)
-        offset += AR_MEMBER_HEADER_SIZE + size;
-        if offset % 2 != 0 {
-            offset += 1;
-        }
-    }
+    let members = parse_members(data)?;
+    let member_count = members.len();
+    let member_names: Vec<&str> = members.iter().take(10).map(|m|m.name.as_str()).collect();
 
     let variant_name = match variant {
         ArVariant::Gnu => "GNU/SysV ar",
@@ -154,7 +104,7 @@ pub fn parse(data: &[u8], variant: ArVariant) -> Result<ClassificationResult> {
     notes.push(format!("Members: {}", member_count));
 
     if !member_names.is_empty() {
-        let preview: Vec<&str> = member_names.iter().take(5).map(|s| s.as_str()).collect();
+        let preview: Vec<&str> = member_names.iter().take(5).copied().collect();
         notes.push(format!(
             "Contents: {}{}",
             preview.join(", "),
@@ -171,10 +121,50 @@ pub fn parse(data: &[u8], variant: ArVariant) -> Result<ClassificationResult> {
     // ar archives are ISA-independent containers
     let mut result =
         ClassificationResult::from_format(Isa::Unknown(0), 0, Endianness::Little, format);
+    result.confidence = 0.0;
     result.variant = Variant::new(variant_name);
     result.metadata = metadata;
 
     Ok(result)
+}
+
+/// Borrowed ordinary members, with GNU/TI long-name tables and BSD inline
+/// names resolved. Symbol/name index members are excluded from ISA analysis.
+#[derive(Debug)]
+pub struct Member<'a> {pub name:String,pub offset:usize,pub data:&'a [u8]}
+
+pub fn parse_members(data:&[u8]) -> Result<Vec<Member<'_>>> {
+    let error=|message:&str|ClassifierError::ArchiveParseError {message:format!("Archive: {message}")};
+    if !data.starts_with(&AR_MAGIC) {return Err(error("Invalid ar signature"));}
+    let mut pos=8;let mut names:&[u8]=&[];let mut members=Vec::new();
+    while pos<data.len() {
+        let h=data.get(pos..pos.saturating_add(60)).ok_or_else(||error("Truncated member header"))?;
+        if &h[58..]!=b"`\n" {return Err(error("Invalid member header terminator"));}
+        let size=std::str::from_utf8(&h[48..58]).ok().and_then(|s|s.trim().parse::<usize>().ok()).ok_or_else(||error("Invalid decimal member size"))?;
+        let start=pos+60;let end=start.checked_add(size).ok_or_else(||error("Member size overflow"))?;
+        let body=data.get(start..end).ok_or_else(||error("Truncated member contents"))?;
+        let raw=std::str::from_utf8(&h[..16]).map_err(|_|error("Invalid member name"))?.trim_end();
+        let mut payload=body;let mut payload_start=start;
+        let name=if raw=="//" {names=body;String::new()}
+            else if let Some(n)=raw.strip_prefix("#1/") {
+                let len=n.parse::<usize>().map_err(|_|error("Invalid BSD name length"))?;
+                let b=body.get(..len).ok_or_else(||error("Truncated BSD member name"))?;
+                payload=&body[len..];payload_start+=len;
+                String::from_utf8_lossy(b).trim_end_matches('\0').to_string()
+            }else if raw.starts_with('/') && raw[1..].bytes().all(|b|b.is_ascii_digit()) && raw.len()>1 {
+                let at=raw[1..].parse::<usize>().map_err(|_|error("Invalid long-name offset"))?;
+                let tail=names.get(at..).ok_or_else(||error("Long-name offset outside table"))?;
+                let len=tail.iter().position(|b|*b==b'\n'||*b==0).ok_or_else(||error("Unterminated long member name"))?;
+                String::from_utf8_lossy(&tail[..len]).trim_end_matches('/').to_string()
+            }else {raw.trim_end_matches('/').to_string()};
+        if !name.is_empty() && !name.starts_with('/') && !name.starts_with("__.SYMDEF") && !name.starts_with("__TI_.SYMDEF") {
+            members.push(Member {name,offset:payload_start,data:payload});
+        }
+        pos=end;
+        if pos%2!=0 {
+            if data.get(pos)!=Some(&b'\n') {return Err(error("Missing odd-member alignment byte"));}pos+=1;
+        }
+    }Ok(members)
 }
 
 #[cfg(test)]

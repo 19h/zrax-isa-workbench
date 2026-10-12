@@ -119,6 +119,8 @@ pub enum Isa {
     TiC2000,
     TiC28x,
     TiC5500,
+    /// TI TMS320C54x (distinct from the C55x instruction set).
+    TiC5400,
     TiPru,
 
     // Analog Devices
@@ -326,6 +328,7 @@ impl Isa {
             Isa::TiC2000 => "TI TMS320C2000",
             Isa::TiC28x => "TI TMS320C28x",
             Isa::TiC5500 => "TI TMS320C55x",
+            Isa::TiC5400 => "TI TMS320C54x",
             Isa::TiPru => "TI PRU",
             Isa::Blackfin => "Analog Devices Blackfin",
             Isa::Sharc => "Analog Devices SHARC",
@@ -478,6 +481,7 @@ impl Isa {
             | Isa::K78k0r
             | Isa::H8300
             | Isa::M16c
+            | Isa::TiC5400
             | Isa::St9 => 16,
             Isa::M6809 => 8,
 
@@ -648,6 +652,31 @@ pub enum FileFormat {
     D10,
     /// TI C55x serial boot table (hex55 -v5505, signature 0x09AA).
     TiC55xBoot,
+    /// TI DSP/C2000 ROM boot tables.
+    TiBoot,
+    /// TI Application Image Script.
+    TiAis,
+    /// TI relocatable program resource container.
+    TiRprc,
+    /// TI multicore appimage (MSTR/MEND).
+    TiMulticore,
+    /// TI multicore ELF with core-mapping notes.
+    TiMcelf,
+    /// TI size/address GP ROM image.
+    TiImage,
+    /// TI wireless over-the-air download image/metadata.
+    TiOad,
+    /// TI boot image prefixed by an X.509 certificate.
+    TiX509,
+    TiAsciiHex,
+    TiTagged,
+    TiTekHex,
+    /// MCUboot image used by TI and other MCU vendors.
+    Mcuboot,
+    /// Arm Trusted Firmware firmware image package (also used by TI tooling).
+    Fip,
+    /// Code Composer Studio / GO DSP sample data (target word width unknown).
+    TiData,
     /// Raw binary (no recognized format)
     Raw,
 
@@ -803,6 +832,20 @@ impl fmt::Display for FileFormat {
             FileFormat::Sox => write!(f, "VAG SOX"),
             FileFormat::D10 => write!(f, "AOR D10"),
             FileFormat::TiC55xBoot => write!(f, "TI C55x Boot Table"),
+            FileFormat::TiBoot => write!(f, "TI ROM Boot Table"),
+            FileFormat::TiAis => write!(f, "TI AIS"),
+            FileFormat::TiRprc => write!(f, "TI RPRC"),
+            FileFormat::TiMulticore => write!(f, "TI Multicore Appimage"),
+            FileFormat::TiMcelf => write!(f, "TI Multicore ELF"),
+            FileFormat::TiImage => write!(f, "TI GP ROM Image"),
+            FileFormat::TiOad => write!(f, "TI OAD"),
+            FileFormat::TiX509 => write!(f, "TI X.509 Boot Image"),
+            FileFormat::TiAsciiHex => write!(f, "TI ASCII Hex"),
+            FileFormat::TiTagged => write!(f, "TI SDSMAC Tagged"),
+            FileFormat::TiTekHex => write!(f, "Extended Tektronix"),
+            FileFormat::Mcuboot => write!(f, "MCUboot"),
+            FileFormat::Fip => write!(f, "TF-A Firmware Image Package"),
+            FileFormat::TiData => write!(f, "CCS GO DSP Data"),
             FileFormat::Raw => write!(f, "Raw"),
             // Unix/POSIX Legacy
             FileFormat::Aout => write!(f, "a.out"),

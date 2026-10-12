@@ -657,6 +657,20 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Sox => "VAG SOX",
         FileFormat::D10 => "AOR D10",
         FileFormat::TiC55xBoot => "TI C55x Boot Table",
+        FileFormat::TiBoot => "TI ROM Boot Table",
+        FileFormat::TiAis => "TI AIS",
+        FileFormat::TiRprc => "TI RPRC",
+        FileFormat::TiMulticore => "TI Multicore Appimage",
+        FileFormat::TiMcelf => "TI Multicore ELF",
+        FileFormat::TiImage => "TI GP ROM Image",
+        FileFormat::TiOad => "TI OAD",
+        FileFormat::TiX509 => "TI X.509 Boot Image",
+        FileFormat::TiAsciiHex => "TI ASCII Hex",
+        FileFormat::TiTagged => "TI SDSMAC Tagged",
+        FileFormat::TiTekHex => "Extended Tektronix",
+        FileFormat::Mcuboot => "MCUboot",
+        FileFormat::Fip => "TF-A Firmware Image Package",
+        FileFormat::TiData => "CCS GO DSP Data",
     }
 }
 

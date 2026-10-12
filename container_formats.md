@@ -2,6 +2,9 @@
 
 This exhaustive reference documents approximately **50 binary executable formats** spanning legacy systems through modern platforms. Each format includes magic bytes, header structures, section definitions, flags, architecture constraints, and version variations sourced from official vendor documentation and authoritative implementation references.
 
+For implemented TI firmware/container variants, address units, primary sources
+and explicit coverage boundaries, see [TI containers](docs/ti-containers.md).
+
 ---
 
 ## Unix/POSIX Legacy Formats

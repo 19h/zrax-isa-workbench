@@ -182,7 +182,7 @@ fn heuristic(
 fn adopt_heuristic(container: &ClassificationResult, mut h: ClassificationResult) -> ClassificationResult {
     h.format = container.format;
     h.source = ClassificationSource::Combined;
-    h.metadata.notes = container.metadata.notes.clone();
+    h.metadata = container.metadata.clone();
     h.metadata
         .notes
         .push("ISA identified from the code, not the container".into());
@@ -190,6 +190,11 @@ fn adopt_heuristic(container: &ClassificationResult, mut h: ClassificationResult
 }
 
 fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
+    classify_depth(data, options, 0)
+}
+
+/// Bound wrapper nesting independently of attacker-controlled image counts.
+fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Result<Classified> {
     let detected = formats::detect_format(data);
     let format = detected_to_format(&detected);
     let mut notes = Vec::new();
@@ -197,6 +202,7 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
     let mut slices = Vec::new();
     let mut metadata = Vec::new();
     let mut code_payload = None;
+    let mut contained_extensions = None;
 
     let result = match detected {
         formats::DetectedFormat::Raw => {
@@ -238,6 +244,115 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
             let container = formats::ti_c55x::parse_container(data)?;
             metadata = container.metadata();
             container.classification()
+        }
+        formats::DetectedFormat::Ti { variant } => {
+            let container = formats::ti::parse_container(data, variant)?;
+            metadata = container.metadata();
+            let mut r = container.classification();
+            let code = container.payload()?;
+            for child in &container.children {
+                let mut child_result = ClassificationResult::from_format(
+                    Isa::Unknown(0), 0, Endianness::Little, variant.format());
+                child_result.confidence = 0.0;
+                let mut child_extensions = Vec::new();
+                if !child.opaque && !container.opaque && depth < 6 {
+                    match classify_depth(child.data, options, depth + 1) {
+                        Ok(inner) => {
+                            child_result = inner.result;
+                            child_extensions = inner.extensions;
+                            if matches!(r.isa, Isa::Unknown(_)) {candidates = inner.candidates;}
+                        }
+                        Err(e) => notes.push(Note::warning(format!("{}: ISA unknown ({e})",child.label))),
+                    }
+                }
+                if !child.opaque && !container.opaque {
+                    if let Some((isa,bits,endian)) = child.isa_hint {
+                        child_result.isa=isa;child_result.bitwidth=bits;child_result.endianness=endian;
+                        child_result.confidence=1.0;child_result.source=ClassificationSource::FileFormat;
+                        child_result.variant=Variant::default();
+                        child_result.extensions.clear();child_extensions.clear();
+                        if matches!(r.isa,Isa::Unknown(_)){candidates.clear();}
+                        if let Ok(image)=formats::ti::parse_container(child.data,formats::ti::Variant::Rprc) {
+                            if let Ok(bytes)=image.payload() {
+                                if options.detect_extensions {
+                                    child_result.extensions=extensions::detect_from_code(&bytes,isa,endian);
+                                    child_extensions=child_result.extensions.iter().map(|e|ExtensionDetection::from_code(&e.name,e.category,e.confidence)).collect();
+                                }
+                            }
+                        }
+                    }
+                }
+                notes.push(Note::info(format!("{}: {} (contained {}){}",child.label,child_result.isa,child_result.format,
+                    if child.opaque || container.opaque{"; payload ISA analysis skipped"}else{""})));
+                if matches!(r.isa, Isa::Unknown(_)) && !matches!(child_result.isa, Isa::Unknown(_)) {
+                    contained_extensions=Some(child_extensions.clone());
+                    let mut selected = child_result.clone();
+                    selected.format=variant.format();selected.source=ClassificationSource::Combined;
+                    selected.metadata=r.metadata.clone();
+                    selected.metadata.notes.push(format!("Primary ISA selected from {}; other components are listed separately",child.label));r=selected;
+                }
+                slices.push(ContainedArch {
+                    label: Some(child.label.clone()), isa: child_result.isa,
+                    bitwidth: child_result.bitwidth, endianness: child_result.endianness,
+                    variant: (child_result.variant != Variant::default()).then(||child_result.variant.clone()),
+                    offset: child.offset as u64, size: child.data.len() as u64,
+                    extensions: child_extensions,
+                });
+            }
+            if !container.opaque && container.children.is_empty() && !code.is_empty()
+                && matches!(r.isa, Isa::Unknown(_)) {
+                // Text and boot wrappers can themselves carry a TI table or
+                // ELF. Preserve the outer format and its address metadata.
+                let inner = if depth < 6 && container.nested_payload_is_contiguous() {
+                    Some(classify_depth(&code, options, depth + 1))
+                }else {
+                    let (result,ranked)=heuristic(&code,options);
+                    Some(result.map(|result|Classified{format:FormatDetection::new(FileFormat::Raw),result,candidates:ranked,slices:Vec::new(),extensions:Vec::new(),notes:Vec::new(),metadata:Vec::new()}))
+                };
+                match inner {
+                    Some(Ok(inner)) if !matches!(inner.result.isa, Isa::Unknown(_)) => {
+                        let inner_format = inner.result.format;
+                        r = adopt_heuristic(&r, inner.result);
+                        if inner_format != FileFormat::Raw {
+                            r.metadata.notes.pop();
+                            r.metadata.notes.push(format!("ISA identified from contained {inner_format}"));
+                        }
+                        candidates = inner.candidates;
+                        contained_extensions=Some(inner.extensions);
+                    }
+                    _ => notes.push(Note::warning("TI payload ISA could not be determined")),
+                }
+            }
+            // Each child supplies its own ISA/extension evidence. Scanning
+            // other cores or data segments using the primary ISA is invalid.
+            code_payload = Some(std::borrow::Cow::Owned(if container.children.is_empty(){code}else{Vec::new()}));
+            r
+        }
+        formats::DetectedFormat::Ar { variant } => {
+            let mut r = formats::ar::parse(data, variant)?;
+            let members = formats::ar::parse_members(data)?;
+            for member in members {
+                if depth >= 6 || matches!(formats::detect_format(member.data), formats::DetectedFormat::Raw) {
+                    continue;
+                }
+                let inner = classify_depth(member.data, options, depth + 1)?;
+                if matches!(r.isa, Isa::Unknown(_)) && !matches!(inner.result.isa, Isa::Unknown(_)) {
+                    contained_extensions=Some(inner.extensions.clone());
+                    let mut selected = inner.result.clone();
+                    selected.format = r.format;
+                    selected.metadata = r.metadata.clone();
+                    selected.metadata.notes.push(format!("Primary ISA from member {}; remaining object members are listed separately",member.name));
+                    r = selected;
+                }
+                slices.push(ContainedArch {
+                    label: Some(member.name), isa: inner.result.isa,
+                    bitwidth: inner.result.bitwidth, endianness: inner.result.endianness,
+                    variant: (inner.result.variant != Variant::default()).then(||inner.result.variant.clone()),
+                    offset: member.offset as u64, size: member.data.len() as u64, extensions: inner.extensions,
+                });
+            }
+            code_payload = Some(std::borrow::Cow::Owned(Vec::new()));
+            r
         }
         formats::DetectedFormat::D10 => {
             // CPU classification must not include FPGA/DSP data, record
@@ -318,6 +433,20 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
             match parsed {
                 Ok((r, _)) if !matches!(r.isa, Isa::Unknown(_)) => r,
                 Ok((r, payload)) => {
+                    if !payload.is_empty() && depth < 6 && matches!(detected, formats::DetectedFormat::Hex { .. }) {
+                        if let Ok(inner) = classify_depth(&payload, options, depth + 1) {
+                            if !matches!(inner.result.isa, Isa::Unknown(_)) {
+                                let mut adopted = adopt_heuristic(&r, inner.result);
+                                adopted.metadata.notes.pop();
+                                adopted.metadata.notes.push("ISA identified from decoded hex payload".into());
+                                candidates = inner.candidates;
+                                return Ok(Classified {
+                                    format, result: adopted, candidates, slices: Vec::new(),
+                                    extensions: inner.extensions, notes, metadata,
+                                });
+                            }
+                        }
+                    }
                     let (mut h, mut c) = heuristic(if payload.is_empty() { data } else { &payload }, options);
                     if h.is_err() && !payload.is_empty() {
                         (h, c) = heuristic(data, options);
@@ -355,7 +484,7 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
     };
 
     let from_code = result.source == ClassificationSource::Heuristic;
-    let mut extensions: Vec<ExtensionDetection> = result
+    let mut extensions: Vec<ExtensionDetection> = contained_extensions.unwrap_or_else(|| result
         .extensions
         .iter()
         .map(|e| ExtensionDetection {
@@ -368,7 +497,7 @@ fn classify(data: &[u8], options: &ClassifierOptions) -> Result<Classified> {
                 ExtensionSource::FormatAttribute
             },
         })
-        .collect();
+        .collect());
     let mut result = result;
     if options.detect_extensions && !matches!(result.isa, Isa::Unknown(_)) {
         for ext in extensions::detect_from_code(code_payload.as_deref().unwrap_or(data), result.isa, result.endianness) {
@@ -482,6 +611,13 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::Sox => FormatDetection::new(FileFormat::Sox),
         DetectedFormat::D10 => FormatDetection::new(FileFormat::D10),
         DetectedFormat::TiC55xBoot => FormatDetection::new(FileFormat::TiC55xBoot),
+        DetectedFormat::Ti { variant } => {
+            let mut f = FormatDetection::with_variant(variant.format(), variant.label());
+            if matches!(variant,formats::ti::Variant::C55xLegacy|formats::ti::Variant::C6000Boot|formats::ti::Variant::GpImage) {
+                f.confidence = 0.85;
+            }
+            f
+        }
         DetectedFormat::Raw => FormatDetection::raw(),
     }
 }
