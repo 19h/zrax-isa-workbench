@@ -72,6 +72,84 @@ const RISCV_MAGIC_OFFSET: usize = 0x30;
 const RISCV_MAGIC2_OFFSET: usize = 0x38;
 const RISCV_MAGIC2: [u8; 4] = *b"RSC\x05";
 
+/// EFI zboot header (`drivers/firmware/efi/libstub/zboot-header.S`):
+/// `MZ\0\0`, `zimg`, payload offset and size (excluding a trailing size
+/// word), reserved, the NUL-terminated compression type at 0x18, the
+/// Linux PE magic at 0x38 and the PE header offset at 0x3C.
+const ZBOOT_MAGIC: &[u8; 8] = b"MZ\0\0zimg";
+const ZBOOT_PAYLOAD_OFFSET: usize = 0x08;
+const ZBOOT_PAYLOAD_SIZE: usize = 0x0c;
+const ZBOOT_COMPRESSION: usize = 0x18;
+const ZBOOT_COMPRESSION_SIZE: usize = 0x20;
+const ZBOOT_PE_OFFSET: usize = 0x3c;
+const ZBOOT_HEADER_END: usize = 0x40;
+
+/// `LINUX_PE_MAGIC` at 0x38.
+const LINUX_PE_MAGIC: u32 = 0x8182_23cd;
+
+/// The `IMAGE_FILE_HEADER.Machine` field follows the 4-byte PE signature.
+const PE_MACHINE: usize = 4;
+
+/// zboot compression names (`Makefile.zboot` `comp-type-*`) and codecs.
+const ZBOOT_CODECS: &[(&str, Codec)] = &[
+    ("gzip", Codec::Gzip),
+    ("lz4", Codec::Lz4Legacy),
+    ("lzma", Codec::Lzma),
+    ("lzo", Codec::Lzop),
+    ("xzkern", Codec::Xz),
+    ("zstd22", Codec::Zstd),
+];
+
+pub(super) fn is_zboot(data: &[u8]) -> bool {
+    data.starts_with(ZBOOT_MAGIC) && le_u32(data, 0x38).is_ok_and(|m| m == LINUX_PE_MAGIC)
+}
+
+/// EFI zboot image: a PE stub that decompresses the kernel `Image` stored
+/// after it. The PE `Machine` field names the kernel's architecture.
+pub(super) fn zboot(data: &[u8]) -> Result<Container<'_>> {
+    slice(data, 0, ZBOOT_HEADER_END)?;
+    let offset = le_u32(data, ZBOOT_PAYLOAD_OFFSET)? as usize;
+    let size = le_u32(data, ZBOOT_PAYLOAD_SIZE)? as usize;
+    let name_field = slice(data, ZBOOT_COMPRESSION, ZBOOT_COMPRESSION_SIZE)?;
+    let name_len = name_field
+        .iter()
+        .position(|b| *b == 0)
+        .unwrap_or(name_field.len());
+    let compression = String::from_utf8_lossy(&name_field[..name_len]).into_owned();
+    let pe = le_u32(data, ZBOOT_PE_OFFSET)? as usize;
+    if slice(data, pe, 4)? != b"PE\0\0" {
+        return Err(error(format!(
+            "Missing PE signature at 0x{pe:X} in EFI zboot image"
+        )));
+    }
+    let machine = le_u16(data, pe + PE_MACHINE)?;
+    let (isa, bits, endianness, _) = crate::formats::coff::machine_to_isa(machine);
+    let mut c = Container::new(FileFormat::ZImage, "EFI zboot", "zimage");
+    c.consumed = data.len();
+    c.notes.push(format!(
+        "Linux EFI zboot image; PE machine 0x{machine:04X}; payload {compression}-compressed at 0x{offset:X}, {size} B"
+    ));
+    let target = (!matches!(isa, Isa::Unknown(_))).then(|| Target::new(isa, bits, endianness));
+    c.target = target;
+    let stored = slice(data, offset, size)?;
+    let codec = ZBOOT_CODECS
+        .iter()
+        .find(|(name, _)| *name == compression)
+        .map(|(_, codec)| *codec);
+    if codec.is_none() {
+        c.notes.push(format!(
+            "Compression type {compression} is not one zboot defines; payload not decoded"
+        ));
+    }
+    let mut child = component("Kernel".into(), offset, stored, codec, &mut c.notes);
+    child.opaque |= codec.is_none();
+    if let Some(target) = target {
+        child = child.with_target(target);
+    }
+    c.children.push(child);
+    Ok(c)
+}
+
 pub(super) fn detect(data: &[u8]) -> Option<KernelFormat> {
     if data.len() >= IMAGE_HEADER_SIZE && le_u32(data, ARM64_MAGIC_OFFSET).ok()? == ARM64_MAGIC {
         return Some(KernelFormat::LinuxArm64);

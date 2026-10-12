@@ -388,6 +388,51 @@ fn bzimage_image_crc_is_reported() {
         .any(|n| n.message.starts_with("Image CRC-32 does not match")));
 }
 
+/// A 64-byte AArch64 `Image` header: magic `ARM\x64` at 0x38.
+fn arm64_image() -> Vec<u8> {
+    let mut image = vec![0u8; 0x100];
+    image[0x38..0x3c].copy_from_slice(b"ARM\x64");
+    image
+}
+
+/// EFI zboot: `MZ\0\0`, `zimg`, payload offset and size, the compression
+/// name at 0x18, `LINUX_PE_MAGIC` at 0x38, PE header offset 0x40 (signature
+/// and machine), then the compressed `Image` at 0x80.
+fn zboot(machine: u16, compression: &str, payload: &[u8]) -> Vec<u8> {
+    let mut data = vec![0u8; 0x80];
+    data[0..8].copy_from_slice(b"MZ\0\0zimg");
+    data[8..12].copy_from_slice(&0x80u32.to_le_bytes());
+    data[12..16].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+    data[0x18..0x18 + compression.len()].copy_from_slice(compression.as_bytes());
+    data[0x38..0x3c].copy_from_slice(&0x8182_23cdu32.to_le_bytes());
+    data[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+    data[0x40..0x44].copy_from_slice(b"PE\0\0");
+    data[0x44..0x46].copy_from_slice(&machine.to_le_bytes());
+    data.extend_from_slice(payload);
+    data
+}
+
+#[test]
+fn efi_zboot_images_decode_their_kernel_and_take_the_pe_machine() {
+    let p = classify(&zboot(0xaa64, "gzip", &gzip(&arm64_image())));
+    assert_eq!(p.format.format, FileFormat::ZImage);
+    assert_eq!(p.format.variant_name.as_deref(), Some("LinuxZboot"));
+    assert_eq!((p.primary.isa, p.primary.bitwidth), (Isa::AArch64, 64));
+    assert_eq!(p.slices.len(), 1);
+    assert_eq!(p.slices[0].offset, 0x80);
+    assert_eq!(p.slices[0].decoded.as_ref().unwrap().transform, "gzip");
+    assert_eq!(p.slices[0].isa, Isa::AArch64);
+
+    let unknown = classify(&zboot(0xaa64, "bogus", &[0; 32]));
+    assert!(unknown
+        .notes
+        .iter()
+        .any(|n| n.message.contains("not one zboot defines")));
+    assert_eq!(unknown.primary.isa, Isa::AArch64);
+    let truncated = zboot(0xaa64, "gzip", &gzip(&arm64_image()));
+    assert!(detect_payload(&truncated[..truncated.len() - 1], &ClassifierOptions::new()).is_err());
+}
+
 #[test]
 fn arm_zimage_size_beyond_the_file_is_an_error() {
     let mut image = zimage(0x0403_0201, &[0; 16]);

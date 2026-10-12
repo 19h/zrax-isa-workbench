@@ -241,6 +241,9 @@ pub enum KernelFormat {
     LinuxArm64,
     /// Linux RISC-V Image
     LinuxRiscv,
+    /// Linux EFI zboot image (`vmlinuz.efi`): a PE stub with a compressed
+    /// kernel `Image`
+    LinuxZboot,
     /// Linux 32-bit Arm `zImage`
     LinuxArm {
         /// Byte order, from the header's magic and endianness flag.
@@ -618,6 +621,12 @@ fn component<'a>(
     }
 }
 
+/// Kernel images that must be recognized before the generic PE check:
+/// an EFI zboot image is a valid PE file whose DOS header carries `zimg`.
+pub fn detect_pe_wrapped(data: &[u8]) -> Option<KernelFormat> {
+    linux::is_zboot(data).then_some(KernelFormat::LinuxZboot)
+}
+
 /// Detect kernel/boot format.
 pub fn detect(data: &[u8]) -> Option<KernelFormat> {
     if data.len() < 4 {
@@ -655,6 +664,7 @@ pub fn parse_container(data: &[u8], format: KernelFormat) -> Result<Container<'_
         KernelFormat::LinuxArm64 => linux::arm64(data),
         KernelFormat::LinuxRiscv => linux::riscv(data),
         KernelFormat::LinuxArm { byte_order } => linux::arm(data, byte_order),
+        KernelFormat::LinuxZboot => linux::zboot(data),
         KernelFormat::UImage { .. } => uimage::parse(data),
         KernelFormat::Fit => fit::parse(data),
         KernelFormat::Dtb => fit::parse_dtb(data),
@@ -676,6 +686,7 @@ pub fn file_format(format: KernelFormat) -> FileFormat {
         KernelFormat::LinuxX86 { .. }
         | KernelFormat::LinuxArm64
         | KernelFormat::LinuxRiscv
+        | KernelFormat::LinuxZboot
         | KernelFormat::LinuxArm { .. } => FileFormat::ZImage,
         KernelFormat::UImage { .. } => FileFormat::UImage,
         KernelFormat::Fit => FileFormat::Fit,
@@ -694,7 +705,8 @@ mod tests {
     fn make_uimage(arch: u8, os: u8, payload: &[u8]) -> Vec<u8> {
         let mut data = vec![0u8; UIMAGE_HEADER_SIZE];
         data[0..4].copy_from_slice(&UIMAGE_MAGIC.to_be_bytes());
-        data[12..16].copy_from_slice(&(payload.len() as u32).to_be_bytes());
+        let size = u32::try_from(payload.len()).expect("test payload fits in u32");
+        data[12..16].copy_from_slice(&size.to_be_bytes());
         data[16..20].copy_from_slice(&0x8000_8000u32.to_be_bytes());
         data[20..24].copy_from_slice(&0x8000_8000u32.to_be_bytes());
         data[24..28].copy_from_slice(&crc32(payload).to_be_bytes());

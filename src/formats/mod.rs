@@ -283,6 +283,12 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Ti { variant };
     }
 
+    // Linux EFI zboot images are valid PE files; their DOS header names
+    // the compressed kernel, so they are checked before PE.
+    if let Some(variant) = kernel::detect_pe_wrapped(data) {
+        return DetectedFormat::Kernel { variant };
+    }
+
     // ELF
     if data[..4] == magic::ELF {
         if data.len() >= 6 {
