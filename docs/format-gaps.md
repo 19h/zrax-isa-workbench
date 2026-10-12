@@ -142,6 +142,13 @@ These would extend the VBF, SGO, FRF, SOX, EPR, OLS and BCF support.
 
 ## 7. Transforms on raw dumps
 
+**Implemented 2026-10-12**: 16/32-bit byte swaps, 2- and 4-lane interleaves
+(one file, either lane order, or separate files through
+`detect_interleaved` / `zrax --interleave`) and NAND spare removal for five
+page geometries, with the union-bound penalty described below. See
+[raw-dump transforms](transforms.md) for when they are tried and the cases
+the first-order model still misreads.
+
 These are encodings, not containers. Each breaks the adjacent-byte pairs the
 first-order model scores, so correctly dumped code reads as non-code.
 

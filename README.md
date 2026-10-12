@@ -297,7 +297,9 @@ recognize format
 ```
 
 Code evidence needs a margin of at least 0.4 bits per byte transition and
-16 bits total over competing families/data. Family evidence and its strength
+16 bits total over competing families/data. When a top-level raw input is
+inconclusive, byte swaps, lane interleaves and NAND spare removal are tried
+with a union-bound penalty ([raw-dump transforms](docs/transforms.md)). Family evidence and its strength
 determine the returned confidence. Candidate evidence shares are not posterior
 probabilities. Rejection is an explicit outcome when the input does not support
 a known code hypothesis. Header confidence and model confidence arise from

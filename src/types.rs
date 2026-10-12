@@ -1235,6 +1235,8 @@ pub struct ClassificationMetadata {
 }
 
 /// Options for classification behavior.
+// Each flag is an independent switch callers set by name.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
 pub struct ClassifierOptions {
     /// Minimum confidence threshold for heuristic analysis
@@ -1247,6 +1249,9 @@ pub struct ClassifierOptions {
     pub detect_extensions: bool,
     /// Prefer speed over accuracy
     pub fast_mode: bool,
+    /// When a top-level raw input is inconclusive, try byte swaps, lane
+    /// interleaving and NAND spare removal ([`crate::transform`]).
+    pub try_transforms: bool,
 }
 
 impl ClassifierOptions {
@@ -1258,6 +1263,7 @@ impl ClassifierOptions {
             max_scan_bytes: 1024 * 1024, // 1MB
             detect_extensions: true,
             fast_mode: false,
+            try_transforms: true,
         }
     }
 
@@ -1269,6 +1275,7 @@ impl ClassifierOptions {
             max_scan_bytes: 10 * 1024 * 1024, // 10MB
             detect_extensions: true,
             fast_mode: false,
+            try_transforms: true,
         }
     }
 
@@ -1280,6 +1287,7 @@ impl ClassifierOptions {
             max_scan_bytes: 64 * 1024, // 64KB
             detect_extensions: false,
             fast_mode: true,
+            try_transforms: false,
         }
     }
 }

@@ -4,7 +4,8 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use zrax::{
-    detect_multi_isa, detect_payload, CandidatesFormatter, ClassifierOptions, DetectionPayload,
+    detect_interleaved, detect_multi_isa, detect_payload, CandidatesFormatter, ClassifierOptions,
+    DetectionPayload,
     HumanFormatter, JsonFormatter, PayloadFormatter, ShortFormatter,
 };
 use std::path::PathBuf;
@@ -59,6 +60,12 @@ struct Cli {
     /// Quiet mode (only output essential info)
     #[arg(short, long)]
     quiet: bool,
+
+    /// Treat the input files as byte lanes of one image (lane 0 first, for
+    /// example the even and odd EPROMs of a 16-bit bus) and classify the
+    /// interleaved image
+    #[arg(long)]
+    interleave: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -213,6 +220,17 @@ fn main() -> ExitCode {
     }
 
     let options = build_options(&cli);
+    if cli.interleave {
+        return match analyze_interleaved(&options, &cli) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                if !cli.quiet {
+                    eprintln!("Error analyzing interleaved image: {e}");
+                }
+                ExitCode::FAILURE
+            }
+        };
+    }
     let mut success = true;
 
     for path in &cli.files {
@@ -479,6 +497,22 @@ fn analyze_file(
         print!("{}", candidates_formatter.format_payload(&payload, path));
     }
 
+    Ok(())
+}
+
+/// Analyze the input files as byte lanes of one interleaved image.
+fn analyze_interleaved(
+    options: &ClassifierOptions,
+    cli: &Cli,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let lanes = cli
+        .files
+        .iter()
+        .map(std::fs::read)
+        .collect::<Result<Vec<_>, _>>()?;
+    let views: Vec<&[u8]> = lanes.iter().map(Vec::as_slice).collect();
+    let payload = detect_interleaved(&views, options)?;
+    print!("{}", format_output(&payload, &cli.files[0], cli));
     Ok(())
 }
 

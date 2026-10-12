@@ -46,6 +46,7 @@ pub mod extensions;
 pub mod formats;
 pub mod formatter;
 pub mod heuristics;
+pub mod transform;
 pub mod types;
 
 #[cfg(feature = "batch")]
@@ -147,6 +148,33 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
     Ok(payload)
 }
 
+/// Detect and analyze an image dumped as separate byte lanes, lane 0 first:
+/// the even and odd 8-bit memories of a 16-bit bus, or four lanes of a
+/// 32-bit bus. Offsets in the payload refer to the interleaved image.
+///
+/// # Errors
+///
+/// A lane count or size [`transform::interleave`] rejects, or the
+/// classification error of the interleaved image.
+pub fn detect_interleaved(
+    lanes: &[&[u8]],
+    options: &ClassifierOptions,
+) -> Result<DetectionPayload> {
+    let image = transform::interleave(lanes)?;
+    let mut payload = detect_payload(&image, options)?;
+    payload.notes.push(Note::info(format!(
+        "Interleaved from {} byte lanes of {} B each; offsets refer to the interleaved image",
+        lanes.len(),
+        lanes[0].len()
+    )));
+    payload.metadata.push(MetadataEntry::new(
+        MetadataKey::Custom("transform_lanes".into()),
+        MetadataValue::Integer(lanes.len() as u64),
+        "Interleaved lanes",
+    ));
+    Ok(payload)
+}
+
 /// Everything one classification produces, shared by both public APIs.
 struct Classified {
     format: FormatDetection,
@@ -168,13 +196,139 @@ fn heuristic(
         ..options.clone()
     };
     let (result, candidates) = heuristics::analyze_detailed(data, &quiet);
-    let candidates = candidates
+    (result, ranked(candidates))
+}
+
+/// The ten best positive-evidence candidates of a code-model scan.
+fn ranked(scores: Vec<heuristics::ArchitectureScore>) -> Vec<IsaCandidate> {
+    scores
         .into_iter()
         .filter(|c| c.raw_score > 0)
         .take(10)
         .map(|c| IsaCandidate::new(c.isa, c.bitwidth, c.endianness, c.raw_score, c.confidence))
+        .collect()
+}
+
+/// A raw input classified after one of the [`transform::CANDIDATES`].
+struct Transformed {
+    transform: transform::Transform,
+    trials: usize,
+    data: Vec<u8>,
+    result: ClassificationResult,
+    candidates: Vec<IsaCandidate>,
+}
+
+/// Try every applicable transform on an inconclusive raw input and keep the
+/// most confident code-model result. Every attempt pays the union-bound
+/// penalty for the number of readings tried, the original one included.
+fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transformed> {
+    let applicable: Vec<transform::Transform> = transform::CANDIDATES
+        .iter()
+        .copied()
+        .filter(|t| t.applies(data.len()))
         .collect();
-    (result, candidates)
+    let trials = applicable.len() + 1;
+    let quiet = ClassifierOptions {
+        detect_extensions: false,
+        ..options.clone()
+    };
+    let mut best: Option<Transformed> = None;
+    for t in applicable {
+        let Some(transformed) = t.apply(data) else {
+            continue;
+        };
+        let (result, scores) =
+            heuristics::analyze_detailed_with_trials(&transformed, &quiet, trials);
+        let Ok(result) = result else {
+            continue;
+        };
+        if best
+            .as_ref()
+            .is_some_and(|b| b.result.confidence >= result.confidence)
+        {
+            continue;
+        }
+        best = Some(Transformed {
+            transform: t,
+            trials,
+            data: transformed,
+            result,
+            candidates: ranked(scores),
+        });
+    }
+    best
+}
+
+/// Metadata recording which transform produced the analyzed bytes.
+fn transform_metadata(transform: transform::Transform, trials: usize) -> Vec<MetadataEntry> {
+    vec![
+        MetadataEntry::new(
+            MetadataKey::Custom("transform_applied".into()),
+            MetadataValue::String(transform.name()),
+            "Transform",
+        ),
+        MetadataEntry::new(
+            MetadataKey::Custom("transform_trials".into()),
+            MetadataValue::Integer(trials as u64),
+            "Readings tried",
+        ),
+    ]
+}
+
+/// A container that does not parse may be a raw NAND dump with spare areas:
+/// retry the same detection with each spare-area geometry removed and map
+/// slice offsets back to the stored dump.
+fn retry_without_spare(
+    data: &[u8],
+    detected: &formats::DetectedFormat,
+    options: &ClassifierOptions,
+    depth: usize,
+) -> Option<Classified> {
+    if depth != 0 || !options.try_transforms {
+        return None;
+    }
+    let geometries: Vec<transform::Transform> = transform::CANDIDATES
+        .iter()
+        .copied()
+        .filter(|t| matches!(t, transform::Transform::NandSpare { .. }) && t.applies(data.len()))
+        .collect();
+    for t in &geometries {
+        let transformed = t.apply(data)?;
+        let same_layout = std::mem::discriminant(&formats::detect_format(&transformed))
+            == std::mem::discriminant(detected);
+        if !same_layout {
+            continue;
+        }
+        let Ok(mut inner) = classify_depth(&transformed, options, depth + 1) else {
+            continue;
+        };
+        inner.notes.push(Note::info(format!(
+            "Parsed after {}; slice offsets refer to the stored dump",
+            t.name()
+        )));
+        inner
+            .metadata
+            .extend(transform_metadata(*t, geometries.len() + 1));
+        for slice in &mut inner.slices {
+            let (Ok(offset), Ok(size)) =
+                (usize::try_from(slice.offset), usize::try_from(slice.size))
+            else {
+                continue;
+            };
+            let (offset, size) = t.stored_range(offset, size, data.len());
+            if slice.decoded.is_none() {
+                slice.decoded = Some(DecodedRange {
+                    transform: t.name(),
+                    offset: slice.offset,
+                    size: slice.size,
+                });
+            }
+            slice.offset = offset as u64;
+            slice.size = size as u64;
+        }
+        return Some(inner);
+    }
+    None
 }
 
 /// Replace a container result that does not know its ISA with the code
@@ -813,8 +967,26 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
     let result = match detected {
         formats::DetectedFormat::Raw => {
             let (r, c) = heuristic(data, options);
-            candidates = c;
-            r?
+            match r {
+                Ok(r) => {
+                    candidates = c;
+                    r
+                }
+                Err(e) if depth == 0 && options.try_transforms => {
+                    let Some(found) = search_transforms(data, options) else {
+                        return Err(e);
+                    };
+                    notes.push(Note::info(format!(
+                        "ISA identified after {}; the stored bytes are not in execution order",
+                        found.transform.name()
+                    )));
+                    metadata.extend(transform_metadata(found.transform, found.trials));
+                    candidates = found.candidates;
+                    code_payload = Some(std::borrow::Cow::Owned(found.data));
+                    found.result
+                }
+                Err(e) => return Err(e),
+            }
         }
         formats::DetectedFormat::MachOFat { fat64, .. } => {
             let entries = formats::macho::parse_fat_all(data, fat64)?;
@@ -922,8 +1094,12 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
         model @ (formats::DetectedFormat::Container { .. }
         | formats::DetectedFormat::Kernel { .. }
         | formats::DetectedFormat::Bflt) => {
-            let container =
-                formats::parse_container_model(data, &model).expect("container-model format")?;
+            let container = match formats::parse_container_model(data, &model)
+                .expect("container-model format")
+            {
+                Ok(container) => container,
+                Err(e) => return retry_without_spare(data, &model, options, depth).ok_or(e),
+            };
             let outcome = classify_container(&container, options, depth)?;
             candidates = outcome.candidates;
             slices = outcome.slices;

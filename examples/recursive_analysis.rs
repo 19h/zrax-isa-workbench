@@ -2549,6 +2549,7 @@ fn run_directory_analysis(target_dir: &Path) {
         max_scan_bytes: 2 * 1024 * 1024,
         detect_extensions: true,
         fast_mode: false,
+        try_transforms: false,
     };
 
     print_options(&options);
@@ -3156,6 +3157,7 @@ fn validate_system_binaries() -> ValidationResults {
         max_scan_bytes: 2 * 1024 * 1024,
         detect_extensions: true,
         fast_mode: false,
+        try_transforms: false,
     };
 
     // System directories to test
@@ -4282,6 +4284,7 @@ fn demonstrate_heuristic_analysis() {
         max_scan_bytes: 1024 * 1024,
         detect_extensions: true,
         fast_mode: false,
+        try_transforms: false,
     };
 
     // x86-64 code sequence - expanded with multiple functions

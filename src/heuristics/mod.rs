@@ -131,6 +131,9 @@ pub struct WindowVerdict {
 #[derive(Debug, Clone)]
 pub struct Scan<'m> {
     model: &'m Model<'m>,
+    /// Multiplier of the weak-window false-alarm allowance: the number of
+    /// alternative readings of the input that were tried (1 normally).
+    trials: f64,
     /// Per-window verdicts in input order.
     pub windows: Vec<WindowVerdict>,
     /// For every code window (same order as they appear in `windows`), the
@@ -183,7 +186,7 @@ impl<'m> Scan<'m> {
                 e.2 += window_weight(margin, w.len);
             }
         }
-        let allowance = FALSE_ALARM_PER_WINDOW * self.informative_windows() as f64;
+        let allowance = FALSE_ALARM_PER_WINDOW * self.trials * self.informative_windows() as f64;
         let mut v: Vec<_> = votes
             .into_iter()
             .map(|(f, (b, strong, weak))| (f, b, strong + (weak - allowance).max(0.0)))
@@ -308,6 +311,33 @@ fn window_costs(model: &Model, w: &[u8], costs: &mut Vec<u64>) {
 /// Scan `data` with `model` using windows of `window` bytes, looking at no
 /// more than `budget` bytes in total.
 pub fn scan<'m>(data: &[u8], model: &'m Model<'m>, window: usize, budget: usize) -> Scan<'m> {
+    scan_with_trials(data, model, window, budget, 1)
+}
+
+/// Extra total margin, in bits, a window needs when `trials` readings of
+/// the input are tried: a union bound over `trials` chances of a false
+/// accept costs `log2(trials)` bits.
+fn trial_penalty_bits(trials: usize) -> f64 {
+    trial_count(trials).log2().ceil()
+}
+
+/// `trials` as a float, at least one.
+fn trial_count(trials: usize) -> f64 {
+    f64::from(u32::try_from(trials.max(1)).unwrap_or(u32::MAX))
+}
+
+/// [`scan`] for one of `trials` alternative readings of an input (byte
+/// swaps, de-interleaving, spare-area removal). Each window needs
+/// `log2(trials)` more bits of total margin, and the weak-window
+/// false-alarm allowance is multiplied by `trials`.
+fn scan_with_trials<'m>(
+    data: &[u8],
+    model: &'m Model<'m>,
+    window: usize,
+    budget: usize,
+    trials: usize,
+) -> Scan<'m> {
+    let min_margin_bits = MIN_MARGIN_BITS + trial_penalty_bits(trials);
     let window = window.max(MIN_WINDOW * 4);
     let scale = f64::from(model.cost_scale());
     let mut windows = Vec::new();
@@ -359,7 +389,7 @@ pub fn scan<'m>(data: &[u8], model: &'m Model<'m>, window: usize, budget: usize)
                     .fold(uniform, f64::min);
                 let margin_bits = (rival - costs[best] as f64) / scale;
                 let margin = margin_bits / pairs;
-                if margin >= MIN_MARGIN_BITS_PER_BYTE && margin_bits >= MIN_MARGIN_BITS {
+                if margin >= MIN_MARGIN_BITS_PER_BYTE && margin_bits >= min_margin_bits {
                     code_costs.push(costs.iter().map(|&c| (c as f64 - data_best) / scale).collect());
                     WindowKind::Code { class: best, margin }
                 } else {
@@ -371,7 +401,12 @@ pub fn scan<'m>(data: &[u8], model: &'m Model<'m>, window: usize, budget: usize)
         windows.push(WindowVerdict { offset: off, len, kind });
     }
 
-    Scan { model, windows, code_costs }
+    Scan {
+        model,
+        trials: trial_count(trials),
+        windows,
+        code_costs,
+    }
 }
 
 fn scan_budget(data_len: usize, options: &ClassifierOptions) -> usize {
@@ -423,10 +458,29 @@ pub fn analyze_detailed(
     analyze_detailed_with_model(data, options, Model::embedded())
 }
 
+/// [`analyze_detailed`] for one of `trials` alternative readings of the
+/// same input, with the union-bound penalty of [`scan_with_trials`].
+pub fn analyze_detailed_with_trials(
+    data: &[u8],
+    options: &ClassifierOptions,
+    trials: usize,
+) -> (Result<ClassificationResult>, Vec<ArchitectureScore>) {
+    analyze_detailed_with_model_trials(data, options, Model::embedded(), trials)
+}
+
 fn analyze_detailed_with_model(
     data: &[u8],
     options: &ClassifierOptions,
     model: &Model,
+) -> (Result<ClassificationResult>, Vec<ArchitectureScore>) {
+    analyze_detailed_with_model_trials(data, options, model, 1)
+}
+
+fn analyze_detailed_with_model_trials(
+    data: &[u8],
+    options: &ClassifierOptions,
+    model: &Model,
+    trials: usize,
 ) -> (Result<ClassificationResult>, Vec<ArchitectureScore>) {
     if data.len() < MIN_WINDOW {
         return (
@@ -434,7 +488,8 @@ fn analyze_detailed_with_model(
             Vec::new(),
         );
     }
-    let scan = scan(data, model, DEFAULT_WINDOW, scan_budget(data.len(), options));
+    let budget = scan_budget(data.len(), options);
+    let scan = scan_with_trials(data, model, DEFAULT_WINDOW, budget, trials);
     let candidates = candidates_from_scan(&scan);
     let inconclusive = |confidence: f64| ClassifierError::HeuristicInconclusive {
         confidence: confidence * 100.0,
