@@ -11,6 +11,10 @@ before any parser is written.
 
 Impact reflects how much existing coverage a fix unlocks, not format popularity.
 
+As of 2026-10-13 every entry with an established layout is implemented. Each
+section's status line names what was built and links the family's document,
+which records its sources, bounds and known boundaries.
+
 ## 1. Defects in existing kernel and boot-image support
 
 **Resolved 2026-10-12.** All five defects are fixed: uImage byte order,
@@ -102,34 +106,32 @@ of this section is now implemented.
 
 ## 4. Containers with ISA-bearing or slice-bearing headers
 
-Status 2026-10-12: implemented so far are UF2 (family ID mapped to ISA,
-reassembly by `targetAddr`, one child per family), STM32 DfuSe (suffix CRC-32
-verified), Silicon Labs GBL (CRC-32 verified; encryption opaque, signatures
-not verified) and Cypress `.cyacd`/`.cyacd2` (weak); see
-[MCU update images](mcu.md); Allwinner eGON/TOC0, Rockchip RKFW/RKAF/RKBOOT and
-idbloader, MediaTek preloader headers and legacy Qualcomm MBN (SBL and 40-byte
-v3); see [SoC loaders](socboot2.md). Apple IMG4/IM4P (payloads decoded; KBAG
-payloads opaque) and dyld shared caches; see [Apple images](apple.md).
-Android boot and `vendor_boot` images (kernel and ramdisk decoded and
-classified), sparse images (expanded, CRC-32 verified), OTA `payload.bin`
-(full operations reassembled, SHA-256 checked; delta operations opaque) and
-bootloader packs (`BOOTLDR!`, Qualcomm meta image, FBPK v1/v2); see
-[Android images](android.md). Xilinx Zynq-7000/ZynqMP `BOOT.BIN`
-(partition targets from the destination-CPU field; bitstream partitions
-opaque), NXP i.MX IVT and AHAB images (no ISA inferred from the SoC family)
-and NXP SB2.0/2.1/3.1 (metadata only; signatures not verified); see
-[SoC boot images](socboot.md). UEFI firmware volumes (FFS files,
-compression and GUID-defined sections, nested volumes, flash device images),
-TE images and the Intel flash descriptor region map are implemented; ME/CSME
-and AMD PSP regions stay opaque; see [UEFI and PC flash images](uefi.md).
-Chromium FMAP (at offset 0, or found by a bounded search) and coreboot CBFS
-(`LARCHIVE` regions and master-header ROMs; LZMA/LZ4 stages, SELF segments,
-SHA-2 hash attributes verified) are implemented; see [coreboot](coreboot.md).
-Router wrappers (Broadcom TRX v1/v2, Netgear CHK, D-Link SEAMA, TP-Link
-mktplinkfw v1/v2/v3 and SafeLoader; TRX CRC and CHK checksums verified, MD5
-digests not verified; LZMA kernels decoded by the OpenWrt convention) are
-implemented; see [router firmware](router.md). Every row of this section is
-now implemented.
+Status 2026-10-13: every row of this section is implemented: UF2 (family ID
+mapped to ISA, reassembly by `targetAddr`, one child per family), STM32 DfuSe
+(suffix CRC-32 verified), Silicon Labs GBL (CRC-32 verified; encryption opaque,
+signatures not verified) and Cypress `.cyacd`/`.cyacd2` (weak); see [MCU update
+images](mcu.md); Allwinner eGON/TOC0, Rockchip RKFW/RKAF/RKBOOT and idbloader,
+MediaTek preloader headers and legacy Qualcomm MBN (SBL and 40-byte v3); see
+[SoC loaders](socboot2.md). Apple IMG4/IM4P (payloads decoded; KBAG payloads
+opaque) and dyld shared caches; see [Apple images](apple.md). Android boot and
+`vendor_boot` images (kernel and ramdisk decoded and classified), sparse images
+(expanded, CRC-32 verified), OTA `payload.bin` (full operations reassembled,
+SHA-256 checked; delta operations opaque) and bootloader packs (`BOOTLDR!`,
+Qualcomm meta image, FBPK v1/v2); see [Android images](android.md). Xilinx
+Zynq-7000/ZynqMP `BOOT.BIN` (partition targets from the destination-CPU field;
+bitstream partitions opaque), NXP i.MX IVT and AHAB images (no ISA inferred
+from the SoC family) and NXP SB2.0/2.1/3.1 (metadata only; signatures not
+verified); see [SoC boot images](socboot.md). UEFI firmware volumes (FFS files,
+compression and GUID-defined sections, nested volumes, flash device images), TE
+images and the Intel flash descriptor region map are implemented; ME/CSME and
+AMD PSP regions stay opaque; see [UEFI and PC flash images](uefi.md). Chromium
+FMAP (at offset 0, or found by a bounded search) and coreboot CBFS (`LARCHIVE`
+regions and master-header ROMs; LZMA/LZ4 stages, SELF segments, SHA-2 hash
+attributes verified) are implemented; see [coreboot](coreboot.md). Router
+wrappers (Broadcom TRX v1/v2, Netgear CHK, D-Link SEAMA, TP-Link mktplinkfw
+v1/v2/v3 and SafeLoader; TRX CRC and CHK checksums verified, MD5 digests not
+verified; LZMA kernels decoded by the OpenWrt convention) are implemented; see
+[router firmware](router.md).
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |
@@ -158,7 +160,8 @@ now implemented.
 
 ## 5. Console and retro ROMs
 
-Status 2026-10-12: Mega Drive/Genesis, PS-X EXE, Dreamcast IP.BIN, Wii U
+Status 2026-10-13: every row of this section is implemented. Mega
+Drive/Genesis, PS-X EXE, Dreamcast IP.BIN, Wii U
 RPX/RPL (zlib sections inflated), 3DS NCCH/ExeFS (BLZ `.code` decoded) and
 3DSX, and PSP PBP are implemented; see [console images](retro.md). Nintendo
 DS/DSi (ARM9 and ARM7 slices with their core variants; secure and modcrypt
@@ -194,8 +197,9 @@ are reported as `w65816` from the platform, without a code-model check.
 These would extend the VBF, SGO, FRF, SOX, EPR, OLS and BCF support.
 
 **Implemented 2026-10-12** for ODX-F, Honda RWD (`0x5A`, `0x31`), Toyota CUW and
-Mercedes CFF; PDX awaits ZIP; SMR-F has no public layout. See
-[automotive containers](automotive.md).
+Mercedes CFF; PDX packages followed on 2026-10-13 with the ZIP container,
+which resolves `EXTERN-FLASHDATA` data files ([archives](archives.md)); SMR-F
+has no public layout. See [automotive containers](automotive.md).
 
 | Impact | Format | Identification | Notes |
 | --- | --- | --- | --- |
@@ -249,8 +253,14 @@ the raw-code model.
 
 ## Suggested order
 
+Done as of 2026-10-13, in this order:
+
 1. Section 1 defects together with gzip, xz/LZMA, LZ4 and zstd from section 2.
    These make the existing uImage, zImage, FIT and bFLT support classify code.
 2. UF2: small, fixed layout, and the family ID is direct evidence.
 3. ZIP, CPIO and SquashFS member enumeration.
 4. Remaining entries according to available samples.
+
+What remains are the boundaries each family's document lists, and the
+layouts marked as not established (Mercedes SMR-F, Intel `.sof`, Arria 10
+`.rbf`).
