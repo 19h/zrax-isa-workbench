@@ -72,6 +72,11 @@ const FORMAT_NAMES = {
   rsx11: 'RSX-11', vms: 'VMS',
   gzip: 'gzip', zlib: 'zlib', xz: 'xz', lzma: 'LZMA', lz4: 'LZ4', zstd: 'Zstandard', bzip2: 'bzip2',
   lzop: 'lzop', lzfse: 'LZFSE', lzss: 'Apple LZSS',
+  tds: 'TDS', aof: 'AOF/AXF', epoc: 'EPOC', espfirmware: 'ESP Firmware', palmpdb: 'Palm PDB/PRC', amigahunk: 'Amiga Hunk',
+  os9: 'OS-9', snesspc: 'SNES SPC', tmobj: 'TriMedia TMObj', dsplod: 'Motorola DSP LOD', ieee695: 'IEEE-695',
+  wasm: 'WebAssembly', javaclass: 'Java Class', dex: 'DEX', odex: 'ODEX', vdex: 'VDEX', art: 'ART', llvmbc: 'LLVM Bitcode',
+  fatelf: 'FatELF', archive: 'ar Archive', windowslib: 'Windows .lib', xbe: 'XBE', xex: 'XEX', selfps3: 'PS3 SELF',
+  selfps4: 'PS4 SELF', selfps5: 'PS5 SELF', nso: 'NSO', nro: 'NRO', dol: 'DOL', rel: 'REL',
   odx: 'ASAM ODX', hondarwd: 'Honda RWD', toyotacuw: 'Toyota CUW', mercedescff: 'Mercedes CFF',
 };
 
