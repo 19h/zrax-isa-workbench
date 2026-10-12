@@ -24,6 +24,21 @@ use std::borrow::Cow;
 /// and record how many they left out.
 pub const MAX_COMPONENTS: usize = 4096;
 
+/// Most decoded bytes one container extracts across all of its components
+/// (filesystem members, partitions, expanded images), in addition to the
+/// per-component [`MAX_PAYLOAD`] limit. Formats stop extracting there and
+/// record what they left out.
+pub const MAX_EXTRACTED: usize = 256 << 20;
+
+/// Whether `prefix`, the first bytes of a member, starts a format the
+/// classifier recognizes. Archive and filesystem parsers use it to avoid
+/// extracting members that would only be listed if recognized; weak
+/// formats that need their whole input may not be recognized from a
+/// prefix.
+pub fn is_recognized(prefix: &[u8]) -> bool {
+    !matches!(super::detect_format(prefix), super::DetectedFormat::Raw)
+}
+
 /// A layout recognized by [`crate::formats::detect_format`] and parsed into
 /// a [`Container`]. Each family keeps its own layout enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -388,5 +403,37 @@ fn stored_and_decoded(stored: usize, decoded: usize, transform: Option<&str>) ->
     match transform {
         Some(name) => format!("{stored} B stored; {decoded} B decoded ({name})"),
         None => format!("{stored} B"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognized_prefixes_are_magic_bearing_formats() {
+        assert!(is_recognized(b"\x7fELF\x02\x01\x01\0"));
+        assert!(!is_recognized(&[0x5a; 64]));
+    }
+
+    #[test]
+    fn metadata_reports_stored_and_decoded_sizes() {
+        let mut c = Container::new(FileFormat::Gzip, "test", "test");
+        c.children.push(Child::decoded(
+            "Payload",
+            4,
+            10,
+            Cow::Owned(vec![0; 20]),
+            "gzip",
+        ));
+        let entries = c.metadata();
+        let component = entries
+            .iter()
+            .find(|e| e.label == "Payload")
+            .expect("component entry");
+        assert_eq!(
+            component.value.to_string(),
+            "file 0x4; 10 B stored; 20 B decoded (gzip)"
+        );
     }
 }
