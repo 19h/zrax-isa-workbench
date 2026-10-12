@@ -689,6 +689,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Sid => "C64 SID",
         FileFormat::Gbs => "GBS",
         FileFormat::BlackfinLdr => "Blackfin LDR",
+        FileFormat::PciOptionRom => "Option ROM",
     }
 }
 

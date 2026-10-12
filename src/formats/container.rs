@@ -13,7 +13,7 @@
 //! `transform` names it and the bytes are owned.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{automotive, blackfin_ldr, chiptune, compressed, MAX_PAYLOAD};
+use crate::formats::{automotive, blackfin_ldr, chiptune, compressed, optionrom, MAX_PAYLOAD};
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
     Variant,
@@ -51,6 +51,8 @@ pub enum Kind {
     Chiptune(chiptune::Layout),
     /// A Blackfin LDR boot stream.
     BlackfinLdr(blackfin_ldr::Layout),
+    /// A PCI or legacy option ROM.
+    OptionRom(optionrom::Layout),
 }
 
 impl Kind {
@@ -61,6 +63,7 @@ impl Kind {
             Self::Automotive(layout) => layout.format(),
             Self::Chiptune(layout) => layout.format(),
             Self::BlackfinLdr(layout) => layout.format(),
+            Self::OptionRom(layout) => layout.format(),
         }
     }
 
@@ -71,6 +74,7 @@ impl Kind {
             Self::Automotive(layout) => layout.label(),
             Self::Chiptune(layout) => layout.label(),
             Self::BlackfinLdr(layout) => layout.label(),
+            Self::OptionRom(layout) => layout.label(),
         }
     }
 
@@ -81,6 +85,7 @@ impl Kind {
             Self::Automotive(layout) => layout.is_weak(),
             Self::Chiptune(layout) => layout.is_weak(),
             Self::BlackfinLdr(layout) => layout.is_weak(),
+            Self::OptionRom(layout) => layout.is_weak(),
         }
     }
 }
@@ -96,6 +101,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Automotive(layout) => automotive::parse_container(data, layout),
         Kind::Chiptune(layout) => chiptune::parse_container(data, layout),
         Kind::BlackfinLdr(layout) => blackfin_ldr::parse_container(data, layout),
+        Kind::OptionRom(layout) => optionrom::parse_container(data, layout),
     }
 }
 
@@ -157,6 +163,10 @@ pub enum Classify {
     /// Archive and filesystem members: listed only when they are a
     /// recognized format, as `ar` members are.
     IfRecognized,
+    /// Raw code that goes straight to the code model and is never parsed
+    /// as a nested container (an option ROM image starts with the ROM's own
+    /// header).
+    Code,
 }
 
 /// An embedded image that is classified on its own.
@@ -236,6 +246,13 @@ impl<'a> Child<'a> {
     #[must_use]
     pub fn if_recognized(mut self) -> Self {
         self.classify = Classify::IfRecognized;
+        self
+    }
+
+    /// Classify as raw code, never as a nested container.
+    #[must_use]
+    pub fn as_code(mut self) -> Self {
+        self.classify = Classify::Code;
         self
     }
 }

@@ -248,7 +248,7 @@ enumeration additionally represents header-derived architectures.
 | Virtual machines | WebAssembly, Java class, DEX/ODEX/VDEX/ART, LLVM bitcode |
 | Archives and boot images | ar variants, FatELF, Linux x86/Arm/AArch64/RISC-V kernel images, U-Boot uImage (single and multi-file) and FIT, DTB; compressed kernel payloads are decoded |
 | Consoles and DSP | XBE, XEX, PlayStation SELF variants, Switch NSO/NRO, GameCube/Wii DOL, SNES SPC, NSF/NSFe, C64 SID, GBS ([chiptune](docs/chiptune.md)), TriMedia objects, Motorola DSP LOD |
-| Firmware and loader text | Espressif images, Blackfin LDR boot streams ([LDR](docs/blackfin-ldr.md)), Intel HEX, Motorola S-record, TI-TXT, TI ASCII Hex, TI SDSMAC tagged, Extended Tektronix, CCS GO DSP data |
+| Firmware and loader text | Espressif images, Blackfin LDR boot streams ([LDR](docs/blackfin-ldr.md)), PCI and legacy option ROMs ([option ROMs](docs/option-roms.md)), Intel HEX, Motorola S-record, TI-TXT, TI ASCII Hex, TI SDSMAC tagged, Extended Tektronix, CCS GO DSP data |
 | Texas Instruments firmware | C28x/C54x/C55x/C3x/C4x and unkeyed boot tables, AIS, RPRC, MCU+ and mmWave appimages, multicore ELF, GP/OMAP images, OAD, TI X.509 wrappers, MCUboot, TF-A FIP |
 | Specialized containers | OLS, EPR, SGO, VBF, FRF, BCF, SOX, AOR D10, ASAM ODX-F, Honda RWD, Toyota CUW, Mercedes CFF ([automotive](docs/automotive.md)) |
 | Compressed streams | gzip, zlib, xz, LZMA-alone, LZ4 (frame and legacy), Zstandard, bzip2, lzop, LZFSE/LZVN, Apple LZSS kernelcaches; decoded and classified by their content |

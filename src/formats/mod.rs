@@ -52,6 +52,7 @@ pub mod macho;
 pub mod mz;
 pub mod ols;
 pub mod omf;
+pub mod optionrom;
 pub mod os9;
 pub mod palm;
 pub mod pe;
@@ -482,6 +483,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // PCI expansion ROMs: `55 AA` and a PCIR data structure.
+    if let Some(layout) = optionrom::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::OptionRom(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -624,6 +632,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = blackfin_ldr::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::BlackfinLdr(layout),
+        };
+    }
+
+    // Legacy option ROMs: `55 AA`, a size and a zero byte sum.
+    if let Some(layout) = optionrom::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::OptionRom(layout),
         };
     }
 

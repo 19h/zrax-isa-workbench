@@ -855,6 +855,8 @@ pub enum FileFormat {
     // Boot streams
     /// Analog Devices Blackfin LDR boot stream
     BlackfinLdr,
+    /// PCI expansion ROM or legacy option ROM
+    PciOptionRom,
 }
 
 impl fmt::Display for FileFormat {
@@ -978,6 +980,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Gbs => write!(f, "GBS"),
             // Boot streams
             FileFormat::BlackfinLdr => write!(f, "Blackfin LDR"),
+            FileFormat::PciOptionRom => write!(f, "Option ROM"),
         }
     }
 }

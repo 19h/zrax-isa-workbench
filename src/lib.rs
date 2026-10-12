@@ -601,6 +601,21 @@ fn unknown_component(format: FileFormat) -> Component {
     }
 }
 
+/// Classify bytes with the code model alone, as raw code that is never a
+/// nested container.
+fn classify_code(code: &[u8], options: &ClassifierOptions) -> Result<Classified> {
+    let (result, candidates) = heuristic(code, options);
+    result.map(|result| Classified {
+        format: FormatDetection::new(FileFormat::Raw),
+        result,
+        candidates,
+        slices: Vec::new(),
+        extensions: Vec::new(),
+        notes: Vec::new(),
+        metadata: Vec::new(),
+    })
+}
+
 /// Classify one child of a shared-model container from its own bytes.
 /// Returns `None` for an archive member that is not a recognized format.
 fn classify_child(
@@ -636,7 +651,12 @@ fn classify_child(
             child.label
         )));
     } else {
-        match classify_depth(&child.data, options, depth + 1) {
+        let inner = if child.classify == Classify::Code {
+            classify_code(&child.data, options)
+        } else {
+            classify_depth(&child.data, options, depth + 1)
+        };
+        match inner {
             Ok(inner) => {
                 component.result = inner.result;
                 component.extensions = inner.extensions;
@@ -782,16 +802,7 @@ fn classify_sections(
     let inner = if depth < MAX_NESTING && nested {
         classify_depth(payload, options, depth + 1)
     } else {
-        let (result, candidates) = heuristic(payload, options);
-        result.map(|result| Classified {
-            format: FormatDetection::new(FileFormat::Raw),
-            result,
-            candidates,
-            slices: Vec::new(),
-            extensions: Vec::new(),
-            notes: Vec::new(),
-            metadata: Vec::new(),
-        })
+        classify_code(payload, options)
     };
     let Ok(inner) = inner else {
         if is_unknown(out.result.isa) && out.slices.is_empty() {

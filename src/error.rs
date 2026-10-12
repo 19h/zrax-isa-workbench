@@ -75,6 +75,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a PCI or ISA option ROM.
+    #[error("Option ROM parse error: {message}")]
+    OptionRomParseError {
+        /// What is wrong with the ROM.
+        message: String,
+    },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },
