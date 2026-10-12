@@ -25,6 +25,7 @@ pub mod aof;
 pub mod aout;
 pub mod apple;
 pub mod ar;
+pub mod archives;
 pub mod automotive;
 pub mod bcf;
 pub mod bflt;
@@ -592,6 +593,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Archives: a ZIP local header (or the end record of an empty ZIP), the
+    // tar magic at 257 with a valid header checksum, or an ASCII CPIO magic
+    // with a valid first header.
+    if let Some(layout) = archives::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Archive(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -784,6 +794,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = nintendo::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Nintendo(layout),
+        };
+    }
+
+    // Old binary CPIO has a two-byte magic: every header up to the trailer
+    // must be valid.
+    if let Some(layout) = archives::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Archive(layout),
         };
     }
 

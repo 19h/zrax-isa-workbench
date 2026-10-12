@@ -68,6 +68,13 @@ The intended scope is the same as `ar` member handling (`src/lib.rs:331`):
 enumerate members, classify recognized executables, and bound the member count.
 This is not a general extractor. Most of these depend on section 2.
 
+Status 2026-10-13: ZIP (ZIP64; stored, deflate, bzip2, LZMA, Zstandard and
+xz members decoded with CRC-32 verified; Deflate64 and encrypted members
+opaque; APK, JAR, IPA, Nordic DFU and PDX are labels), tar (ustar, pax and
+GNU; header checksums verified) and CPIO (newc, crc, odc and old binary in
+both byte orders; concatenated initramfs) are implemented; see
+[archives](archives.md). Other rows are updated as their families land.
+
 | Impact | Format | Identification | Notes |
 | --- | --- | --- | --- |
 | High | SquashFS | `hsqs` (little-endian) / `sqsh` (big-endian); compressor ID at superblock offset 20 | Compressor IDs 1-6: gzip, LZMA, LZO, xz, LZ4, zstd |

@@ -942,6 +942,14 @@ pub enum FileFormat {
     SnesRom,
     /// Nintendo 64 ROM in any dump byte order (`.z64`, `.v64`, `.n64`)
     N64Rom,
+
+    // Archives
+    /// ZIP archive, including APK, JAR, IPA, Nordic DFU and PDX packages
+    Zip,
+    /// tar archive (POSIX ustar, pax or GNU)
+    Tar,
+    /// CPIO archive (newc, crc, odc or old binary)
+    Cpio,
 }
 
 impl fmt::Display for FileFormat {
@@ -1111,6 +1119,10 @@ impl fmt::Display for FileFormat {
             FileFormat::NesRom => write!(f, "NES ROM"),
             FileFormat::SnesRom => write!(f, "SNES ROM"),
             FileFormat::N64Rom => write!(f, "Nintendo 64 ROM"),
+            // Archives
+            FileFormat::Zip => write!(f, "ZIP"),
+            FileFormat::Tar => write!(f, "tar"),
+            FileFormat::Cpio => write!(f, "CPIO"),
         }
     }
 }

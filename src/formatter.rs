@@ -727,6 +727,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::NesRom => "NES ROM",
         FileFormat::SnesRom => "SNES ROM",
         FileFormat::N64Rom => "Nintendo 64 ROM",
+        FileFormat::Zip => "ZIP",
+        FileFormat::Tar => "tar",
+        FileFormat::Cpio => "CPIO",
     }
 }
 

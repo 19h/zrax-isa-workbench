@@ -117,6 +117,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an archive container (ZIP, tar, CPIO).
+    #[error("Archive container parse error: {message}")]
+    ArchivesParseError {
+        /// What is wrong with the archive.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

@@ -20,8 +20,9 @@ levels, and requires balanced elements. Components are capped at 4096.
 
 Known boundaries: Mercedes SMR-F has no public layout and is not recognized.
 RWD formats `0x58`, `0x59` and `0x30` have no established layout. PDX
-packages need the ZIP container, which is being added separately; ODX
-`EXTERN-FLASHDATA` files are therefore not resolved yet.
+packages are ZIP archives: the ZIP container labels them and classifies
+each `.odx*` member on its own, so ODX `EXTERN-FLASHDATA` references to
+other members are not resolved yet.
 
 Verification: on 2026-10-12 (macOS AArch64), `tests/automotive.rs` (9 tests,
 synthetic fixtures built from the documented layouts, with truncation and

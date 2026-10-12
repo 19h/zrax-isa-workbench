@@ -44,7 +44,9 @@ partition names are never used as ISA evidence. The ISA comes from:
 - nested containers (a `boot` partition in an OTA payload, a boot image in
   a sparse image, a droidboot image in a fugu pack);
 - the code model on the bytes of a component that is not a recognized
-  format (second stage, IFWI, unrecognized pack members, cpio ramdisks).
+  format (second stage, IFWI, unrecognized pack members). A decoded cpio
+  ramdisk is a CPIO container ([archives](archives.md)), which lists its
+  members that are in a recognized format.
 
 The first component with a known ISA becomes the container's primary
 result, with a note naming it; the kernel is listed first in boot images.
@@ -129,7 +131,7 @@ half.
 | A1 | Boot and vendor_boot fields are little-endian on every device (UNCONFIRMED) | An `ANDROID!` image whose `page_size` is a power of two only when byte-swapped |
 | A2 | A v0 `header_version` above 4 is the size of an appended device tree after the second stage | Lineage `--dt` and Samsung images (`boot_header_version_above_4_is_an_appended_device_tree_size`); a vendor image that stores something else there fails with a truncation error |
 | A3 | Page sizes from 32 to 128 KiB occur in non-AOSP images (UNCONFIRMED; accepted, noted) | A vendor image with such a page size; Samsung PXA headers (`page_size >= 0x02000000`) are rejected |
-| A4 | Ramdisk contents are a cpio archive; the code model may run on them but the kernel, listed first, supplies the primary ISA | A boot image whose kernel is unknown and whose ramdisk holds code of another architecture |
+| A4 | Ramdisk contents are a cpio archive, unpacked by the CPIO container; the kernel, listed first, supplies the primary ISA | A boot image whose kernel is unknown and whose ramdisk holds code of another architecture |
 | A5 | OTA `data_offset` is relative to `blob_start`, after the metadata signature; the payload signature follows the blobs directly (the README's `payload_signatures_message_size` field is not written by `PayloadFile::WritePayload`) | A signed payload from `delta_generator`; `payload.size() == blob_start + signatures_offset + signatures_size` |
 | A6 | `bootldr_size` equal to the file size marks Pixel and Pixel 2 packs (Kaitai, secondary source, UNCONFIRMED) | `bootloader-marlin-*.img`, `bootloader-walleye-*.img` |
 | A7 | FBPK v1 `pad1`/`pad2` are zero; nonzero values are refused because their meaning is UNCONFIRMED | A Pixel 3 to 5 pack with a nonzero field |
@@ -146,10 +148,10 @@ half.
 | Samsung PXA header, DHTB, Tegra `-SIGNED-BY-SIGNBLOB-`, `CHROMEOS`, NOOK/Acclaim/Amonet pre-headers | Not recognized: the file does not start with `ANDROID!` (PXA: unsupported page size error) |
 | MediaTek 512-byte payload header | Stripped from kernel and ramdisk sections with a note (Magisk `mtk_hdr`) |
 | DTBO table (`0xD7B7AB1E`) contents | Opaque; entries are not listed |
-| cpio ramdisks | Decoded but not unpacked (no cpio parser) |
+| cpio ramdisks | Decoded and unpacked by the CPIO container; only members in a recognized format are listed |
 | OTA delta operations (MOVE, BSDIFF, SOURCE_COPY, SOURCE_BSDIFF, PUFFDIFF, BROTLI_BSDIFF, ZUCCHINI, LZ4DIFF_*) | The partition is opaque with a note; applying them needs the source partition |
 | Operation types outside 0 to 13 (the spec notes' type table; `REPLACE_ZSTD` is not in it) | Unknown types: the partition is opaque with a note |
-| OTA zip packaging (`payload.bin` inside the OTA zip) | Needs the ZIP container |
+| OTA zip packaging (`payload.bin` inside the OTA zip) | The ZIP container lists `payload.bin` as an OTA payload member; `META-INF` signatures are not verified |
 | Sparse images beyond 64 MiB expanded | Only the first 64 MiB are expanded and analyzed |
 | FBPT partition tables | Opaque; the table is not decoded |
 | Ext4, EROFS, F2FS and `super` images inside sparse images and OTA partitions | Classified as raw until those families land |

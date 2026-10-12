@@ -257,6 +257,7 @@ enumeration additionally represents header-derived architectures.
 | MCU update images | UF2 (family ID names the ISA for 78 listed families; blocks reassembled by address; multi-family files split per family), STM32 DfuSe (DFU suffix CRC-32 verified), Silicon Labs GBL v3 (program/LZ4/LZMA tags, end-tag CRC-32 verified; encrypted files opaque), Cypress `.cyacd`/`.cyacd2` ([MCU images](docs/mcu.md)) |
 | FPGA bitstreams | Xilinx `.bit` and headerless configuration data (both word orders), Lattice iCE40 and ECP5/MachXO/Nexus, Intel Cyclone V `.rbf` and `.pof`; recognized and excluded from ISA scoring ([FPGA bitstreams](docs/bitstream.md)) |
 | Compressed streams | gzip, zlib, xz, LZMA-alone, LZ4 (frame and legacy), Zstandard, bzip2, lzop, LZFSE/LZVN, Apple LZSS kernelcaches; decoded and classified by their content |
+| ZIP, tar and CPIO | ZIP (ZIP64; stored, deflate, bzip2, LZMA, Zstandard and xz members with CRC-32 verified; APK, JAR, IPA, Nordic DFU and PDX labels), tar (ustar, pax, GNU), CPIO (newc, crc, odc, old binary) ([archives](docs/archives.md)); members classified on their own bytes |
 
 [Compressed streams and the shared container model](docs/compressed-streams.md)
 describe the codecs, coordinates and bounds;
