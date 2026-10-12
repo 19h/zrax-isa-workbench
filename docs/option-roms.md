@@ -16,9 +16,19 @@ x86 and PA-RISC images start with the ROM header, so they go straight to the
 code model (`Classify::Code`) instead of being parsed as nested ROMs. The x86
 image checksum is verified and reported.
 
-Known boundaries: EFI-compressed images (compression type 1) are listed but
-not decoded yet; ROMs larger than 4096 images stop there.
+EFI images with compression type 1 hold the PE image in the UEFI
+compression format (UEFI 2.10, chapter 19). They are decoded with the
+shared EFI codec ([UEFI](uefi.md)), and the decoded PE image is classified;
+the format has no checksum, so the note says no integrity check was made. A
+stream that does not decode, and any other compression type, is listed as
+opaque with the reason.
+
+Known boundaries: ROMs larger than 4096 images stop there.
 
 Verification: on 2026-10-12 (macOS AArch64), `tests/optionrom.rs` (4 tests,
-synthetic ROMs with truncation and mutation sweeps) passed. No vendor ROM
-was available.
+synthetic ROMs with truncation and mutation sweeps) passed. On 2026-10-13
+(macOS AArch64, rustc 1.100.0-nightly) its 6 tests passed, including a
+hand-built EFI literal stream; with `EFI_ROM_DIR=/opt/homebrew/share/qemu`
+all 8 `efi-*.rom` iPXE ROMs that QEMU ships classified as PCI option ROMs
+whose EFI image decoded to x86-64 code. Without `EFI_ROM_DIR` that test
+skips.

@@ -1,8 +1,13 @@
 //! Option ROMs: PCI expansion ROMs name each image's code type (x86 real
-//! mode, EFI with a PE machine, Open Firmware FCode), legacy ISA ROMs need
-//! their checksum, and ROM images are never re-parsed as nested ROMs.
+//! mode, EFI with a PE machine, Open Firmware FCode), EFI-compressed images
+//! are decoded, legacy ISA ROMs need their checksum, and ROM images are
+//! never re-parsed as nested ROMs.
 
 use zrax::{detect_payload, ClassifierOptions, DetectionPayload, FileFormat, Isa};
+
+#[path = "support/efi_stream.rs"]
+mod efi_stream;
+use efi_stream::efi_literal_stream;
 
 fn classify(data: &[u8]) -> DetectionPayload {
     detect_payload(data, &ClassifierOptions::new()).expect("classifies")
@@ -53,6 +58,12 @@ fn x86_image(last: bool) -> Vec<u8> {
 /// A 512-byte EFI image: `55 AA`, initialization size, `0x0EF1`, boot
 /// service driver subsystem, machine, compression, PE at 0x40, PCIR.
 fn efi_image(machine: u16, compression: u16) -> Vec<u8> {
+    efi_image_with(machine, compression, &pe(machine))
+}
+
+/// An EFI image as `efi_image`, holding `payload` at 0x40 (a PE image, or
+/// for compression type 1 its EFI-compressed stream).
+fn efi_image_with(machine: u16, compression: u16, payload: &[u8]) -> Vec<u8> {
     let mut image = vec![0u8; 512];
     image[..2].copy_from_slice(&[0x55, 0xaa]);
     image[2..4].copy_from_slice(&1u16.to_le_bytes());
@@ -61,11 +72,13 @@ fn efi_image(machine: u16, compression: u16) -> Vec<u8> {
     image[10..12].copy_from_slice(&machine.to_le_bytes());
     image[12..14].copy_from_slice(&compression.to_le_bytes());
     image[0x16..0x18].copy_from_slice(&0x40u16.to_le_bytes());
-    let pe = pe(machine);
-    image[0x40..0x40 + pe.len()].copy_from_slice(&pe);
+    image[0x40..0x40 + payload.len()].copy_from_slice(payload);
     pcir(&mut image, 3, true);
     image
 }
+
+/// EFI ROM header compression types (UEFI 2.10, section 14.4.2).
+const EFI_COMPRESSED: u16 = 1;
 
 #[test]
 fn pci_roms_list_each_image_with_its_code_type() {
@@ -85,13 +98,35 @@ fn pci_roms_list_each_image_with_its_code_type() {
 }
 
 #[test]
-fn compressed_efi_and_fcode_images_are_opaque() {
-    let p = classify(&efi_image(0xaa64, 1));
+fn efi_compressed_images_are_decoded_to_their_pe_image() {
+    let stream = efi_literal_stream(&pe(0xaa64), 4);
+    let p = classify(&efi_image_with(0xaa64, EFI_COMPRESSED, &stream));
+    assert_eq!(p.format.format, FileFormat::PciOptionRom);
+    let efi = &p.slices[0];
+    assert_eq!(efi.isa, Isa::AArch64);
+    assert_eq!((efi.offset, efi.size), (0x40, stream.len() as u64));
+    assert!(efi.decoded.is_some());
+    assert!(
+        p.notes
+            .iter()
+            .any(|n| n.message
+                == "Image 1: EFI-compressed image decoded to 88 B (no integrity check)")
+    );
+}
+
+#[test]
+fn undecodable_efi_compressed_and_fcode_images_are_opaque() {
+    let p = classify(&efi_image(0xaa64, EFI_COMPRESSED));
     assert_eq!(p.slices[0].isa, Isa::Unknown(0));
     assert!(p
         .notes
         .iter()
-        .any(|n| n.message.contains("EFI-compressed image")));
+        .any(|n| n.message.contains("EFI-compressed image does not decode")));
+    let p = classify(&efi_image(0xaa64, 7));
+    assert!(p
+        .notes
+        .iter()
+        .any(|n| n.message.contains("unknown EFI compression type 7")));
     let mut fcode = x86_image(true);
     fcode[0x30] = 1;
     let p = classify(&fcode);
@@ -126,5 +161,47 @@ fn option_roms_survive_truncation_and_mutation() {
         let mut mutated = rom.clone();
         mutated[i] ^= 0xff;
         let _ = detect_payload(&mutated, &ClassifierOptions::new());
+    }
+}
+
+/// Every `efi-*.rom` in `EFI_ROM_DIR` (for example the iPXE ROMs QEMU ships,
+/// an x86 image followed by an EFI-compressed x86-64 driver) classifies as
+/// a PCI option ROM whose EFI image decodes to x86-64 code.
+#[test]
+fn efi_rom_dir_roms_decode_their_efi_images() {
+    let Ok(dir) = std::env::var("EFI_ROM_DIR") else {
+        eprintln!("skipped: EFI_ROM_DIR is not set");
+        return;
+    };
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .expect("EFI_ROM_DIR is a directory")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("efi-") && name.ends_with(".rom"))
+        })
+        .collect();
+    paths.sort();
+    assert!(!paths.is_empty(), "no efi-*.rom in {dir}");
+    for path in paths {
+        let p = classify(&std::fs::read(&path).expect("readable ROM"));
+        assert_eq!(
+            p.format.format,
+            FileFormat::PciOptionRom,
+            "{}",
+            path.display()
+        );
+        let efi = p
+            .slices
+            .iter()
+            .find(|s| {
+                s.label
+                    .as_deref()
+                    .is_some_and(|label| label.ends_with("(EFI)"))
+            })
+            .unwrap_or_else(|| panic!("{}: no decoded EFI image", path.display()));
+        assert_eq!(efi.isa, Isa::X86_64, "{}", path.display());
+        assert!(efi.decoded.is_some(), "{}", path.display());
     }
 }

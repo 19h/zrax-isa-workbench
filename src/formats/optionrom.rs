@@ -8,13 +8,17 @@
 //! type and a last-image indicator. The code type is an explicit target:
 //! 0 is x86 real-mode code (PC-AT compatible), 2 HP PA-RISC, 3 EFI (whose
 //! header names a PE machine and compression), 1 Open Firmware `FCode`, a
-//! bytecode with no ISA. Legacy x86 images carry a byte sum of zero over
+//! bytecode with no ISA. EFI images with compression type 1 hold the PE
+//! image in the UEFI compression format (UEFI 2.10, chapter 19), decoded
+//! here with the shared EFI codec. Legacy x86 images carry a byte sum of zero over
 //! their initialization size. ISA option ROMs without a `PCIR` structure
 //! are recognized only when that checksum holds.
 
 use crate::error::{ClassifierError, Result};
+use crate::formats::compressed::{self, Codec};
 use crate::formats::container::{Child, Container, Target, MAX_COMPONENTS};
 use crate::types::{Endianness, FileFormat, Isa};
+use std::borrow::Cow;
 
 /// ROM header signature `55 AA`.
 const ROM_SIGNATURE: [u8; 2] = [0x55, 0xaa];
@@ -33,6 +37,7 @@ const EFI_SIGNATURE: u32 = 0x0ef1;
 
 /// EFI image compression types.
 const EFI_UNCOMPRESSED: u16 = 0;
+const EFI_COMPRESSED: u16 = 1;
 
 /// PCI Data Structure fields.
 const PCIR_SIGNATURE: &[u8; 4] = b"PCIR";
@@ -225,16 +230,53 @@ fn efi_child<'a>(
         "{label}: EFI image, machine 0x{machine:04X}, subsystem {subsystem}, compression type {compression}"
     ));
     let (isa, bits, endianness, _) = crate::formats::coff::machine_to_isa(machine);
-    let mut child = if compression == EFI_UNCOMPRESSED {
-        Child::stored(format!("{label} (EFI)"), offset + pe_at, pe)
-    } else {
-        notes.push(format!("{label}: EFI-compressed image; not decoded"));
-        Child::opaque(format!("{label} (EFI, compressed)"), offset + pe_at, pe)
+    let mut child = match compression {
+        EFI_UNCOMPRESSED => Child::stored(format!("{label} (EFI)"), offset + pe_at, pe),
+        EFI_COMPRESSED => decode_efi_image(label, offset + pe_at, pe, notes),
+        other => {
+            notes.push(format!(
+                "{label}: unknown EFI compression type {other}; not decoded"
+            ));
+            Child::opaque(format!("{label} (EFI, compressed)"), offset + pe_at, pe)
+        }
     };
     if !matches!(isa, Isa::Unknown(_)) {
         child = child.with_target(Target::new(isa, bits, endianness));
     }
     Ok(child)
+}
+
+/// The PE image of an EFI-compressed ROM image. The stream starts with its
+/// compressed and original sizes; bytes after it pad the ROM image. A
+/// stream that does not decode is listed as opaque with the reason.
+fn decode_efi_image<'a>(
+    label: &str,
+    offset: usize,
+    stored: &'a [u8],
+    notes: &mut Vec<String>,
+) -> Child<'a> {
+    match compressed::decode(Codec::Efi, stored) {
+        Ok(decoded) => {
+            notes.push(format!(
+                "{label}: EFI-compressed image decoded to {} B (no integrity check)",
+                decoded.data.len()
+            ));
+            let stored_size = decoded.consumed.unwrap_or(stored.len());
+            Child::decoded(
+                format!("{label} (EFI)"),
+                offset,
+                stored_size,
+                Cow::Owned(decoded.data),
+                Codec::Efi.name(),
+            )
+        }
+        Err(e) => {
+            notes.push(format!(
+                "{label}: EFI-compressed image does not decode ({e})"
+            ));
+            Child::opaque(format!("{label} (EFI, compressed)"), offset, stored)
+        }
+    }
 }
 
 fn pci(data: &[u8]) -> Result<Container<'_>> {
