@@ -15,7 +15,7 @@
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
     archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, ext, huawei, mcu, mtd,
-    nintendo, optionrom, rofs, socboot, socboot2, zxtape, MAX_PAYLOAD,
+    nintendo, optionrom, rofs, socboot, socboot2, uefi, zxtape, MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -86,6 +86,8 @@ pub enum Kind {
     Mtd(mtd::Layout),
     /// An ext2, ext3 or ext4 filesystem image.
     Ext(ext::Layout),
+    /// A UEFI firmware volume, TE image or Intel flash descriptor image.
+    Uefi(uefi::Layout),
 }
 
 impl Kind {
@@ -111,6 +113,7 @@ impl Kind {
             Self::Rofs(layout) => layout.format(),
             Self::Mtd(layout) => layout.format(),
             Self::Ext(layout) => layout.format(),
+            Self::Uefi(layout) => layout.format(),
         }
     }
 
@@ -136,6 +139,7 @@ impl Kind {
             Self::Rofs(layout) => layout.label(),
             Self::Mtd(layout) => layout.label(),
             Self::Ext(layout) => layout.label(),
+            Self::Uefi(layout) => layout.label(),
         }
     }
 
@@ -161,6 +165,7 @@ impl Kind {
             Self::Rofs(layout) => layout.is_weak(),
             Self::Mtd(layout) => layout.is_weak(),
             Self::Ext(layout) => layout.is_weak(),
+            Self::Uefi(layout) => layout.is_weak(),
         }
     }
 }
@@ -191,6 +196,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Rofs(layout) => rofs::parse_container(data, layout),
         Kind::Mtd(layout) => mtd::parse_container(data, layout),
         Kind::Ext(layout) => ext::parse_container(data, layout),
+        Kind::Uefi(layout) => uefi::parse_container(data, layout),
     }
 }
 

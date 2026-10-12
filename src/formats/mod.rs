@@ -78,6 +78,7 @@ pub mod tds;
 pub mod ti_c55x;
 pub mod ti;
 pub mod tmobj;
+pub mod uefi;
 pub mod vbf;
 pub mod wasm;
 pub mod xcoff;
@@ -629,6 +630,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // UEFI and PC flash images: the flash descriptor signature at 0x10 (or
+    // 0x0), `_FVH` at 0x28, or a TE header whose machine is known.
+    if let Some(layout) = uefi::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Uefi(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -837,6 +846,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = mtd::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Mtd(layout),
+        };
+    }
+
+    // TE images with an unknown machine (only the two-byte `VZ` signature,
+    // so every loader check must pass) and flash device images whose first
+    // firmware volume follows leading data (the whole image must parse).
+    if let Some(layout) = uefi::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Uefi(layout),
         };
     }
 

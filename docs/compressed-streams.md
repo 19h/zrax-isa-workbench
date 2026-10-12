@@ -26,6 +26,7 @@ slices and metadata of the decoded content. Decoders live in
 | — | Raw LZO1X block without lzop framing, as SquashFS, UBIFS and JFFS2 store it; ends at its end-of-stream marker | Never recognized standalone (no magic) | None | [Linux `lzo.rst`](https://docs.kernel.org/staging/lzo.html); squashfs-tools 4.6.1 `lzo_wrapper.h` |
 | — | Raw LZ4 block without a frame, as SquashFS and Silicon Labs GBL store it | Never recognized standalone (no magic) | None | [lz4 v1.10.0 block format](https://github.com/lz4/lz4/blob/v1.10.0/doc/lz4_Block_format.md); squashfs-tools 4.6.1 `lz4_wrapper.h` |
 | — | JFFS2 rtime (byte-repeat) and rubin (`rubinmips` fixed model, `dynrubin` 8-byte table) data | Never recognized standalone (no magic, no end marker); decoded to the size the node declares | None | Linux v6.11 `fs/jffs2/compr_rtime.c`, `compr_rubin.c` ([flash filesystems](mtd.md)) |
+| — | EFI 1.1 and Tiano compression (UEFI 2.10, chapter 19; Tiano uses a 5-bit position set count); LZMA-alone with the x86 BCJ decode filter (EDK2 LZMA F86) | Never recognized standalone (no magic) | None | UEFI 2.10 chapter 19; EDK2 `BaseUefiDecompressLib`, `LzmaArchDecompressLib` ([UEFI](uefi.md)) |
 
 DEFLATE, LZMA, LZ4, Zstandard, bzip2, LZFSE and Brotli bitstreams are decoded
 by the pure-Rust crates `miniz_oxide`, `lzma-rust2`, `lz4_flex`, `ruzstd`,

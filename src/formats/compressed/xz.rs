@@ -419,6 +419,23 @@ pub(super) fn lzma(data: &[u8], limit: usize) -> Result<Decoded> {
     })
 }
 
+/// Decode an LZMA-alone stream, then undo the x86 BCJ filter over the whole
+/// output from start offset 0, as EDK2 `LzmaArchDecompressLib` does for
+/// LZMA F86 sections (`x86_Convert(..., ip = 0, ..., encoding = 0)`).
+pub(super) fn lzma_x86(data: &[u8], limit: usize) -> Result<Decoded> {
+    let decoded = lzma(data, limit)?;
+    let filtered = read_capped(
+        BcjReader::new_x86(decoded.data.as_slice(), 0),
+        limit,
+        "LZMA x86",
+    )?;
+    Ok(Decoded {
+        data: filtered,
+        consumed: decoded.consumed,
+        check: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

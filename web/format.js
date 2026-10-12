@@ -96,6 +96,7 @@ const FORMAT_NAMES = {
   squashfs: 'SquashFS', cramfs: 'CramFS', romfs: 'romfs',
   ubi: 'UBI', ubifs: 'UBIFS', jffs2: 'JFFS2',
   ext: 'ext filesystem',
+  uefifv: 'UEFI Firmware Volume', uefite: 'UEFI TE Image', intelifd: 'Intel Flash Descriptor',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

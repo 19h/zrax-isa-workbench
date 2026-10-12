@@ -737,6 +737,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Ubifs => "UBIFS",
         FileFormat::Jffs2 => "JFFS2",
         FileFormat::Ext => "ext filesystem",
+        FileFormat::UefiFv => "UEFI firmware volume",
+        FileFormat::UefiTe => "UEFI TE image",
+        FileFormat::IntelIfd => "Intel flash descriptor",
     }
 }
 

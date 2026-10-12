@@ -69,6 +69,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a UEFI firmware volume (FFS files and sections), a TE
+    /// image or an Intel flash descriptor image.
+    #[error("UEFI firmware parse error: {message}")]
+    UefiParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a flash filesystem image (UBI, UBIFS or JFFS2).
     #[error("Flash filesystem parse error: {message}")]
     MtdParseError {

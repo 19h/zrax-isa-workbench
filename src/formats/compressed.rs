@@ -30,6 +30,11 @@
 //!   block decoder above. Neither has framing; both are decoded only where
 //!   a container names them.
 //! - JFFS2 rtime, rubinmips and dynrubin: see [`jffs2`].
+//! - EFI 1.1 and Tiano compression: see [`efi`]. LZMA with the x86 BCJ
+//!   decode filter applied to the output (EDK2 `LzmaF86` sections): the
+//!   LZMA-alone stream above, then the LZMA SDK `x86_Convert` filter with
+//!   start offset 0. These three have no magic and are decoded only where
+//!   a container names them.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -44,6 +49,7 @@ use std::borrow::Cow;
 use std::io::{self, Read, Write};
 
 mod blz;
+mod efi;
 mod jffs2;
 mod lz4_block;
 mod lzo;
@@ -143,6 +149,14 @@ pub enum Codec {
     /// JFFS2 rubin arithmetic coding with an 8-byte probability table
     /// (`dynrubin`). Decodes exactly `limit` bytes, as [`Codec::RubinMips`].
     DynRubin,
+    /// EFI 1.1 / UEFI compression (UEFI 2.10, chapter 19); no magic.
+    Efi,
+    /// Tiano compression (the EFI format with a 5-bit position set count);
+    /// no magic.
+    Tiano,
+    /// LZMA-alone stream whose output is x86 BCJ-filtered (EDK2 LZMA F86);
+    /// no magic.
+    LzmaX86,
 }
 
 impl Codec {
@@ -167,6 +181,9 @@ impl Codec {
         Self::Rtime,
         Self::RubinMips,
         Self::DynRubin,
+        Self::Efi,
+        Self::Tiano,
+        Self::LzmaX86,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -191,6 +208,9 @@ impl Codec {
             Self::Rtime => "rtime",
             Self::RubinMips => "rubinmips",
             Self::DynRubin => "dynrubin",
+            Self::Efi => "EFI",
+            Self::Tiano => "Tiano",
+            Self::LzmaX86 => "LZMA x86",
         }
     }
 
@@ -215,6 +235,9 @@ impl Codec {
             // The JFFS2 codecs have no magic either; only the containers
             // that store them name them.
             Self::Rtime | Self::RubinMips | Self::DynRubin => FileFormat::Raw,
+            // EFI, Tiano and LZMA x86 have no magic either; only the UEFI
+            // sections that store them name them.
+            Self::Efi | Self::Tiano | Self::LzmaX86 => FileFormat::Raw,
         }
     }
 
@@ -240,6 +263,9 @@ impl Codec {
             Self::Rtime => "JFFS2 rtime data",
             Self::RubinMips => "JFFS2 rubinmips data",
             Self::DynRubin => "JFFS2 dynrubin data",
+            Self::Efi => "EFI compressed stream",
+            Self::Tiano => "Tiano compressed stream",
+            Self::LzmaX86 => "LZMA-alone stream with x86 BCJ",
         }
     }
 
@@ -415,6 +441,9 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::Rtime => jffs2::rtime(data, limit),
         Codec::RubinMips => jffs2::rubin(data, limit, jffs2::RubinModel::Mips),
         Codec::DynRubin => jffs2::rubin(data, limit, jffs2::RubinModel::Dynamic),
+        Codec::Efi => efi::decode(data, efi::Variant::Efi, limit),
+        Codec::Tiano => efi::decode(data, efi::Variant::Tiano, limit),
+        Codec::LzmaX86 => xz::lzma_x86(data, limit),
     }
 }
 

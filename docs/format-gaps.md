@@ -36,8 +36,9 @@ buffer with the ARM zImage header fields. FIT behavior is from source inspection
 **Implemented 2026-10-12** for gzip, zlib, raw DEFLATE, xz, LZMA-alone, LZ4
 (frame and legacy), Zstandard, bzip2, lzop/LZO1X, LZFSE/LZVN and Apple LZSS,
 plus Brotli for containers that name it; standalone streams are recognized as
-formats. Raw LZ4 and LZO1X blocks, 3DS BLZ and the JFFS2 rtime and rubin
-coders followed (2026-10-13) for the containers that store them. See
+formats. Raw LZ4 and LZO1X blocks, 3DS BLZ, the JFFS2 rtime and rubin coders,
+EFI/Tiano compression and EDK2 LZMA F86 followed (2026-10-13) for the
+containers that store them. See
 [compressed streams](compressed-streams.md). The table below is
 kept as the original register; containers still have to call the layer where
 their header names a codec (sections 1, 3 and 4).
@@ -117,8 +118,11 @@ bootloader packs (`BOOTLDR!`, Qualcomm meta image, FBPK v1/v2); see
 (partition targets from the destination-CPU field; bitstream partitions
 opaque), NXP i.MX IVT and AHAB images (no ISA inferred from the SoC family)
 and NXP SB2.0/2.1/3.1 (metadata only; signatures not verified); see
-[SoC boot images](socboot.md). Other rows are updated as their families
-land.
+[SoC boot images](socboot.md). UEFI firmware volumes (FFS files,
+compression and GUID-defined sections, nested volumes, flash device images),
+TE images and the Intel flash descriptor region map are implemented; ME/CSME
+and AMD PSP regions stay opaque; see [UEFI and PC flash images](uefi.md).
+Other rows are updated as their families land.
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

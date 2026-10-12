@@ -970,6 +970,14 @@ pub enum FileFormat {
     // ext filesystems
     /// ext2, ext3 or ext4 filesystem image
     Ext,
+
+    // UEFI and PC flash images
+    /// UEFI PI firmware volume (FFS files and sections)
+    UefiFv,
+    /// UEFI TE (terse executable) image
+    UefiTe,
+    /// Intel flash descriptor image with its region map
+    IntelIfd,
 }
 
 impl fmt::Display for FileFormat {
@@ -1153,6 +1161,10 @@ impl fmt::Display for FileFormat {
             FileFormat::Jffs2 => write!(f, "JFFS2"),
             // ext filesystems
             FileFormat::Ext => write!(f, "ext filesystem"),
+            // UEFI and PC flash images
+            FileFormat::UefiFv => write!(f, "UEFI firmware volume"),
+            FileFormat::UefiTe => write!(f, "UEFI TE image"),
+            FileFormat::IntelIfd => write!(f, "Intel flash descriptor"),
         }
     }
 }
