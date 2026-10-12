@@ -1200,6 +1200,35 @@ fn data_after_the_tar_end_is_padding_a_recognized_component_or_an_error() {
     assert_eq!((rest.offset as usize, rest.isa), (end, Isa::Ppc));
     assert!(has_note(&p, "are listed as a separate component"));
 
+    // Samsung `.tar.md5` packages append the archive's md5sum line.
+    let mut samsung = archive.clone();
+    samsung.extend_from_slice(b"0123456789abcdef0123456789ABCDEF  AP_TEST.tar\n");
+    let p = classify(&samsung).unwrap();
+    assert_eq!(p.format.format, FileFormat::Tar);
+    assert!(has_note(
+        &p,
+        "md5sum line for AP_TEST.tar after the archive (Samsung .tar.md5 convention); MD5 not \
+         verified"
+    ));
+    assert!(matches!(
+        metadata(&p, "tar_md5_trailer"),
+        Some(MetadataValue::String(s)) if s == "0123456789abcdef0123456789ABCDEF"
+    ));
+    for bad in [
+        &b"0123456789abcdef0123456789abcde  short.tar\n"[..],
+        b"0123456789abcdef0123456789abcdef  no-newline.tar",
+        b"0123456789abcdef0123456789abcdef\tAP_TEST.tar\n",
+        b"0123456789abcdef0123456789abcdef  two\nlines.tar\n",
+    ] {
+        let mut line = archive.clone();
+        line.extend_from_slice(bad);
+        assert!(
+            classify(&line).is_err(),
+            "{:?}",
+            String::from_utf8_lossy(bad)
+        );
+    }
+
     let mut junk = archive.clone();
     junk.extend_from_slice(b"not padding");
     let error = classify(&junk).unwrap_err().to_string();

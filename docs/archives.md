@@ -107,6 +107,10 @@ file as Linux initramfs counts them. No archive field is a code byte order.
 - After a tar or CPIO archive, the rest of the file must be padding
   (`0x00`/`0xFF`) or a recognized format, which is listed as the component
   `Data after the archive` (a second tar, a compressed initramfs archive).
+  A tar archive may instead be followed by exactly one `md5sum` line (32
+  hex digits, two spaces or a space and `*`, a printable ASCII name of up
+  to 255 B, a newline), as Samsung `.tar.md5` packages are; it is noted
+  and its digest reported as `tar_md5_trailer` metadata, not verified.
   Anything else is an error.
 - A member is listed only when its first 4 KiB, and then its whole
   contents, are a recognized format.
@@ -130,6 +134,7 @@ file as Linux initramfs counts them. No archive field is a code byte order.
 | A7 | A PDX package has `index.xml` at the root and at least one `.odx*` member | odxtools loads every `.odx*` member and reads only the catalog's `SHORT-NAME`; a PDX with only auxiliary files would be labelled a plain ZIP |
 | A8 | Nordic DFU packages name their images under the `manifest` object of `manifest.json` | Taken from nrfutil package output, not a published specification; a manifest with other keys is not labelled |
 | A9 | A `DATAFILE` path names a PDX member by its path inside the archive, exactly or ignoring ASCII case | Read from odxtools 11.7.0 `externflashdata.py`, not from the ASAM schema; `pdx_data_files_are_listed_in_the_coding_their_document_states` matches `CAL.HEX` to `cal.hex`; a package that stores data files under another directory would report them as not in the package |
+| A10 | Samsung `.tar.md5` packages are a tar archive followed by the `md5sum` output line for it, as Odin and Heimdall read them | Community convention (no Samsung publication); `data_after_the_tar_end_is_padding_a_recognized_component_or_an_error` covers the accepted line and four near misses, which stay errors |
 
 ## Known boundaries
 

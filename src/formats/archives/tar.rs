@@ -15,11 +15,24 @@
 //! entry. Regular files (type `0`, NUL or `7`) are the members; sparse files
 //! and multivolume continuations hold fragments and are not classified.
 //! Archives without a magic (Unix v7) are not recognized.
+//!
+//! Samsung firmware packages (`.tar.md5`) append the archive's `md5sum`
+//! line after the end blocks: 32 hex digits, a space, a mode character
+//! (space for text, `*` for binary), the file name and a newline (GNU
+//! coreutils 9.5 manual, "md5sum invocation" and "cksum output modes").
+//! That convention comes from the tools that flash such packages (Odin,
+//! Heimdall), not from a Samsung publication; the digest is not verified.
 
 use super::*;
 
 /// Header and data block size.
 const BLOCK_SIZE: usize = 512;
+
+/// Hex digits of an MD5 digest in an `md5sum` line.
+const MD5_HEX_DIGITS: usize = 32;
+
+/// Longest file name accepted in an `md5sum` trailer line.
+const MAX_TRAILER_NAME: usize = 255;
 
 /// One header block.
 type Block = [u8; BLOCK_SIZE];
@@ -285,7 +298,17 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let format_name = format_name(first.dialect, &tally);
     c.variant = format!("{format_name} archive");
     push_notes(format_name, &tally, zero_blocks, &mut c);
-    push_trailing(data, c.consumed, "tar", &mut c)?;
+    match md5sum_trailer(&data[c.consumed..]) {
+        Some(trailer) => {
+            c.notes.push(format!(
+                "md5sum line for {} after the archive (Samsung .tar.md5 convention); MD5 not \
+                 verified",
+                trailer.name
+            ));
+            c.push_metadata("tar_md5_trailer", "MD5 in the trailer line", trailer.digest);
+        }
+        None => push_trailing(data, c.consumed, "tar", &mut c)?,
+    }
     members.push_notes(&mut c);
     c.push_metadata("tar_entries", "Entries", tally.entries as u64);
     c.push_metadata("tar_regular_files", "Regular files", tally.files as u64);
@@ -294,6 +317,36 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
 
 fn is_zero(block: &[u8]) -> bool {
     block.iter().all(|b| *b == 0)
+}
+
+/// An `md5sum` line after the archive.
+struct Md5Trailer<'a> {
+    /// The digest as written, 32 hex digits.
+    digest: &'a str,
+    /// The file name the line names.
+    name: &'a str,
+}
+
+/// The `md5sum` line that `rest` consists of, if it is exactly one: the
+/// digest, a space, the mode character, a printable ASCII file name and a
+/// newline (optionally CR LF).
+fn md5sum_trailer(rest: &[u8]) -> Option<Md5Trailer<'_>> {
+    let line = rest.strip_suffix(b"\n")?;
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let digest = line.get(..MD5_HEX_DIGITS)?;
+    let separator = line.get(MD5_HEX_DIGITS..MD5_HEX_DIGITS + 2)?;
+    let name = line.get(MD5_HEX_DIGITS + 2..)?;
+    let valid = digest.iter().all(u8::is_ascii_hexdigit)
+        && matches!(separator, b"  " | b" *")
+        && (1..=MAX_TRAILER_NAME).contains(&name.len())
+        && name.iter().all(|b| matches!(b, b' '..=b'~'));
+    if !valid {
+        return None;
+    }
+    Some(Md5Trailer {
+        digest: std::str::from_utf8(digest).ok()?,
+        name: std::str::from_utf8(name).ok()?,
+    })
 }
 
 /// The data of one entry and the file offset after its padding. Meta
