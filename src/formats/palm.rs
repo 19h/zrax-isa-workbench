@@ -30,9 +30,31 @@ fn is_ascii_fourcc(bytes: &[u8]) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || *b == b' ')
 }
 
+/// Size of the NUL-terminated database name at the start of the header.
+const NAME_SIZE: usize = 32;
+
+/// Sizes of a resource entry (type, ID, offset) and of a record entry
+/// (offset, attributes and unique ID).
+const RESOURCE_ENTRY_SIZE: usize = 10;
+const RECORD_ENTRY_SIZE: usize = 8;
+
+/// Offset of the data offset within each entry kind.
+const RESOURCE_OFFSET_FIELD: usize = 6;
+const RECORD_OFFSET_FIELD: usize = 0;
+
 /// Detect Palm PDB/PRC container.
+///
+/// Header (Palm File Format Specification, "Database Header"): name (32 B,
+/// NUL-terminated), attributes, version, three dates, modification number,
+/// app info and sort info offsets, type (60), creator (64), unique ID seed,
+/// next record list ID, record count (76). The name must end with a NUL
+/// and hold no control characters, and every entry's data offset must lie
+/// after the entry table, inside the file and in ascending order (entries
+/// store no sizes; a record's size is the distance to the next offset).
+/// Type and creator codes alone matched text-heavy files such as compiled
+/// terminfo entries.
 pub fn detect(data: &[u8]) -> bool {
-    if data.len() < PDB_HEADER_SIZE {
+    if data.len() < PDB_HEADER_SIZE || !has_database_name(data) {
         return false;
     }
 
@@ -48,31 +70,50 @@ pub fn detect(data: &[u8]) -> bool {
     if num_records == 0 || num_records > 4096 {
         return false;
     }
+    let count = usize::from(num_records);
 
     // Resource DB path: 10-byte entries (type[4], id[2], offset[4])
-    let table10 = PDB_HEADER_SIZE + num_records as usize * 10;
-    if table10 <= data.len() {
-        let first_type = &data[PDB_HEADER_SIZE..PDB_HEADER_SIZE + 4];
-        if is_ascii_fourcc(first_type) {
-            if let Some(first_off) = read_be_u32(data, PDB_HEADER_SIZE + 6) {
-                if (first_off as usize) < data.len() && (first_off as usize) >= table10 {
-                    return true;
-                }
-            }
-        }
+    let first_type = &data[PDB_HEADER_SIZE..PDB_HEADER_SIZE + 4];
+    if is_ascii_fourcc(first_type)
+        && has_ordered_offsets(data, count, RESOURCE_ENTRY_SIZE, RESOURCE_OFFSET_FIELD)
+    {
+        return true;
     }
 
     // Record DB path: 8-byte entries (offset[4], attrs+uid[4])
-    let table8 = PDB_HEADER_SIZE + num_records as usize * 8;
-    if table8 <= data.len() {
-        if let Some(first_off) = read_be_u32(data, PDB_HEADER_SIZE) {
-            if (first_off as usize) < data.len() && (first_off as usize) >= table8 {
-                return true;
-            }
-        }
-    }
+    has_ordered_offsets(data, count, RECORD_ENTRY_SIZE, RECORD_OFFSET_FIELD)
+}
 
-    false
+/// Does the header start with a NUL-terminated name free of control
+/// characters?
+fn has_database_name(data: &[u8]) -> bool {
+    let Some(end) = data[..NAME_SIZE].iter().position(|&b| b == 0) else {
+        return false;
+    };
+    data[..end].iter().all(|&b| b >= 0x20 && b != 0x7f)
+}
+
+/// Do the `count` entries of `entry_size` bytes after the header give data
+/// offsets, at `offset_field` in each entry, that lie after the table,
+/// inside the file and in ascending order?
+fn has_ordered_offsets(data: &[u8], count: usize, entry_size: usize, offset_field: usize) -> bool {
+    let table_end = PDB_HEADER_SIZE + count * entry_size;
+    if table_end > data.len() {
+        return false;
+    }
+    let mut previous = table_end;
+    for i in 0..count {
+        let Some(offset) = read_be_u32(data, PDB_HEADER_SIZE + i * entry_size + offset_field)
+        else {
+            return false;
+        };
+        let offset = offset as usize;
+        if offset < previous || offset >= data.len() {
+            return false;
+        }
+        previous = offset;
+    }
+    true
 }
 
 /// Parse Palm PDB/PRC container.
@@ -166,6 +207,23 @@ mod tests {
         data[82..84].copy_from_slice(&1u16.to_be_bytes());
         data[84..88].copy_from_slice(&100u32.to_be_bytes());
         assert!(detect(&data));
+    }
+
+    #[test]
+    fn names_with_control_characters_and_unordered_offsets_are_rejected() {
+        let mut data = vec![0u8; 128];
+        data[60..64].copy_from_slice(b"appl");
+        data[64..68].copy_from_slice(b"TEST");
+        data[76..78].copy_from_slice(&2u16.to_be_bytes());
+        // Record entries: offsets 100 and 90 (descending).
+        data[78..82].copy_from_slice(&100u32.to_be_bytes());
+        data[86..90].copy_from_slice(&90u32.to_be_bytes());
+        assert!(!detect(&data));
+        data[86..90].copy_from_slice(&110u32.to_be_bytes());
+        assert!(detect(&data));
+        // A compiled terminfo entry starts with its magic, not a name.
+        data[..4].copy_from_slice(&[0x1a, 0x01, 0x40, 0x00]);
+        assert!(!detect(&data));
     }
 
     #[test]
