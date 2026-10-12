@@ -283,14 +283,14 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
                 for component in &fields[2..] {
                     // Type, boot core, options, destination, size, hash
                     // algorithm, digest.
-                    let f = sequence(*component)?;
-                    if f.len() != 7 {
+                    let parts = sequence(*component)?;
+                    if parts.len() != 7 {
                         return Err(error("Invalid TI component description"));
                     }
-                    let kind = unsigned(f[0])?;
-                    let core = unsigned(f[1])?;
-                    let address = destination(f[3])?;
-                    let len = unsigned_usize(f[4])?;
+                    let kind = unsigned(parts[0])?;
+                    let core = unsigned(parts[1])?;
+                    let address = destination(parts[3])?;
+                    let len = unsigned_usize(parts[4])?;
                     sum = sum
                         .checked_add(len)
                         .ok_or_else(|| error("TI component size overflow"))?;
@@ -307,8 +307,8 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
                     return Err(error("Invalid TI extended encryption count"));
                 }
                 for descriptor in &fields[1..] {
-                    let f = sequence(*descriptor)?;
-                    let number = f
+                    let parts = sequence(*descriptor)?;
+                    let number = parts
                         .first()
                         .ok_or_else(|| error("Empty encryption descriptor"))?;
                     encrypted_components.push(unsigned_usize(*number)?);
