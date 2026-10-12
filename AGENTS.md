@@ -343,6 +343,13 @@ A new file format must touch all of these (compare commit `07785cd`):
 9. Docs: `README.md` ("What the classifier recognizes"). For a nontrivial
    family, add `docs/<name>.md` (section 8).
 
+A format built on the shared container model (`src/formats/container.rs`,
+see `docs/compressed-streams.md`) is classified generically: instead of a
+`DetectedFormat` variant, a `detected_to_format` arm and a `classify_depth`
+arm, it adds a `container::Kind` variant (or a variant of its family's layout
+enum) with its `format`, `label`, `is_weak` and `parse` arms, and returns a
+`Container` with sections or children. Steps 1, 2, 4, 5 and 7-9 still apply.
+
 A new ISA touches the `Isa` variant, `Isa::name` and `Isa::default_bitwidth`
 in `src/types.rs`; `ISA_NAMES` in `web/format.js`; and every format table
 that maps to it (for example `coff::ti_target`).

@@ -70,6 +70,8 @@ const FORMAT_NAMES = {
   intel_hex: 'Intel HEX', intelhex: 'Intel HEX', srec: 'S-record', ti_txt: 'TI-TXT', titxt: 'TI-TXT',
   bflt: 'bFLT', dxe: 'DXE', goff: 'GOFF', mvs_load: 'MVS Load', mvsload: 'MVS Load', som: 'SOM',
   rsx11: 'RSX-11', vms: 'VMS',
+  gzip: 'gzip', zlib: 'zlib', xz: 'xz', lzma: 'LZMA', lz4: 'LZ4', zstd: 'Zstandard', bzip2: 'bzip2',
+  lzop: 'lzop', lzfse: 'LZFSE', lzss: 'Apple LZSS',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }
@@ -114,4 +116,4 @@ function fmtExtSrc(s) {
   return m[s] || String(s);
 }
 
-export { esc, fmtSize, isaName, fmtEndian, fmtSource, fmtFormatName, fmtFormat, fmtVariant, fmtMetaValue, fmtCat, fmtExtSrc };
+export { esc, fmtSize, isaName, fmtEndian, fmtSource, fmtFormatName, fmtFormat, fmtVariant, fmtMetaValue, fmtCat, fmtExtSrc, FORMAT_NAMES };

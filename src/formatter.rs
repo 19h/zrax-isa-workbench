@@ -671,6 +671,16 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Mcuboot => "MCUboot",
         FileFormat::Fip => "TF-A Firmware Image Package",
         FileFormat::TiData => "CCS GO DSP Data",
+        FileFormat::Gzip => "gzip",
+        FileFormat::Zlib => "zlib",
+        FileFormat::Xz => "xz",
+        FileFormat::Lzma => "LZMA",
+        FileFormat::Lz4 => "LZ4",
+        FileFormat::Zstd => "Zstandard",
+        FileFormat::Bzip2 => "bzip2",
+        FileFormat::Lzop => "lzop",
+        FileFormat::Lzfse => "LZFSE",
+        FileFormat::Lzss => "Apple LZSS",
     }
 }
 

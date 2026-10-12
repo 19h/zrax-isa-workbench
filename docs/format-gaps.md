@@ -27,9 +27,12 @@ buffer with the ARM zImage header fields. FIT behavior is from source inspection
 
 ## 2. Decompression layer
 
-No codec is applied to stored bytes. Every container below whose payload is
-compressed stops at the compressed bytes, so the raw-code model scores
-near-random data.
+**Implemented 2026-10-12** for gzip, zlib, raw DEFLATE, xz, LZMA-alone, LZ4
+(frame and legacy), Zstandard, bzip2, lzop/LZO1X, LZFSE/LZVN and Apple LZSS,
+plus Brotli for containers that name it; standalone streams are recognized as
+formats. See [compressed streams](compressed-streams.md). The table below is
+kept as the original register; containers still have to call the layer where
+their header names a codec (sections 1, 3 and 4).
 
 | Impact | Codec | Identification | Typical locations | Candidate pure-Rust crate (not evaluated) |
 | --- | --- | --- | --- | --- |

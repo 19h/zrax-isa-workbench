@@ -39,6 +39,21 @@ pub enum ClassifierError {
     #[error("TI container parse error: {message}")]
     TiContainerParseError { message: String },
 
+    /// Error decoding a compressed stream (gzip, xz, LZ4, Zstandard, ...).
+    #[error("Compressed stream parse error: {message}")]
+    CompressedParseError {
+        /// What is wrong with the stream.
+        message: String,
+    },
+
+    /// The concatenated load sections of a container exceed the
+    /// per-extraction limit.
+    #[error("Decoded payload exceeds {} MiB", .limit >> 20)]
+    PayloadLimit {
+        /// The limit in bytes.
+        limit: usize,
+    },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },

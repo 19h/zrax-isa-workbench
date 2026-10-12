@@ -811,6 +811,28 @@ pub enum FileFormat {
     Fit,
     /// Device Tree Blob
     Dtb,
+
+    // Compressed Streams
+    /// gzip member stream (RFC 1952)
+    Gzip,
+    /// zlib stream (RFC 1950)
+    Zlib,
+    /// xz container
+    Xz,
+    /// LZMA-alone stream
+    Lzma,
+    /// LZ4 frame or legacy frame
+    Lz4,
+    /// Zstandard frames (RFC 8878)
+    Zstd,
+    /// bzip2 stream
+    Bzip2,
+    /// lzop file
+    Lzop,
+    /// Apple LZFSE/LZVN block stream
+    Lzfse,
+    /// Apple kernelcache LZSS/LZVN image (`complzss`)
+    Lzss,
 }
 
 impl fmt::Display for FileFormat {
@@ -912,6 +934,17 @@ impl fmt::Display for FileFormat {
             FileFormat::UImage => write!(f, "uImage"),
             FileFormat::Fit => write!(f, "FIT"),
             FileFormat::Dtb => write!(f, "DTB"),
+            // Compressed streams
+            FileFormat::Gzip => write!(f, "gzip"),
+            FileFormat::Zlib => write!(f, "zlib"),
+            FileFormat::Xz => write!(f, "xz"),
+            FileFormat::Lzma => write!(f, "LZMA"),
+            FileFormat::Lz4 => write!(f, "LZ4"),
+            FileFormat::Zstd => write!(f, "Zstandard"),
+            FileFormat::Bzip2 => write!(f, "bzip2"),
+            FileFormat::Lzop => write!(f, "lzop"),
+            FileFormat::Lzfse => write!(f, "LZFSE"),
+            FileFormat::Lzss => write!(f, "Apple LZSS"),
         }
     }
 }
@@ -1277,6 +1310,22 @@ pub struct ContainedArch {
     /// Detected extensions for this slice
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extensions: Vec<ExtensionDetection>,
+    /// Where the slice lies in decoded bytes, when its stored bytes were
+    /// decompressed or otherwise transformed. `offset` and `size` then give
+    /// the stored range that holds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoded: Option<DecodedRange>,
+}
+
+/// A range in bytes produced by decoding stored bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecodedRange {
+    /// Codec or transform that produced the decoded bytes (`gzip`, ...).
+    pub transform: String,
+    /// Offset in the decoded bytes.
+    pub offset: u64,
+    /// Size in the decoded bytes.
+    pub size: u64,
 }
 
 /// Complete detection payload containing all analysis results.
@@ -1687,6 +1736,24 @@ pub enum MetadataValue {
     String(String),
     /// Hex value (for flags, machine types)
     Hex(u32),
+}
+
+impl From<u64> for MetadataValue {
+    fn from(value: u64) -> Self {
+        Self::Integer(value)
+    }
+}
+
+impl From<&str> for MetadataValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl From<String> for MetadataValue {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
 }
 
 impl fmt::Display for MetadataValue {

@@ -23,8 +23,7 @@ mod rprc;
 mod text;
 mod x509;
 
-/// Maximum extracted bytes, independent of destination address gaps.
-pub const MAX_PAYLOAD: usize = 64 << 20;
+pub use super::MAX_PAYLOAD;
 
 /// A recognized container layout; [`Variant::label`] describes each one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,15 +225,7 @@ fn align4(n: usize) -> Result<usize> {
 
 /// IEEE 802.3 CRC-32, as used by OAD headers and radar metaimage trailers.
 fn crc32(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for b in data {
-        crc ^= u32::from(*b);
-        for _ in 0..8 {
-            let mask = 0u32.wrapping_sub(crc & 1);
-            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
-        }
-    }
-    !crc
+    super::checksum::crc32(data)
 }
 
 /// Bytes that the container loads into target memory.

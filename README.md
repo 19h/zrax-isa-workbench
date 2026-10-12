@@ -251,7 +251,10 @@ enumeration additionally represents header-derived architectures.
 | Firmware and loader text | Espressif images, Intel HEX, Motorola S-record, TI-TXT, TI ASCII Hex, TI SDSMAC tagged, Extended Tektronix, CCS GO DSP data |
 | Texas Instruments firmware | C28x/C54x/C55x/C3x/C4x and unkeyed boot tables, AIS, RPRC, MCU+ and mmWave appimages, multicore ELF, GP/OMAP images, OAD, TI X.509 wrappers, MCUboot, TF-A FIP |
 | Specialized containers | OLS, EPR, SGO, VBF, FRF, BCF, SOX, AOR D10 |
+| Compressed streams | gzip, zlib, xz, LZMA-alone, LZ4 (frame and legacy), Zstandard, bzip2, lzop, LZFSE/LZVN, Apple LZSS kernelcaches; decoded and classified by their content |
 
+[Compressed streams and the shared container model](docs/compressed-streams.md)
+describe the codecs, coordinates and bounds.
 [TI format coverage, wire references, assumptions and unsupported variants](docs/ti-containers.md)
 include TI COFF0/1/2 and object-library member classification. MCUboot, FIP
 and Extended Tektronix are shared formats, not proof of a TI device.

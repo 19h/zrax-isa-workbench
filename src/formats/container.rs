@@ -1,0 +1,388 @@
+//! The shared container model.
+//!
+//! A container either loads sections (bytes bound for target memory) or
+//! wraps children (independent images: kernels, ramdisks, partitions,
+//! filesystem members, cores). This generalizes the TI container model
+//! (`formats::ti`) so that every family built on it is classified by one
+//! path in `lib.rs`: children on their own, sections as one payload, and the
+//! container's own target field over both.
+//!
+//! Coordinates: `offset` and `stored_size` always refer to the stored bytes
+//! in the input file, so hex and entropy views can show them. `data` is the
+//! bytes that are analyzed; when a codec or other transform produced them,
+//! `transform` names it and the bytes are owned.
+
+use crate::error::{ClassifierError, Result};
+use crate::formats::{compressed, MAX_PAYLOAD};
+use crate::types::{
+    ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
+    Variant,
+};
+use std::borrow::Cow;
+
+/// Most components one container lists. Formats stop enumerating there
+/// and record how many they left out.
+pub const MAX_COMPONENTS: usize = 4096;
+
+/// A layout recognized by [`crate::formats::detect_format`] and parsed into
+/// a [`Container`]. Each family keeps its own layout enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A standalone compressed stream.
+    Compressed(compressed::Codec),
+}
+
+impl Kind {
+    /// The reported file format.
+    pub fn format(self) -> FileFormat {
+        match self {
+            Self::Compressed(codec) => codec.format(),
+        }
+    }
+
+    /// Human-readable layout name, used as the format variant.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Compressed(codec) => codec.label(),
+        }
+    }
+
+    /// Recognized from complete structure rather than a magic value.
+    pub fn is_weak(self) -> bool {
+        match self {
+            Self::Compressed(codec) => codec.is_weak(),
+        }
+    }
+}
+
+/// Parse `data` as the given layout.
+///
+/// # Errors
+///
+/// The layout's parse error when `data` does not hold a valid instance.
+pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
+    match kind {
+        Kind::Compressed(codec) => compressed::parse_container(data, codec),
+    }
+}
+
+/// An architecture named by a format field. The code byte order is `None`
+/// when the field does not determine it; the classifier then takes it from
+/// the code, or reports it as undetermined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Target {
+    /// Architecture named by the format.
+    pub isa: Isa,
+    /// Register width in bits.
+    pub bits: u8,
+    /// Code byte order, when the format determines it.
+    pub endianness: Option<Endianness>,
+}
+
+impl Target {
+    /// A target whose byte order the format determines.
+    pub fn new(isa: Isa, bits: u8, endianness: Endianness) -> Self {
+        Self {
+            isa,
+            bits,
+            endianness: Some(endianness),
+        }
+    }
+
+    /// A target whose byte order the format leaves open.
+    pub fn without_byte_order(isa: Isa, bits: u8) -> Self {
+        Self {
+            isa,
+            bits,
+            endianness: None,
+        }
+    }
+}
+
+/// Bytes that the container loads into target memory.
+#[derive(Debug)]
+pub struct Section<'a> {
+    /// Display label.
+    pub label: String,
+    /// Destination address; units are stated in the container notes.
+    pub address: u64,
+    /// File offset of the stored bytes.
+    pub offset: usize,
+    /// Stored size in the file, in bytes.
+    pub stored_size: usize,
+    /// Bytes as loaded (decoded when `transform` is set).
+    pub data: Cow<'a, [u8]>,
+    /// Codec or transform that produced `data` from the stored bytes.
+    pub transform: Option<&'static str>,
+}
+
+/// Whether a child is classified when its bytes are not a recognized format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Classify {
+    /// Firmware components: always classified, by the code model if needed.
+    Always,
+    /// Archive and filesystem members: listed only when they are a
+    /// recognized format, as `ar` members are.
+    IfRecognized,
+}
+
+/// An embedded image that is classified on its own.
+#[derive(Debug)]
+pub struct Child<'a> {
+    /// Display label (component role or member path).
+    pub label: String,
+    /// File offset of the stored bytes.
+    pub offset: usize,
+    /// Stored size in the file, in bytes.
+    pub stored_size: usize,
+    /// Bytes to classify (decoded when `transform` is set).
+    pub data: Cow<'a, [u8]>,
+    /// Codec or transform that produced `data` from the stored bytes.
+    pub transform: Option<&'static str>,
+    /// Data-only, encrypted or otherwise transformed bytes that must never
+    /// reach the code model.
+    pub opaque: bool,
+    /// Architecture named for this child by the container.
+    pub target: Option<Target>,
+    /// Classification policy.
+    pub classify: Classify,
+}
+
+impl<'a> Child<'a> {
+    /// A component stored as-is at `offset`.
+    pub fn stored(label: impl Into<String>, offset: usize, data: &'a [u8]) -> Self {
+        Self {
+            label: label.into(),
+            offset,
+            stored_size: data.len(),
+            data: Cow::Borrowed(data),
+            transform: None,
+            opaque: false,
+            target: None,
+            classify: Classify::Always,
+        }
+    }
+
+    /// A component whose stored bytes at `offset..offset + stored_size`
+    /// decode to `data` through `transform`.
+    pub fn decoded(
+        label: impl Into<String>,
+        offset: usize,
+        stored_size: usize,
+        data: Cow<'a, [u8]>,
+        transform: &'static str,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            offset,
+            stored_size,
+            data,
+            transform: Some(transform),
+            opaque: false,
+            target: None,
+            classify: Classify::Always,
+        }
+    }
+
+    /// A component that is listed but never analyzed as code.
+    pub fn opaque(label: impl Into<String>, offset: usize, data: &'a [u8]) -> Self {
+        Self {
+            opaque: true,
+            ..Self::stored(label, offset, data)
+        }
+    }
+
+    /// Set the architecture the container names for this child.
+    #[must_use]
+    pub fn with_target(mut self, target: Target) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    /// Classify only when the bytes are a recognized format.
+    #[must_use]
+    pub fn if_recognized(mut self) -> Self {
+        self.classify = Classify::IfRecognized;
+        self
+    }
+}
+
+/// A parsed container.
+#[derive(Debug)]
+pub struct Container<'a> {
+    /// Reported file format.
+    pub format: FileFormat,
+    /// Layout name, reported as the classification variant.
+    pub variant: String,
+    /// Architecture named by the container itself.
+    pub target: Option<Target>,
+    /// Entry point, in the units stated in the notes (bytes unless stated).
+    pub entry: Option<u64>,
+    /// Load sections in stream order.
+    pub sections: Vec<Section<'a>>,
+    /// Embedded images in stream order.
+    pub children: Vec<Child<'a>>,
+    /// Format notes, most important first.
+    pub notes: Vec<String>,
+    /// Format-specific metadata, in addition to the generated entries.
+    pub metadata: Vec<MetadataEntry>,
+    /// Bytes of the input that belong to the container.
+    pub consumed: usize,
+    /// Encrypted or metadata-only content that must not be analyzed.
+    pub opaque: bool,
+    /// A codec wrapper: the single child is the content and its
+    /// classification is reported as the container's own.
+    pub transparent: bool,
+    /// Prefix of generated metadata keys (`<prefix>_section_0`).
+    pub key_prefix: &'static str,
+}
+
+impl<'a> Container<'a> {
+    /// An empty container of `format`.
+    pub fn new(format: FileFormat, variant: impl Into<String>, key_prefix: &'static str) -> Self {
+        Self {
+            format,
+            variant: variant.into(),
+            target: None,
+            entry: None,
+            sections: Vec::new(),
+            children: Vec::new(),
+            notes: Vec::new(),
+            metadata: Vec::new(),
+            consumed: 0,
+            opaque: false,
+            transparent: false,
+            key_prefix,
+        }
+    }
+
+    /// Append a load section of stored bytes.
+    pub fn push_section(&mut self, address: u64, offset: usize, data: Cow<'a, [u8]>) {
+        let stored_size = data.len();
+        self.sections.push(Section {
+            label: format!("Load section {}", self.sections.len() + 1),
+            address,
+            offset,
+            stored_size,
+            data,
+            transform: None,
+        });
+    }
+
+    /// Append a custom metadata entry `<key>` with a display label.
+    pub fn push_metadata(
+        &mut self,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<MetadataValue>,
+    ) {
+        self.metadata.push(MetadataEntry::new(
+            MetadataKey::Custom(key.into()),
+            value.into(),
+            label,
+        ));
+    }
+
+    /// The container-level result. The ISA is unknown, with confidence 0,
+    /// unless the format names one.
+    pub fn classification(&self) -> ClassificationResult {
+        let (isa, bits, endianness) = match self.target {
+            Some(t) => (t.isa, t.bits, t.endianness.unwrap_or(Endianness::BiEndian)),
+            None => (Isa::Unknown(0), 0, Endianness::Little),
+        };
+        let mut r = ClassificationResult::from_format(isa, bits, endianness, self.format);
+        if matches!(isa, Isa::Unknown(_)) {
+            r.confidence = 0.0;
+        }
+        r.variant = Variant::new(self.variant.clone());
+        r.metadata.entry_point = self.entry;
+        if self.sections.is_empty() && !self.children.is_empty() {
+            r.metadata.section_count = Some(self.children.len());
+        } else if !self.sections.is_empty() {
+            r.metadata.section_count = Some(self.sections.len());
+            r.metadata.code_size = Some(self.sections.iter().map(|s| s.data.len() as u64).sum());
+        }
+        r.metadata.notes.clone_from(&self.notes);
+        if self.opaque {
+            r.metadata
+                .notes
+                .push("Payload is encrypted or metadata-only; ISA analysis was not applied".into());
+        }
+        r
+    }
+
+    /// Container size, the format's own entries, then one entry per
+    /// section and child.
+    pub fn metadata(&self) -> Vec<MetadataEntry> {
+        let prefix = self.key_prefix;
+        let custom = |key: String, label: String, value: MetadataValue| {
+            MetadataEntry::new(MetadataKey::Custom(key), value, label)
+        };
+        let mut entries = vec![custom(
+            format!("{prefix}_image_size"),
+            "Container size (B)".into(),
+            MetadataValue::Integer(self.consumed as u64),
+        )];
+        entries.extend(self.metadata.iter().cloned());
+        for (i, s) in self.sections.iter().enumerate() {
+            entries.push(custom(
+                format!("{prefix}_section_{i}"),
+                s.label.clone(),
+                MetadataValue::String(format!(
+                    "file 0x{:X}; destination 0x{:X}; {}",
+                    s.offset,
+                    s.address,
+                    stored_and_decoded(s.stored_size, s.data.len(), s.transform)
+                )),
+            ));
+        }
+        for (i, child) in self.children.iter().enumerate() {
+            let opaque = if child.opaque || self.opaque {
+                "; opaque"
+            } else {
+                ""
+            };
+            entries.push(custom(
+                format!("{prefix}_component_{i}"),
+                child.label.clone(),
+                MetadataValue::String(format!(
+                    "file 0x{:X}; {}{opaque}",
+                    child.offset,
+                    stored_and_decoded(child.stored_size, child.data.len(), child.transform)
+                )),
+            ));
+        }
+        entries
+    }
+
+    /// Sections concatenated in stream order, without materializing address
+    /// gaps. Opaque containers yield nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`ClassifierError::PayloadLimit`] when the sections exceed
+    /// [`MAX_PAYLOAD`].
+    pub fn payload(&self) -> Result<Vec<u8>> {
+        if self.opaque {
+            return Ok(Vec::new());
+        }
+        let size = self.sections.iter().try_fold(0usize, |size, s| {
+            size.checked_add(s.data.len())
+                .filter(|size| *size <= MAX_PAYLOAD)
+                .ok_or(ClassifierError::PayloadLimit { limit: MAX_PAYLOAD })
+        })?;
+        let mut payload = Vec::with_capacity(size);
+        for s in &self.sections {
+            payload.extend_from_slice(&s.data);
+        }
+        Ok(payload)
+    }
+}
+
+/// `"{stored} B"`, or `"{stored} B stored; {decoded} B decoded ({codec})"`.
+fn stored_and_decoded(stored: usize, decoded: usize, transform: Option<&str>) -> String {
+    match transform {
+        Some(name) => format!("{stored} B stored; {decoded} B decoded ({name})"),
+        None => format!("{stored} B"),
+    }
+}

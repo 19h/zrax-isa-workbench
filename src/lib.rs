@@ -64,9 +64,9 @@ pub use formatter::{
 pub use heuristics::DetectedIsa;
 pub use types::{
     ClassificationMetadata, ClassificationResult, ClassificationSource, ClassifierOptions,
-    ContainedArch, DetectionPayload, Endianness, Extension, ExtensionCategory, ExtensionDetection,
-    ExtensionSource, FileFormat, FormatDetection, Isa, IsaCandidate, IsaClassification,
-    MetadataEntry, MetadataKey, MetadataValue, Note, NoteLevel, Variant,
+    ContainedArch, DecodedRange, DetectionPayload, Endianness, Extension, ExtensionCategory,
+    ExtensionDetection, ExtensionSource, FileFormat, FormatDetection, Isa, IsaCandidate,
+    IsaClassification, MetadataEntry, MetadataKey, MetadataValue, Note, NoteLevel, Variant,
 };
 
 use std::path::Path;
@@ -221,6 +221,7 @@ fn component_slice(
         offset: offset as u64,
         size: size as u64,
         extensions,
+        decoded: None,
     }
 }
 
@@ -327,6 +328,445 @@ fn classify_ti_payload(
     })
 }
 
+/// The classification of a container built on [`formats::container`],
+/// merged into [`classify_depth`]'s common tail.
+struct ContainerOutcome {
+    result: ClassificationResult,
+    candidates: Vec<IsaCandidate>,
+    slices: Vec<ContainedArch>,
+    notes: Vec<Note>,
+    metadata: Vec<MetadataEntry>,
+    /// Bytes scanned for extensions of the primary ISA.
+    code: Vec<u8>,
+    /// Extensions of the component that supplied the primary ISA.
+    extensions: Option<Vec<ExtensionDetection>>,
+}
+
+/// Same ISA, or the same code-model family (MIPS32 and MIPS64, SH and SH-4).
+fn same_family(a: Isa, b: Isa) -> bool {
+    a == b || heuristics::family_of(a).is_some_and(|f| Some(f) == heuristics::family_of(b))
+}
+
+fn is_unknown(isa: Isa) -> bool {
+    matches!(isa, Isa::Unknown(_))
+}
+
+/// Extensions of `isa` found in `code`, or none when detection is off.
+fn code_extensions(
+    code: &[u8],
+    isa: Isa,
+    endianness: Endianness,
+    options: &ClassifierOptions,
+) -> Vec<ExtensionDetection> {
+    if !options.detect_extensions || is_unknown(isa) {
+        return Vec::new();
+    }
+    extensions::detect_from_code(code, isa, endianness)
+        .iter()
+        .map(|e| ExtensionDetection::from_code(&e.name, e.category, e.confidence))
+        .collect()
+}
+
+/// Apply an architecture a container names for a component to what the
+/// component's own bytes said. The component's own header wins over the
+/// container field when both are explicit; the code model never overrides
+/// a field, but supplies the byte order the field leaves open.
+fn apply_target(
+    component: &mut Component,
+    target: formats::container::Target,
+    code: &[u8],
+    label: &str,
+    options: &ClassifierOptions,
+    notes: &mut Vec<Note>,
+) {
+    let r = &mut component.result;
+    let own_header = r.source != ClassificationSource::Heuristic && !is_unknown(r.isa);
+    if !is_unknown(r.isa) && !same_family(r.isa, target.isa) {
+        let evidence = if own_header {
+            format!("contained {} names {}", r.format, r.isa)
+        } else {
+            format!("code model found {}", r.isa)
+        };
+        notes.push(Note::warning(format!(
+            "{label}: container names {}; {evidence}",
+            target.isa
+        )));
+        if own_header {
+            return;
+        }
+    }
+    let code_order = (same_family(r.isa, target.isa) && !is_unknown(r.isa)).then_some(r.endianness);
+    let endianness = match (target.endianness, code_order) {
+        (Some(field), Some(code)) if field != code => {
+            notes.push(Note::warning(format!(
+                "{label}: container byte order is {field}; code model found {code}"
+            )));
+            field
+        }
+        (Some(field), _) => field,
+        (None, Some(code)) => code,
+        (None, None) => {
+            notes.push(Note::info(format!(
+                "{label}: code byte order is not encoded and could not be determined from the code"
+            )));
+            Endianness::BiEndian
+        }
+    };
+    let changed = r.isa != target.isa || r.endianness != endianness;
+    r.isa = target.isa;
+    r.bitwidth = target.bits;
+    r.endianness = endianness;
+    r.confidence = 1.0;
+    r.source = if code_order.is_some() && r.source == ClassificationSource::Heuristic {
+        ClassificationSource::Combined
+    } else {
+        ClassificationSource::FileFormat
+    };
+    if changed {
+        r.variant = Variant::default();
+        component.extensions = code_extensions(code, r.isa, r.endianness, options);
+        r.extensions.clear();
+        component.candidates = Some(Vec::new());
+    }
+}
+
+/// An unknown-ISA component of `format`.
+fn unknown_component(format: FileFormat) -> Component {
+    let mut result =
+        ClassificationResult::from_format(Isa::Unknown(0), 0, Endianness::Little, format);
+    result.confidence = 0.0;
+    Component {
+        result,
+        extensions: Vec::new(),
+        candidates: None,
+    }
+}
+
+/// Classify one child of a shared-model container from its own bytes.
+/// Returns `None` for an archive member that is not a recognized format.
+fn classify_child(
+    child: &formats::container::Child<'_>,
+    container: &formats::container::Container<'_>,
+    options: &ClassifierOptions,
+    depth: usize,
+    notes: &mut Vec<Note>,
+) -> Option<Component> {
+    use formats::container::Classify;
+    let member = child.classify == Classify::IfRecognized;
+    if child.opaque || container.opaque {
+        if !member {
+            notes.push(Note::info(format!(
+                "{}: opaque; payload ISA analysis skipped",
+                child.label
+            )));
+        }
+        return (!member).then(|| unknown_component(container.format));
+    }
+    if member
+        && matches!(
+            formats::detect_format(&child.data),
+            formats::DetectedFormat::Raw
+        )
+    {
+        return None;
+    }
+    let mut component = unknown_component(container.format);
+    if depth >= MAX_NESTING {
+        notes.push(Note::warning(format!(
+            "{}: container nesting limit reached; not classified",
+            child.label
+        )));
+    } else {
+        match classify_depth(&child.data, options, depth + 1) {
+            Ok(inner) => {
+                component.result = inner.result;
+                component.extensions = inner.extensions;
+                component.candidates = Some(inner.candidates);
+            }
+            Err(e) => notes.push(Note::warning(format!("{}: ISA unknown ({e})", child.label))),
+        }
+    }
+    if let Some(target) = child.target {
+        apply_target(
+            &mut component,
+            target,
+            &child.data,
+            &child.label,
+            options,
+            notes,
+        );
+    }
+    if !member {
+        notes.push(Note::info(format!(
+            "{}: {} (contained {})",
+            child.label, component.result.isa, component.result.format
+        )));
+    }
+    Some(component)
+}
+
+/// The slice for a classified child, in stored coordinates.
+fn child_slice(child: &formats::container::Child<'_>, component: &Component) -> ContainedArch {
+    let mut slice = component_slice(
+        child.label.clone(),
+        &component.result,
+        child.offset,
+        child.stored_size,
+        component.extensions.clone(),
+    );
+    slice.decoded = child.transform.map(|transform| DecodedRange {
+        transform: transform.to_string(),
+        offset: 0,
+        size: child.data.len() as u64,
+    });
+    slice
+}
+
+/// Classify a shared-model container: children on their own bytes, load
+/// sections as one payload, and the container's own target over both.
+fn classify_container(
+    container: &formats::container::Container<'_>,
+    options: &ClassifierOptions,
+    depth: usize,
+) -> Result<ContainerOutcome> {
+    let mut out = ContainerOutcome {
+        result: container.classification(),
+        candidates: Vec::new(),
+        slices: Vec::new(),
+        notes: Vec::new(),
+        metadata: container.metadata(),
+        code: Vec::new(),
+        extensions: None,
+    };
+    if container.transparent {
+        classify_decoded(container, options, depth, &mut out);
+        return Ok(out);
+    }
+    // Byte order and extensions for a named target come from the first
+    // component of the same family.
+    let mut target_evidence: Option<(Endianness, Vec<ExtensionDetection>, String)> = None;
+    let mut unlisted = 0usize;
+    for child in &container.children {
+        if out.slices.len() >= formats::container::MAX_COMPONENTS {
+            unlisted += 1;
+            continue;
+        }
+        let Some(component) = classify_child(child, container, options, depth, &mut out.notes)
+        else {
+            continue;
+        };
+        let isa = component.result.isa;
+        match container.target {
+            Some(target) if same_family(isa, target.isa) && target_evidence.is_none() => {
+                target_evidence = Some((
+                    component.result.endianness,
+                    component.extensions.clone(),
+                    child.label.clone(),
+                ));
+            }
+            None if is_unknown(out.result.isa) && !is_unknown(isa) => {
+                if let Some(ranked) = &component.candidates {
+                    out.candidates.clone_from(ranked);
+                }
+                out.extensions = Some(component.extensions.clone());
+                let note = format!(
+                    "Primary ISA selected from {}; other components are listed separately",
+                    child.label
+                );
+                out.result = adopt(&out.result, component.result.clone(), note);
+            }
+            _ => {}
+        }
+        out.slices.push(child_slice(child, &component));
+    }
+    if unlisted > 0 {
+        out.notes.push(Note::warning(format!(
+            "{unlisted} further components were not classified (limit {})",
+            formats::container::MAX_COMPONENTS
+        )));
+    }
+    let payload = container.payload()?;
+    if !payload.is_empty() {
+        classify_sections(
+            container,
+            &payload,
+            options,
+            depth,
+            &mut out,
+            &mut target_evidence,
+        );
+    }
+    if let Some(target) = container.target {
+        resolve_target_order(target, target_evidence, &mut out);
+    }
+    if container.children.is_empty() {
+        out.code = payload;
+    }
+    Ok(out)
+}
+
+/// Classify the concatenated load sections. One contiguous section may
+/// itself be a container; a concatenation across sections only goes to the
+/// code model, so it cannot manufacture a header across a gap.
+fn classify_sections(
+    container: &formats::container::Container<'_>,
+    payload: &[u8],
+    options: &ClassifierOptions,
+    depth: usize,
+    out: &mut ContainerOutcome,
+    target_evidence: &mut Option<(Endianness, Vec<ExtensionDetection>, String)>,
+) {
+    let inner = if depth < MAX_NESTING && container.sections.len() == 1 {
+        classify_depth(payload, options, depth + 1)
+    } else {
+        let (result, candidates) = heuristic(payload, options);
+        result.map(|result| Classified {
+            format: FormatDetection::new(FileFormat::Raw),
+            result,
+            candidates,
+            slices: Vec::new(),
+            extensions: Vec::new(),
+            notes: Vec::new(),
+            metadata: Vec::new(),
+        })
+    };
+    let Ok(inner) = inner else {
+        if is_unknown(out.result.isa) && out.slices.is_empty() {
+            out.notes.push(Note::warning(
+                "Container payload ISA could not be determined",
+            ));
+        }
+        return;
+    };
+    if is_unknown(inner.result.isa) {
+        return;
+    }
+    match container.target {
+        Some(target) => {
+            if !same_family(inner.result.isa, target.isa) {
+                out.notes.push(Note::warning(format!(
+                    "Container names {}; the loaded code classifies as {}",
+                    target.isa, inner.result.isa
+                )));
+            } else if target_evidence.is_none() {
+                *target_evidence = Some((
+                    inner.result.endianness,
+                    inner.extensions,
+                    "the loaded code".to_string(),
+                ));
+            }
+        }
+        None if is_unknown(out.result.isa) => {
+            out.result = if inner.result.format == FileFormat::Raw {
+                adopt_heuristic(&out.result, inner.result)
+            } else {
+                let note = format!("ISA identified from contained {}", inner.result.format);
+                adopt(&out.result, inner.result, note)
+            };
+            out.candidates = inner.candidates;
+            out.extensions = Some(inner.extensions);
+        }
+        None => {}
+    }
+}
+
+/// A named target that leaves the code byte order open takes it from the
+/// first same-family component; otherwise the order is reported as
+/// undetermined (bi-endian).
+fn resolve_target_order(
+    target: formats::container::Target,
+    evidence: Option<(Endianness, Vec<ExtensionDetection>, String)>,
+    out: &mut ContainerOutcome,
+) {
+    let Some((endianness, extensions, source)) = evidence else {
+        if target.endianness.is_none() {
+            out.notes.push(Note::info(
+                "Code byte order is not encoded in the header and could not be determined from the code",
+            ));
+        }
+        return;
+    };
+    match target.endianness {
+        None => {
+            out.result.endianness = endianness;
+            out.notes.push(Note::info(format!(
+                "Code byte order {endianness} determined from {source}"
+            )));
+        }
+        Some(field) if field != endianness => out.notes.push(Note::warning(format!(
+            "Header byte order is {field}; {source} classifies as {endianness}"
+        ))),
+        Some(_) => {}
+    }
+    out.extensions = Some(extensions);
+}
+
+/// A codec wrapper reports its decoded content as its own: ISA, candidates,
+/// extensions, slices and metadata, with slices mapped back to the stored
+/// stream.
+fn classify_decoded(
+    container: &formats::container::Container<'_>,
+    options: &ClassifierOptions,
+    depth: usize,
+    out: &mut ContainerOutcome,
+) {
+    let Some(child) = container.children.first() else {
+        return;
+    };
+    let transform = child.transform.unwrap_or("decoded");
+    if depth >= MAX_NESTING {
+        out.notes.push(Note::warning(
+            "Container nesting limit reached; decoded payload not classified",
+        ));
+        return;
+    }
+    let inner = match classify_depth(&child.data, options, depth + 1) {
+        Ok(inner) => inner,
+        Err(e) => {
+            out.notes.push(Note::warning(format!(
+                "Decoded payload ISA could not be determined ({e})"
+            )));
+            return;
+        }
+    };
+    out.notes.push(Note::info(format!(
+        "Decoded payload: {}",
+        inner.format.format
+    )));
+    out.metadata.push(MetadataEntry::new(
+        MetadataKey::Custom(format!("{}_content_format", container.key_prefix)),
+        MetadataValue::String(inner.format.format.to_string()),
+        "Decoded content format",
+    ));
+    out.metadata.extend(inner.metadata);
+    out.notes.extend(inner.notes);
+    out.slices = inner
+        .slices
+        .into_iter()
+        .map(|mut slice| {
+            slice.decoded = Some(DecodedRange {
+                transform: transform.to_string(),
+                offset: slice.offset,
+                size: slice.size,
+            });
+            slice.offset = child.offset as u64;
+            slice.size = child.stored_size as u64;
+            slice
+        })
+        .collect();
+    out.candidates = inner.candidates;
+    out.extensions = Some(inner.extensions);
+    if !is_unknown(inner.result.isa) {
+        let mut result = inner.result;
+        let mut combined = container.classification().metadata.notes;
+        combined.append(&mut result.metadata.notes);
+        result.metadata.notes = combined;
+        result.format = container.format;
+        result.source = ClassificationSource::Combined;
+        out.result = result;
+    }
+}
+
 /// Maximum depth of containers within containers, bounded independently of
 /// attacker-controlled image counts.
 const MAX_NESTING: usize = 6;
@@ -373,6 +813,7 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                         .iter()
                         .map(|x| ExtensionDetection::from_format(&x.name, x.category))
                         .collect(),
+                    decoded: None,
                 })
                 .collect();
             notes.push(Note::info(format!(
@@ -453,6 +894,17 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
             code_payload = Some(std::borrow::Cow::Owned(scanned));
             r
         }
+        formats::DetectedFormat::Container { kind } => {
+            let container = formats::container::parse(data, kind)?;
+            let outcome = classify_container(&container, options, depth)?;
+            candidates = outcome.candidates;
+            slices = outcome.slices;
+            notes = outcome.notes;
+            metadata = outcome.metadata;
+            code_payload = Some(std::borrow::Cow::Owned(outcome.code));
+            contained_extensions = outcome.extensions;
+            outcome.result
+        }
         formats::DetectedFormat::Ar { variant } => {
             let mut r = formats::ar::parse(data, variant)?;
             for member in formats::ar::parse_members(data)? {
@@ -520,6 +972,7 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                 offset: container.block(5, 0).unwrap().offset as u64,
                 size: code.len() as u64,
                 extensions: Vec::new(),
+                decoded: None,
             });
             for section in 1..=4 {
                 let Some(block) = container.block(section, 0).filter(|b| !b.data.is_empty()) else {
@@ -552,6 +1005,7 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                     offset: block.offset as u64,
                     size: block.data.len() as u64,
                     extensions: dsp_extensions,
+                    decoded: None,
                 });
             }
             code_payload = Some(code);
@@ -764,6 +1218,14 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
             let mut detection = FormatDetection::with_variant(variant.format(), variant.label());
             // Unkeyed boot tables and GP images are recognized from structure alone.
             if matches!(variant, Ti::C55xLegacy | Ti::C6000Boot | Ti::GpImage) {
+                detection.confidence = 0.85;
+            }
+            detection
+        }
+        DetectedFormat::Container { kind } => {
+            let mut detection = FormatDetection::with_variant(kind.format(), kind.label());
+            // Weak layouts are recognized from complete structure, not a magic value.
+            if kind.is_weak() {
                 detection.confidence = 0.85;
             }
             detection

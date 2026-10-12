@@ -25,8 +25,11 @@ pub mod aout;
 pub mod ar;
 pub mod bcf;
 pub mod bflt;
+pub mod checksum;
 pub mod coff;
+pub mod compressed;
 pub mod console;
+pub mod container;
 pub mod d10;
 pub mod dex;
 pub mod ecoff;
@@ -64,6 +67,11 @@ pub mod xcoff;
 
 use crate::error::{ClassifierError, Result};
 use crate::types::ClassificationResult;
+
+/// Maximum bytes one extraction may produce (decoded payload, expanded
+/// image or concatenated load sections), independent of destination
+/// address gaps and of declared sizes.
+pub const MAX_PAYLOAD: usize = 64 << 20;
 
 /// Magic byte signatures for format detection.
 pub mod magic {
@@ -250,6 +258,11 @@ pub enum DetectedFormat {
     TmObj,
     /// Motorola DSP LOD load file
     Lod,
+    /// A layout built on the shared container model ([`container`]).
+    Container {
+        /// The recognized layout.
+        kind: container::Kind,
+    },
     /// Unknown/raw format
     Raw,
 }
@@ -438,6 +451,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::TiC55xBoot;
     }
 
+    // Magic-bearing compressed streams. Checked after the executable and
+    // firmware formats, none of which start with a codec magic.
+    if let Some(codec) = compressed::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Compressed(codec),
+        };
+    }
+
     // ar archive
     if let Some(variant) = ar::detect(data) {
         return DetectedFormat::Ar { variant };
@@ -560,6 +581,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Epr;
     }
 
+    // zlib and LZMA-alone: two-byte or properties-only signatures,
+    // recognized only from a complete decode.
+    if let Some(codec) = compressed::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Compressed(codec),
+        };
+    }
+
     if let Some(variant) = ti::detect_weak(data) {
         return DetectedFormat::Ti { variant };
     }
@@ -617,6 +646,9 @@ pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<Classifica
         DetectedFormat::Spc => spc::parse(data),
         DetectedFormat::TmObj => tmobj::parse(data),
         DetectedFormat::Lod => lod::parse(data),
+        DetectedFormat::Container { kind } => {
+            container::parse(data, kind).map(|c| c.classification())
+        }
         DetectedFormat::Raw => Err(crate::error::ClassifierError::UnknownFormat {
             magic: data.iter().take(4).copied().collect(),
         }),
