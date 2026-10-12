@@ -978,6 +978,12 @@ pub enum FileFormat {
     UefiTe,
     /// Intel flash descriptor image with its region map
     IntelIfd,
+
+    // Coreboot
+    /// Chromium flash map (FMAP) flash image
+    Fmap,
+    /// coreboot file system (CBFS) region or ROM
+    Cbfs,
 }
 
 impl fmt::Display for FileFormat {
@@ -1165,6 +1171,9 @@ impl fmt::Display for FileFormat {
             FileFormat::UefiFv => write!(f, "UEFI firmware volume"),
             FileFormat::UefiTe => write!(f, "UEFI TE image"),
             FileFormat::IntelIfd => write!(f, "Intel flash descriptor"),
+            // Coreboot
+            FileFormat::Fmap => write!(f, "Chromium FMAP"),
+            FileFormat::Cbfs => write!(f, "coreboot CBFS"),
         }
     }
 }

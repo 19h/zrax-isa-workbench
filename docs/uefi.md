@@ -143,6 +143,7 @@ header.
 | Gigabyte-style BIOS regions that overlap other regions | Parse error (overlap) |
 | Apple `ZeroVector` CRC, signed volumes and signed sections | Not verified |
 | IFD version, chipset and master permissions | Not decoded |
+| Descriptor images that also hold a complete FMAP or a master-header CBFS ROM (coreboot on Intel) | Reported as `fmap` or `cbfs` ([coreboot](coreboot.md)), not `intelifd` |
 | NVRAM variable stores | Listed, not interpreted |
 | BIOS-region dumps whose first volume is not at offset 0 and not 4 KiB-aligned within 1 MiB | Not recognized |
 

@@ -740,6 +740,8 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::UefiFv => "UEFI firmware volume",
         FileFormat::UefiTe => "UEFI TE image",
         FileFormat::IntelIfd => "Intel flash descriptor",
+        FileFormat::Fmap => "Chromium FMAP",
+        FileFormat::Cbfs => "coreboot CBFS",
     }
 }
 

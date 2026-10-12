@@ -97,6 +97,7 @@ const FORMAT_NAMES = {
   ubi: 'UBI', ubifs: 'UBIFS', jffs2: 'JFFS2',
   ext: 'ext filesystem',
   uefifv: 'UEFI Firmware Volume', uefite: 'UEFI TE Image', intelifd: 'Intel Flash Descriptor',
+  fmap: 'Chromium FMAP', cbfs: 'coreboot CBFS',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

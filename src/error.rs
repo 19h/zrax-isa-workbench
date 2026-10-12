@@ -154,6 +154,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Chromium FMAP flash image or a coreboot CBFS.
+    #[error("coreboot image parse error: {message}")]
+    CorebootParseError {
+        /// What is wrong with the map or file system.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

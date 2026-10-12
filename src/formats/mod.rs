@@ -37,6 +37,7 @@ pub mod coff;
 pub mod compressed;
 pub mod console;
 pub mod container;
+pub mod coreboot;
 pub mod d10;
 pub mod dex;
 pub mod ecoff;
@@ -633,8 +634,26 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     // UEFI and PC flash images: the flash descriptor signature at 0x10 (or
     // 0x0), `_FVH` at 0x28, or a TE header whose machine is known.
     if let Some(layout) = uefi::detect(data) {
+        // coreboot images for Intel platforms begin with a flash descriptor,
+        // but their BIOS region holds CBFS, not firmware volumes. A complete
+        // FMAP maps every area, the descriptor and ME region included, so
+        // it describes the image better than the descriptor does.
+        if layout == uefi::Layout::FlashDescriptor {
+            if let Some(layout) = coreboot::detect_weak(data) {
+                return DetectedFormat::Container {
+                    kind: container::Kind::Coreboot(layout),
+                };
+            }
+        }
         return DetectedFormat::Container {
             kind: container::Kind::Uefi(layout),
+        };
+    }
+
+    // Chromium FMAP (`__FMAP__`) or coreboot CBFS (`LARCHIVE`) at offset 0.
+    if let Some(layout) = coreboot::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Coreboot(layout),
         };
     }
 
@@ -855,6 +874,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = uefi::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Uefi(layout),
+        };
+    }
+
+    // An FMAP found by search inside a flash image, or a legacy CBFS ROM
+    // found through its end pointer: only for inputs nothing else claims.
+    if let Some(layout) = coreboot::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Coreboot(layout),
         };
     }
 

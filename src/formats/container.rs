@@ -14,8 +14,8 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
-    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, ext, huawei, mcu, mtd,
-    nintendo, optionrom, rofs, socboot, socboot2, uefi, zxtape, MAX_PAYLOAD,
+    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, coreboot, ext, huawei, mcu,
+    mtd, nintendo, optionrom, rofs, socboot, socboot2, uefi, zxtape, MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -88,6 +88,8 @@ pub enum Kind {
     Ext(ext::Layout),
     /// A UEFI firmware volume, TE image or Intel flash descriptor image.
     Uefi(uefi::Layout),
+    /// A Chromium FMAP flash image or a coreboot CBFS.
+    Coreboot(coreboot::Layout),
 }
 
 impl Kind {
@@ -114,6 +116,7 @@ impl Kind {
             Self::Mtd(layout) => layout.format(),
             Self::Ext(layout) => layout.format(),
             Self::Uefi(layout) => layout.format(),
+            Self::Coreboot(layout) => layout.format(),
         }
     }
 
@@ -140,6 +143,7 @@ impl Kind {
             Self::Mtd(layout) => layout.label(),
             Self::Ext(layout) => layout.label(),
             Self::Uefi(layout) => layout.label(),
+            Self::Coreboot(layout) => layout.label(),
         }
     }
 
@@ -166,6 +170,7 @@ impl Kind {
             Self::Mtd(layout) => layout.is_weak(),
             Self::Ext(layout) => layout.is_weak(),
             Self::Uefi(layout) => layout.is_weak(),
+            Self::Coreboot(layout) => layout.is_weak(),
         }
     }
 }
@@ -197,6 +202,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Mtd(layout) => mtd::parse_container(data, layout),
         Kind::Ext(layout) => ext::parse_container(data, layout),
         Kind::Uefi(layout) => uefi::parse_container(data, layout),
+        Kind::Coreboot(layout) => coreboot::parse_container(data, layout),
     }
 }
 

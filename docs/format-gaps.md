@@ -122,6 +122,9 @@ and NXP SB2.0/2.1/3.1 (metadata only; signatures not verified); see
 compression and GUID-defined sections, nested volumes, flash device images),
 TE images and the Intel flash descriptor region map are implemented; ME/CSME
 and AMD PSP regions stay opaque; see [UEFI and PC flash images](uefi.md).
+Chromium FMAP (at offset 0, or found by a bounded search) and coreboot CBFS
+(`LARCHIVE` regions and master-header ROMs; LZMA/LZ4 stages, SELF segments,
+SHA-2 hash attributes verified) are implemented; see [coreboot](coreboot.md).
 Other rows are updated as their families land.
 
 | Impact | Format | Identification | Architecture evidence | Notes |
