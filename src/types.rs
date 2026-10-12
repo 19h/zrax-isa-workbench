@@ -877,6 +877,15 @@ pub enum FileFormat {
     Gbl,
     /// Cypress/Infineon bootloader text file (`.cyacd`, `.cyacd2`)
     Cyacd,
+    // SoC boot ROM images
+    /// Allwinner boot ROM image (`eGON.BT0` boot0/SPL or TOC0)
+    AllwinnerEgon,
+    /// Rockchip image (RKFW, RKAF, RKBOOT loader or idbloader)
+    RockchipImage,
+    /// `MediaTek` preloader (device header, BRLYT and GFH records)
+    MediatekPreloader,
+    /// Qualcomm MBN image with a legacy 40-byte or 80-byte SBL header
+    QualcommMbn,
 }
 
 impl fmt::Display for FileFormat {
@@ -1012,6 +1021,11 @@ impl fmt::Display for FileFormat {
             FileFormat::Dfuse => write!(f, "STM32 DfuSe"),
             FileFormat::Gbl => write!(f, "Silicon Labs GBL"),
             FileFormat::Cyacd => write!(f, "Cypress CYACD"),
+            // SoC boot ROM images
+            FileFormat::AllwinnerEgon => write!(f, "Allwinner eGON"),
+            FileFormat::RockchipImage => write!(f, "Rockchip image"),
+            FileFormat::MediatekPreloader => write!(f, "MediaTek preloader"),
+            FileFormat::QualcommMbn => write!(f, "Qualcomm MBN"),
         }
     }
 }

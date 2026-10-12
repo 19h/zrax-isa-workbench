@@ -699,6 +699,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Dfuse => "STM32 DfuSe",
         FileFormat::Gbl => "Silicon Labs GBL",
         FileFormat::Cyacd => "Cypress CYACD",
+        FileFormat::AllwinnerEgon => "Allwinner eGON",
+        FileFormat::RockchipImage => "Rockchip image",
+        FileFormat::MediatekPreloader => "MediaTek preloader",
+        FileFormat::QualcommMbn => "Qualcomm MBN",
     }
 }
 

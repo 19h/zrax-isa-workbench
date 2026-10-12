@@ -69,6 +69,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a system-on-chip boot ROM image (Allwinner eGON or TOC0,
+    /// Rockchip, `MediaTek` preloader, Qualcomm MBN).
+    #[error("SoC loader parse error: {message}")]
+    SocBoot2ParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

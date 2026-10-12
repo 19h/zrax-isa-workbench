@@ -86,7 +86,10 @@ Status 2026-10-12: implemented so far are UF2 (family ID mapped to ISA,
 reassembly by `targetAddr`, one child per family), STM32 DfuSe (suffix CRC-32
 verified), Silicon Labs GBL (CRC-32 verified; encryption opaque, signatures
 not verified) and Cypress `.cyacd`/`.cyacd2` (weak); see
-[MCU update images](mcu.md). Other rows are updated as their families land.
+[MCU update images](mcu.md); Allwinner eGON/TOC0, Rockchip RKFW/RKAF/RKBOOT and
+idbloader, MediaTek preloader headers and legacy Qualcomm MBN (SBL and 40-byte
+v3); see [SoC loaders](socboot2.md). Other rows are updated as their families
+land.
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

@@ -86,6 +86,7 @@ const FORMAT_NAMES = {
   zxtape: 'ZX Spectrum Tape',
   xilinxbit: 'Xilinx bitstream', latticebitstream: 'Lattice bitstream', intelfpga: 'Intel FPGA configuration',
   uf2: 'UF2', dfuse: 'STM32 DfuSe', gbl: 'Silicon Labs GBL', cyacd: 'Cypress CYACD',
+  allwinneregon: 'Allwinner eGON', rockchipimage: 'Rockchip image', mediatekpreloader: 'MediaTek preloader', qualcommmbn: 'Qualcomm MBN',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

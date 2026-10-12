@@ -61,6 +61,7 @@ pub mod palm;
 pub mod pe;
 pub mod pef;
 pub mod sgo;
+pub mod socboot2;
 pub mod som;
 pub mod sox;
 pub mod spc;
@@ -525,6 +526,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // SoC boot ROM images: eGON.BT0 and TOC0 names, Rockchip tags (one
+    // RC4-scrambled), MediaTek device and GFH names, the Qualcomm SBL
+    // codeword and magic.
+    if let Some(layout) = socboot2::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::SocBoot2(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -693,6 +703,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = mcu::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Mcu(layout),
+        };
+    }
+
+    // The 40-byte Qualcomm MBN header has no magic: its sizes and pointers
+    // must be consistent with the file.
+    if let Some(layout) = socboot2::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::SocBoot2(layout),
         };
     }
 

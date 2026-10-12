@@ -13,10 +13,7 @@
 //! `transform` names it and the bytes are owned.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{
-    automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, optionrom, zxtape,
-    MAX_PAYLOAD,
-};
+use crate::formats::{automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, optionrom, socboot2, zxtape, MAX_PAYLOAD};
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
     Variant,
@@ -64,6 +61,9 @@ pub enum Kind {
     Bitstream(bitstream::Layout),
     /// An MCU update image (UF2, `DfuSe`, GBL, `.cyacd`).
     Mcu(mcu::Layout),
+    /// A system-on-chip boot ROM image (Allwinner, Rockchip, `MediaTek`,
+    /// Qualcomm).
+    SocBoot2(socboot2::Layout),
 }
 
 impl Kind {
@@ -79,6 +79,7 @@ impl Kind {
             Self::ZxTape(layout) => layout.format(),
             Self::Bitstream(layout) => layout.format(),
             Self::Mcu(layout) => layout.format(),
+            Self::SocBoot2(layout) => layout.format(),
         }
     }
 
@@ -94,6 +95,7 @@ impl Kind {
             Self::ZxTape(layout) => layout.label(),
             Self::Bitstream(layout) => layout.label(),
             Self::Mcu(layout) => layout.label(),
+            Self::SocBoot2(layout) => layout.label(),
         }
     }
 
@@ -109,6 +111,7 @@ impl Kind {
             Self::ZxTape(layout) => layout.is_weak(),
             Self::Bitstream(layout) => layout.is_weak(),
             Self::Mcu(layout) => layout.is_weak(),
+            Self::SocBoot2(layout) => layout.is_weak(),
         }
     }
 }
@@ -129,6 +132,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::ZxTape(layout) => zxtape::parse_container(data, layout),
         Kind::Bitstream(layout) => bitstream::parse_container(data, layout),
         Kind::Mcu(layout) => mcu::parse_container(data, layout),
+        Kind::SocBoot2(layout) => socboot2::parse_container(data, layout),
     }
 }
 
