@@ -1,188 +1,124 @@
-//! TF-A FIP header and UUID definitions: include/tools_share/firmware_image_package.h.
+//! TF-A Firmware Image Package. Header, table of contents and UUIDs follow
+//! `include/tools_share/firmware_image_package.h`; all fields are little-endian.
 use super::*;
-fn u64le(d: &[u8], at: usize) -> Result<u64> {
-    Ok(u64::from_le_bytes(bytes(d, at, 8)?.try_into().unwrap()))
-}
-fn identity(uuid: &[u8; 16]) -> (String, bool) {
-    let known = match *uuid {
-        [0x65, 0x92, 0x27, 0x03, 0x2f, 0x74, 0xe6, 0x44, 0x8d, 0xff, 0x57, 0x9a, 0xc1, 0xff, 0x06, 0x10] => {
-            ("SCP Firmware Updater Configuration FWU SCP_BL2U", true)
-        }
-        [0x60, 0xb3, 0xeb, 0x37, 0xc1, 0xe5, 0xea, 0x41, 0x9d, 0xf3, 0x19, 0xed, 0xa1, 0x1f, 0x68, 0x01] => {
-            ("AP Firmware Updater Configuration BL2U", true)
-        }
-        [0x4f, 0x51, 0x1d, 0x11, 0x2b, 0xe5, 0x4e, 0x49, 0xb4, 0xc5, 0x83, 0xc2, 0xf7, 0x15, 0x84, 0x0a] => {
-            ("Firmware Updater NS_BL2U", false)
-        }
-        [0x71, 0x40, 0x8a, 0xb2, 0x18, 0xd6, 0x87, 0x4c, 0x8b, 0x2e, 0xc6, 0xdc, 0xcd, 0x50, 0xf0, 0x96] => {
-            ("Non-Trusted Firmware Updater certificate", true)
-        }
-        [0x5f, 0xf9, 0xec, 0x0b, 0x4d, 0x22, 0x3e, 0x4d, 0xa5, 0x44, 0xc3, 0x9d, 0x81, 0xc7, 0x3f, 0x0a] => {
-            ("Trusted Boot Firmware BL2", false)
-        }
-        [0x97, 0x66, 0xfd, 0x3d, 0x89, 0xbe, 0xe8, 0x49, 0xae, 0x5d, 0x78, 0xa1, 0x40, 0x60, 0x82, 0x13] => {
-            ("SCP Firmware SCP_BL2", false)
-        }
-        [0x47, 0xd4, 0x08, 0x6d, 0x4c, 0xfe, 0x98, 0x46, 0x9b, 0x95, 0x29, 0x50, 0xcb, 0xbd, 0x5a, 0x00] => {
-            ("BL31", false)
-        }
-        [0x05, 0xd0, 0xe1, 0x89, 0x53, 0xdc, 0x13, 0x47, 0x8d, 0x2b, 0x50, 0x0a, 0x4b, 0x7a, 0x3e, 0x38] => {
-            ("BL32", false)
-        }
-        [0x0b, 0x70, 0xc2, 0x9b, 0x2a, 0x5a, 0x78, 0x40, 0x9f, 0x65, 0x0a, 0x56, 0x82, 0x73, 0x82, 0x88] => {
-            ("Secure Payload BL32 Extra1 (Trusted OS Extra1)", false)
-        }
-        [0x8e, 0xa8, 0x7b, 0xb1, 0xcf, 0xa2, 0x3f, 0x4d, 0x85, 0xfd, 0xe7, 0xbb, 0xa5, 0x02, 0x20, 0xd9] => {
-            ("Secure Payload BL32 Extra2 (Trusted OS Extra2)", false)
-        }
-        [0xd6, 0xd0, 0xee, 0xa7, 0xfc, 0xea, 0xd5, 0x4b, 0x97, 0x82, 0x99, 0x34, 0xf2, 0x34, 0xb6, 0xe4] => {
-            ("BL33", false)
-        }
-        [0x6c, 0x07, 0x62, 0xa6, 0x12, 0xf2, 0x4b, 0x56, 0x92, 0xcb, 0xba, 0x8f, 0x63, 0x36, 0x06, 0xd9] => {
-            ("Realm Monitor Management Firmware", false)
-        }
-        [0x58, 0x07, 0xe1, 0x6a, 0x84, 0x59, 0x47, 0xbe, 0x8e, 0xd5, 0x64, 0x8e, 0x8d, 0xdd, 0xab, 0x0e] => {
-            ("FW_CONFIG", true)
-        }
-        [0x08, 0xb8, 0xf1, 0xd9, 0xc9, 0xcf, 0x93, 0x49, 0xa9, 0x62, 0x6f, 0xbc, 0x6b, 0x72, 0x65, 0xcc] => {
-            ("HW_CONFIG", true)
-        }
-        [0x6c, 0x04, 0x58, 0xff, 0xaf, 0x6b, 0x7d, 0x4f, 0x82, 0xed, 0xaa, 0x27, 0xbc, 0x69, 0xbf, 0xd2] => {
-            ("TB_FW_CONFIG", true)
-        }
-        [0x99, 0x79, 0x81, 0x4b, 0x03, 0x76, 0xfb, 0x46, 0x8c, 0x8e, 0x8d, 0x26, 0x7f, 0x78, 0x59, 0xe0] => {
-            ("SOC_FW_CONFIG", true)
-        }
-        [0x26, 0x25, 0x7c, 0x1a, 0xdb, 0xc6, 0x7f, 0x47, 0x8d, 0x96, 0xc4, 0xc4, 0xb0, 0x24, 0x80, 0x21] => {
-            ("TOS_FW_CONFIG", true)
-        }
-        [0x28, 0xda, 0x98, 0x15, 0x93, 0xe8, 0x7e, 0x44, 0xac, 0x66, 0x1a, 0xaf, 0x80, 0x15, 0x50, 0xf9] => {
-            ("NT_FW_CONFIG", true)
-        }
-        [0x86, 0x2d, 0x1d, 0x72, 0xf8, 0x60, 0xe4, 0x11, 0x92, 0x0b, 0x8b, 0xe7, 0x62, 0x16, 0x0f, 0x24] => {
-            ("Root Of Trust key certificate", true)
-        }
-        [0x82, 0x7e, 0xe8, 0x90, 0xf8, 0x60, 0xe4, 0x11, 0xa1, 0xb4, 0x77, 0x7a, 0x21, 0xb4, 0xf9, 0x4c] => {
-            ("Trusted key certificate", true)
-        }
-        [0x02, 0x42, 0x21, 0xa1, 0xf8, 0x60, 0xe4, 0x11, 0x8d, 0x9b, 0xf3, 0x3c, 0x0e, 0x15, 0xa0, 0x14] => {
-            ("SCP Firmware key certificate", true)
-        }
-        [0x8a, 0xb8, 0xbe, 0xcc, 0xf9, 0x60, 0xe4, 0x11, 0x9a, 0xd0, 0xeb, 0x48, 0x22, 0xd8, 0xdc, 0xf8] => {
-            ("SoC Firmware key certificate", true)
-        }
-        [0x94, 0x77, 0xd6, 0x03, 0xfb, 0x60, 0xe4, 0x11, 0x85, 0xdd, 0xb7, 0x10, 0x5b, 0x8c, 0xee, 0x04] => {
-            ("Trusted OS Firmware key certificate", true)
-        }
-        [0x8a, 0xd5, 0x83, 0x2a, 0xfb, 0x60, 0xe4, 0x11, 0x8a, 0xaf, 0xdf, 0x30, 0xbb, 0xc4, 0x98, 0x59] => {
-            ("Non-Trusted Firmware key certificate", true)
-        }
-        [0xd6, 0xe2, 0x69, 0xea, 0x5d, 0x63, 0xe4, 0x11, 0x8d, 0x8c, 0x9f, 0xba, 0xbe, 0x99, 0x56, 0xa5] => {
-            ("Trusted Boot Firmware BL2 certificate", true)
-        }
-        [0x44, 0xbe, 0x6f, 0x04, 0x5e, 0x63, 0xe4, 0x11, 0xb2, 0x8b, 0x73, 0xd8, 0xea, 0xae, 0x96, 0x56] => {
-            ("SCP Firmware content certificate", true)
-        }
-        [0xe2, 0xb2, 0x0c, 0x20, 0x5e, 0x63, 0xe4, 0x11, 0x9c, 0xe8, 0xab, 0xcc, 0xf9, 0x2b, 0xb6, 0x66] => {
-            ("SoC Firmware content certificate", true)
-        }
-        [0xa4, 0x9f, 0x44, 0x11, 0x5e, 0x63, 0xe4, 0x11, 0x87, 0x28, 0x3f, 0x05, 0x72, 0x2a, 0xf3, 0x3d] => {
-            ("Trusted OS Firmware content certificate", true)
-        }
-        [0x8e, 0xc4, 0xc1, 0xf3, 0x5d, 0x63, 0xe4, 0x11, 0xa7, 0xa9, 0x87, 0xee, 0x40, 0xb2, 0x3f, 0xa7] => {
-            ("Non-Trusted Firmware content certificate", true)
-        }
-        [0x77, 0x6d, 0xfd, 0x44, 0x86, 0x97, 0x4c, 0x3b, 0x91, 0xeb, 0xc1, 0x3e, 0x02, 0x5a, 0x2a, 0x6f] => {
-            ("SiP owned Secure Partition content certificate", true)
-        }
-        [0xdd, 0xcb, 0xbf, 0x4a, 0xca, 0xd6, 0x11, 0xea, 0x87, 0xd0, 0x02, 0x42, 0xac, 0x13, 0x00, 0x03] => {
-            ("Platform owned Secure Partition content certificate", true)
-        }
-        [0x36, 0xd8, 0x3d, 0x85, 0x76, 0x1d, 0x4d, 0xaf, 0x96, 0xf1, 0xcd, 0x99, 0xd6, 0x56, 0x9b, 0x00] => {
-            ("CCA Content Certificate", true)
-        }
-        [0x52, 0x22, 0x2d, 0x31, 0x82, 0x0f, 0x49, 0x4d, 0x8b, 0xbc, 0xea, 0x68, 0x25, 0xd3, 0xc3, 0x5a] => {
-            ("Core Secure World Key Certificate", true)
-        }
-        [0xd4, 0x3c, 0xd9, 0x02, 0x5b, 0x9f, 0x41, 0x2e, 0x8a, 0xc6, 0x92, 0xb6, 0xd1, 0x8b, 0xe6, 0x0d] => {
-            ("Platform Key Certificate", true)
-        }
-        _ => {
-            return (
-                format!(
-                    "UUID {}",
-                    uuid.iter().map(|b| format!("{b:02x}")).collect::<String>()
-                ),
-                false,
-            )
-        }
-    };
-    (known.0.into(), known.1)
-}
-pub(super) fn parse(d: &[u8]) -> Result<Container<'_>> {
-    if r32(d, 0, true)? != 0xaa640001 {
-        return Err(err("Invalid FIP magic"));
+use std::collections::BTreeSet;
+
+pub(super) const MAGIC: u32 = 0xaa64_0001;
+const HEADER_SIZE: usize = 16;
+const TOC_ENTRY_SIZE: usize = 40;
+
+/// Known component UUIDs in stored byte order. `true` marks certificates and
+/// configuration data, which are never analyzed as code.
+#[rustfmt::skip]
+const COMPONENTS: &[(&str, bool, &str)] = &[
+    ("659227032f74e6448dff579ac1ff0610", true,  "SCP Firmware Updater Configuration FWU SCP_BL2U"),
+    ("60b3eb37c1e5ea419df319eda11f6801", true,  "AP Firmware Updater Configuration BL2U"),
+    ("4f511d112be54e49b4c583c2f715840a", false, "Firmware Updater NS_BL2U"),
+    ("71408ab218d6874c8b2ec6dccd50f096", true,  "Non-Trusted Firmware Updater certificate"),
+    ("5ff9ec0b4d223e4da544c39d81c73f0a", false, "Trusted Boot Firmware BL2"),
+    ("9766fd3d89bee849ae5d78a140608213", false, "SCP Firmware SCP_BL2"),
+    ("47d4086d4cfe98469b952950cbbd5a00", false, "BL31"),
+    ("05d0e18953dc13478d2b500a4b7a3e38", false, "BL32"),
+    ("0b70c29b2a5a78409f650a5682738288", false, "Secure Payload BL32 Extra1 (Trusted OS Extra1)"),
+    ("8ea87bb1cfa23f4d85fde7bba50220d9", false, "Secure Payload BL32 Extra2 (Trusted OS Extra2)"),
+    ("d6d0eea7fcead54b97829934f234b6e4", false, "BL33"),
+    ("6c0762a612f24b5692cbba8f633606d9", false, "Realm Monitor Management Firmware"),
+    ("5807e16a845947be8ed5648e8dddab0e", true,  "FW_CONFIG"),
+    ("08b8f1d9c9cf9349a9626fbc6b7265cc", true,  "HW_CONFIG"),
+    ("6c0458ffaf6b7d4f82edaa27bc69bfd2", true,  "TB_FW_CONFIG"),
+    ("9979814b0376fb468c8e8d267f7859e0", true,  "SOC_FW_CONFIG"),
+    ("26257c1adbc67f478d96c4c4b0248021", true,  "TOS_FW_CONFIG"),
+    ("28da981593e87e44ac661aaf801550f9", true,  "NT_FW_CONFIG"),
+    ("862d1d72f860e411920b8be762160f24", true,  "Root Of Trust key certificate"),
+    ("827ee890f860e411a1b4777a21b4f94c", true,  "Trusted key certificate"),
+    ("024221a1f860e4118d9bf33c0e15a014", true,  "SCP Firmware key certificate"),
+    ("8ab8beccf960e4119ad0eb4822d8dcf8", true,  "SoC Firmware key certificate"),
+    ("9477d603fb60e41185ddb7105b8cee04", true,  "Trusted OS Firmware key certificate"),
+    ("8ad5832afb60e4118aafdf30bbc49859", true,  "Non-Trusted Firmware key certificate"),
+    ("d6e269ea5d63e4118d8c9fbabe9956a5", true,  "Trusted Boot Firmware BL2 certificate"),
+    ("44be6f045e63e411b28b73d8eaae9656", true,  "SCP Firmware content certificate"),
+    ("e2b20c205e63e4119ce8abccf92bb666", true,  "SoC Firmware content certificate"),
+    ("a49f44115e63e41187283f05722af33d", true,  "Trusted OS Firmware content certificate"),
+    ("8ec4c1f35d63e411a7a987ee40b23fa7", true,  "Non-Trusted Firmware content certificate"),
+    ("776dfd4486974c3b91ebc13e025a2a6f", true,  "SiP owned Secure Partition content certificate"),
+    ("ddcbbf4acad611ea87d00242ac130003", true,  "Platform owned Secure Partition content certificate"),
+    ("36d83d85761d4daf96f1cd99d6569b00", true,  "CCA Content Certificate"),
+    ("52222d31820f494d8bbcea6825d3c35a", true,  "Core Secure World Key Certificate"),
+    ("d43cd9025b9f412e8ac692b6d18be60d", true,  "Platform Key Certificate"),
+];
+
+/// The component's name, and whether it is data rather than an image.
+fn identify(uuid: &[u8; 16]) -> (String, bool) {
+    let hex: String = uuid.iter().map(|b| format!("{b:02x}")).collect();
+    match COMPONENTS.iter().find(|(known, _, _)| *known == hex) {
+        Some(&(_, opaque, name)) => (name.into(), opaque),
+        None => (format!("UUID {hex}"), false),
     }
-    bytes(d, 0, 16)?;
-    let mut c = Container::new(Variant::Fip);
-    let mut pos = 16;
-    let mut records = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
-    let advertised;
-    loop {
-        let record = bytes(d, pos, 40)?;
-        let uuid: [u8; 16] = record[..16].try_into().unwrap();
-        let offset = usize::try_from(u64le(record, 16)?).map_err(|_| err("FIP offset overflow"))?;
-        let size = usize::try_from(u64le(record, 24)?).map_err(|_| err("FIP size overflow"))?;
-        let flags = u64le(record, 32)?;
-        pos += 40;
+}
+
+/// Header: magic, serial number, flags. TOC entries are (UUID, offset, size,
+/// flags) with 64-bit fields; an all-zero UUID ends the TOC, and its offset
+/// is the package size.
+pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
+    if le_u32(data, 0)? != MAGIC {
+        return Err(error("Invalid FIP magic"));
+    }
+    ensure(data, 0, HEADER_SIZE)?;
+    let mut pos = HEADER_SIZE;
+    let mut entries = Vec::new();
+    let mut seen = BTreeSet::new();
+    let package_size = loop {
+        let entry = slice(data, pos, TOC_ENTRY_SIZE)?;
+        let uuid: [u8; 16] = array(entry, 0)?;
+        let offset =
+            usize::try_from(le_u64(entry, 16)?).map_err(|_| error("FIP offset overflow"))?;
+        let size = usize::try_from(le_u64(entry, 24)?).map_err(|_| error("FIP size overflow"))?;
+        let flags = le_u64(entry, 32)?;
+        pos += TOC_ENTRY_SIZE;
         if uuid == [0; 16] {
             if size != 0 || flags != 0 {
-                return Err(err("Invalid FIP terminator"));
+                return Err(error("Invalid FIP terminator"));
             }
-            advertised = offset;
-            break;
+            break offset;
         }
         if size == 0 || !seen.insert(uuid) {
-            return Err(err("Empty or duplicate FIP entry"));
+            return Err(error("Empty or duplicate FIP entry"));
         }
-        bytes(d, offset, size)?;
-        records.push((uuid, offset, size, flags));
+        ensure(data, offset, size)?;
+        entries.push((uuid, offset, size, flags));
+    };
+    if entries.is_empty() || package_size < pos || package_size > data.len() {
+        return Err(error("Invalid FIP total size"));
     }
-    if records.is_empty() || advertised < pos || advertised > d.len() {
-        return Err(err("Invalid FIP total size"));
-    }
-    let mut ranges: Vec<_> = records
+    let mut ranges: Vec<_> = entries
         .iter()
-        .map(|(_, off, n, _)| (*off, *off + *n))
+        .map(|&(_, offset, size, _)| (offset, offset + size))
         .collect();
     ranges.sort_unstable();
-    if ranges.iter().any(|(a, b)| *a < pos || *b > advertised)
-        || ranges.windows(2).any(|w| w[0].1 > w[1].0)
-    {
-        return Err(err("Overlapping FIP entries or TOC"));
+    let outside = |&(start, end): &(usize, usize)| start < pos || end > package_size;
+    if ranges.iter().any(outside) || ranges.windows(2).any(|w| w[0].1 > w[1].0) {
+        return Err(error("Overlapping FIP entries or TOC"));
     }
-    tail(d, advertised)?;
-    c.consumed = advertised;
+    expect_padding(data, package_size)?;
+    let mut c = Container::new(Variant::Fip);
+    c.consumed = package_size;
     c.notes.push(format!(
         "FIP serial {}; header flags 0x{:X}; little-endian 64-bit entry offsets and sizes",
-        r32(d, 4, true)?,
-        u64le(d, 8)?
+        le_u32(data, 4)?,
+        le_u64(data, 8)?
     ));
-    for (uuid, offset, size, flags) in records {
-        let (label, opaque) = identity(&uuid);
-        c.notes.push(format!(
-            "{label}: flags 0x{flags:X}; {}",
-            if opaque {
-                "certificate/configuration data"
-            } else {
-                "architecture is not encoded by the UUID"
-            }
-        ));
+    for (uuid, offset, size, flags) in entries {
+        let (label, opaque) = identify(&uuid);
+        let role = if opaque {
+            "certificate/configuration data"
+        } else {
+            "architecture is not encoded by the UUID"
+        };
+        c.notes.push(format!("{label}: flags 0x{flags:X}; {role}"));
         c.children.push(Child {
             label,
             offset,
-            data: bytes(d, offset, size)?,
+            data: slice(data, offset, size)?,
             opaque,
             isa_hint: None,
         });

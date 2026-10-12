@@ -1,0 +1,169 @@
+# Format coverage gaps
+
+This register lists containers, encodings and transforms that Zrax does not
+handle, plus defects in existing kernel-image support. It records missing
+coverage, not committed work. Absence was checked against the source as of
+2026-10-12 (`dcc295a`). Section 1 was also reproduced with the release CLI on
+synthetic headers. Magic values and offsets in sections 2-8 come from public
+specifications and have not been tested against fixtures in this repository.
+Entries marked *layout not established here* need a sample or primary source
+before any parser is written.
+
+Impact reflects how much existing coverage a fix unlocks, not format popularity.
+
+## 1. Defects in existing kernel and boot-image support
+
+| Impact | Input | Current result | Location | Expected |
+| --- | --- | --- | --- | --- |
+| High | U-Boot uImage, any architecture | Reports `big` endianness for every image; an ARM/Linux uImage yields `arm 32 big 100%` | `src/formats/kernel.rs:427` | Header byte order (always big-endian) is kept separate from code byte order, as TI COFF already does; code order comes from the arch ID or the payload |
+| High | x86-64 bzImage (`xloadflags` bit 0 `XLF_KERNEL_64` at `0x236`, protocol >= 2.12) | Always `x86 32 little 100%` | `src/formats/kernel.rs:327` | x86-64 when `XLF_KERNEL_64` is set |
+| High | ARM32 zImage (`0x016F2818` at `0x24`, start/end at `0x28`/`0x2C`, endianness marker `0x04030201` at `0x30`) | No detector; falls through to raw heuristics, which a header-only probe left inconclusive | `src/formats/kernel.rs:155` | Recognized as a Linux ARM zImage with byte order from the marker |
+| High | U-Boot FIT | FDT magic always returns `Dtb` with unknown ISA; `KernelFormat::Fit` is never constructed. The README lists FIT as covered | `src/formats/kernel.rs:173` | `/images` subnodes read for `arch`, `type`, `compression` and `data` or `data-offset`/`data-size`; each image becomes a slice |
+| High | Compressed kernel payloads | uImage compression is a note only (`kernel.rs:414`); bFLT `GZIP` is a flag name only (`bflt.rs:86`); bzImage payloads are not inflated; kernel formats take the non-recursive `parse_detected` path | `src/lib.rs:468` | Payload decoded (section 2) and classified recursively, so extension detection, multi-ISA scans and header/code cross-checks run on kernel code |
+
+Reproduction: `zrax --format short` on a 64-byte ARM uImage header, a 1 KiB
+bzImage setup header with protocol 2.15 and `XLF_KERNEL_64`, and a 512-byte
+buffer with the ARM zImage header fields. FIT behavior is from source inspection.
+
+## 2. Decompression layer
+
+No codec is applied to stored bytes. Every container below whose payload is
+compressed stops at the compressed bytes, so the raw-code model scores
+near-random data.
+
+| Impact | Codec | Identification | Typical locations | Candidate pure-Rust crate (not evaluated) |
+| --- | --- | --- | --- | --- |
+| High | gzip / zlib / raw DEFLATE | `1F 8B`; zlib `78 01`/`78 9C`/`78 DA`; raw DEFLATE has no magic | uImage, bzImage, bFLT, initramfs, Android boot, Wii U RPX sections | `miniz_oxide`, already an optional dependency under the `wasm` feature only |
+| High | xz / LZMA | `FD 37 7A 58 5A 00`; LZMA-alone properties byte (commonly `5D`) and 64-bit size | Router kernels, SquashFS, CBFS stages | `lzma-rs` |
+| High | LZ4 | Frame `04 22 4D 18`; Linux legacy `02 21 4C 18` | Android kernels, initramfs, SquashFS | `lz4_flex` |
+| Medium | Zstandard | `28 B5 2F FD` | Kernels, SquashFS, FIT images | `ruzstd` |
+| Medium | bzip2 | `BZh` + block-size digit | uImage, older kernels | None selected |
+| Medium | LZO (lzop) | `89 4C 5A 4F 00 0D 0A 1A 0A` | uImage, UBIFS, SquashFS | None selected |
+| Medium | Apple LZFSE / LZVN / LZSS | `bvx2`, `bvx1`, `bvxn`, `bvx-`; LZSS `complzss` | IMG4 payloads, kernelcaches | `lzfse_rust` for LZFSE |
+
+Constraints for any implementation:
+
+- Apply the existing per-extraction limit (`MAX_PAYLOAD`, 64 MiB,
+  `src/formats/ti.rs:17`) and the six-level nesting limit (`src/lib.rs:258`).
+  Decoders must stop at the output cap rather than allocate the declared size.
+- Keep stored and decoded coordinates separate, following D10: hex and entropy
+  views refer to stored bytes, classification refers to decoded bytes, and
+  metadata records the codec and stored offsets.
+- Raw DEFLATE and LZMA-alone have weak or no magic. Try them only where a
+  container field names the codec.
+
+## 3. Filesystem and archive images
+
+Embedded Linux firmware usually places executables inside one of these images.
+The intended scope is the same as `ar` member handling (`src/lib.rs:331`):
+enumerate members, classify recognized executables, and bound the member count.
+This is not a general extractor. Most of these depend on section 2.
+
+| Impact | Format | Identification | Notes |
+| --- | --- | --- | --- |
+| High | SquashFS | `hsqs` (little-endian) / `sqsh` (big-endian); compressor ID at superblock offset 20 | Compressor IDs 1-6: gzip, LZMA, LZO, xz, LZ4, zstd |
+| High | CPIO | ASCII `070701` (newc), `070702` (CRC), `070707` (odc) | initramfs; usually compressed |
+| High | ZIP | `PK 03 04` local headers, central directory at end | Also unlocks APK, JAR, IPA, Nordic DFU packages and ODX PDX (sections 4 and 6) |
+| Medium | tar | `ustar` at offset 257 | |
+| Medium | UBI / UBIFS | UBI erase-counter `UBI#`, volume header `UBI!`; UBIFS node `0x06101831` | Raw NAND dumps also need OOB removal (section 7) |
+| Medium | JFFS2 | Node magic `0x1985` | |
+| Low | CramFS | `0x28CD3D45` | |
+| Low | romfs | `-rom1fs-` | |
+| Low | ext2/3/4 | `0xEF53` at `0x438` | |
+
+## 4. Containers with ISA-bearing or slice-bearing headers
+
+| Impact | Format | Identification | Architecture evidence | Notes |
+| --- | --- | --- | --- | --- |
+| High | UF2 | 512-byte blocks: `0x0A324655` at 0, `0x9E5D5157` at 4, `0x0AB16F30` at 508; flag `0x2000` puts a family ID at offset 28 | Family ID maps to an MCU family (RP2040/RP2350, SAMD21/51, nRF52, ESP32-Sx, STM32 lines) | Payload is a sparse address map; reassemble by `targetAddr` before scoring |
+| High | UEFI firmware volumes | `_FVH` at FV offset `0x28`; FFS files and sections inside | PE32 and TE sections carry machine fields | Sections can be compressed or GUID-defined (section 2) |
+| High | UEFI TE images | `VZ` signature, machine `u16` at offset 2 | Direct machine field | Stripped PE header |
+| Medium | Intel flash descriptor | `0x0FF0A55A` (offset `0x10` on current platforms) | None directly; region map locates BIOS and ME regions | ME/CSME and AMD PSP regions use separate layouts, not established here |
+| Medium | Chromium FMAP | `__FMAP__` | None directly; named areas such as `EC_RO`/`EC_RW` | The Pixel EC research notes rule FMAP out for those files, but it is common in Chromebook AP and EC images |
+| Medium | coreboot CBFS | Master header `ORBC`; file headers `LARCHIVE` | Stage and payload attributes | Stages are often LZMA or LZ4 |
+| High | Android boot / vendor_boot | `ANDROID!` (header v0-v4); `VNDRBOOT` | uImage-style; kernel and ramdisk are slices | Kernel often gzip or LZ4 |
+| Medium | Android sparse image | `0xED26FF3A` | None | Expands to a partition image; needs section 3 to be useful |
+| Medium | Android OTA payload | `CrAU` | None | Protobuf manifest; operations may be bsdiff/puffdiff against a source image |
+| Medium | Pixel bootloader packs | `BOOTLDR!` on earlier devices; `FBPK` reported for Tensor-era devices | Per-image names | *Layout not established here*; relevant to the Pixel EC investigation |
+| High | Apple IMG4 / IM4P | DER sequence with IA5String `IM4P`, a 4CC type (`krnl`, `ibot`, ...) and an OCTET STRING payload | Type identifies the component; payload is usually Mach-O or raw Arm | Payloads often LZSS or LZFSE (section 2); encrypted payloads carry a `KBAG` and remain opaque |
+| Medium | dyld shared cache | `dyld_v1` followed by a space-padded architecture name in a 16-byte field | Architecture string in the magic | Contains many Mach-O images |
+| High | Xilinx Zynq / ZynqMP `BOOT.BIN` | Width word `0xAA995566` at `0x20`, `XNLX` at `0x24` | ZynqMP partition headers name the destination CPU: A53, R5 or PMU (MicroBlaze) | Natural multi-slice container like D10; bitstream partitions belong in section 8 |
+| Medium | NXP i.MX IVT / HAB | IVT tag `0xD1`, length `0x0020` | Entry and load addresses only; SoC family implies Arm | |
+| Medium | NXP SB2 / SB3 | *Layout not established here* | | LPC and i.MX RT secure binaries; often encrypted |
+| Medium | Allwinner eGON | `eGON.BT0` at offset 4 after a branch instruction | Arm or RISC-V depending on SoC | Checksum and length fields follow the magic |
+| Low | Rockchip images | `RKFW` update images containing `RKAF` | Per-partition names | idbloader headers are scrambled; *layout not established here* |
+| Low | MediaTek preloader, legacy Qualcomm MBN | *Layout not established here* | | Modern Qualcomm images are ELF and already parsed |
+| Medium | STM32 DfuSe `.dfu` | `DfuSe` prefix, `Target` records, 16-byte DFU suffix with `UFD` signature and CRC32 | Vendor/product IDs in the suffix | Element addresses and sizes per target |
+| Medium | Silicon Labs GBL | Header tag `0x03A617EB` (per vendor documentation, not verified here) | EFR32 parts are Cortex-M | Tag-based; program data may be encrypted |
+| Low | Cypress/Infineon `.cyacd` / `.cyacd2` | Text; header row with silicon ID and revision; `.cyacd2` has `@APPINFO` | Silicon ID maps to a device | |
+| Medium | Router wrappers | Broadcom TRX `HDR0` with partition offsets; Netgear CHK, D-Link SEAMA and TP-Link headers | None; headers give partition offsets only | Payloads are usually an LZMA kernel and SquashFS, so sections 2 and 3 come first |
+
+## 5. Console and retro ROMs
+
+These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
+also identify code slices for model classes Zrax already has, so they double as
+labelled training data.
+
+| Impact | Platform | Identification | CPU / model class | Notes |
+| --- | --- | --- | --- | --- |
+| High | Nintendo DS | ARM9 offset/entry/load/size at `0x20`-`0x2C`; ARM7 at `0x30`-`0x3C` | `arm`/`thumb` (ARMv5TE and ARMv4T) | Two slices, matching the D10 slice shape |
+| Medium | Game Boy Advance | Logo at `0x04`, `0x96` at `0xB2`, complement check at `0xBD` | `arm`/`thumb` | |
+| Medium | Game Boy / Color | Logo at `0x104`, header checksum at `0x14D` | `sm83` | |
+| Medium | NES (iNES / NES 2.0) | `NES 1A` | `mos6502` (2A03 without decimal mode) | PRG and CHR banks; CHR is graphics, not code |
+| Medium | Sega Genesis / Mega Drive | `SEGA` at `0x100` | `m68k`, plus a `z80` sound program | |
+| High | Nintendo 64 | First word `0x80371240` (`.z64`), `0x37804012` (`.v64`), `0x40123780` (`.n64`) | `mips` (R4300i, big-endian) | Three byte orders of one image; exercises byte-order handling |
+| Medium | PlayStation PS-X EXE | `PS-X EXE` at 0; `pc0` at `0x10`, `t_addr` at `0x18`, `t_size` at `0x1C`; 2048-byte header | `mipsel` | |
+| Low | Dreamcast | `IP.BIN` begins `SEGA SEGAKATANA` | `sh` | `1ST_READ.BIN` is often scrambled |
+| Low | Wii U RPX / RPL | ELF with `EI_OSABI` `0xCA`, `EI_ABIVERSION` `0xFE` | `ppc` from `e_machine` (already detected) | Sections flagged `0x08000000` are zlib-compressed (section 2) |
+| Low | Nintendo 3DS NCCH / ExeFS | `NCCH` at `0x100` | `arm` | Usually encrypted; code may be compressed |
+| Low | PSP PBP | `00 50 42 50` (`\0PBP`) | `mipsel` (Allegrex) | Embedded `~PSP` executables are usually encrypted |
+
+The SNES CPU (65816) has no model class; `m7700` is the nearest.
+
+## 6. Automotive
+
+These would extend the VBF, SGO, FRF, SOX, EPR, OLS and BCF support.
+
+| Impact | Format | Identification | Notes |
+| --- | --- | --- | --- |
+| High | ASAM ODX-F / PDX | PDX is a ZIP with `index.xml`; ODX-F `FLASHDATA` elements declare `DATAFORMAT` (Intel HEX, Motorola S, binary or user-defined), inline or external data, and segments with start addresses | Vendor-neutral; needs ZIP (section 3). Inline hex data can go to the existing hex parsers |
+| Medium | Honda RWD | Documented by the open-source `rwd-xray` tool | Often gzip-wrapped |
+| Low | Toyota CUW | *Layout not established here* | Needs samples |
+| Low | Mercedes SMR-F / CFF | *Layout not established here* | Needs samples |
+
+## 7. Transforms on raw dumps
+
+These are encodings, not containers. Each breaks the adjacent-byte pairs the
+first-order model scores, so correctly dumped code reads as non-code.
+
+| Impact | Transform | Origin |
+| --- | --- | --- |
+| High | Even/odd byte de-interleave (two files or one interleaved file) | Two 8-bit EPROMs on a 16-bit bus; four-way for 32-bit buses. Common in automotive and arcade dumps |
+| Medium | 16-bit and 32-bit byte swaps | Programmer or reader byte-order conventions |
+| Medium | NAND OOB/ECC removal | Raw NAND reads with spare area per page, e.g. 2048+64 or 4096+224 bytes |
+
+A transform search would run only after raw classification is inconclusive,
+record the chosen transform in metadata, and keep stored offsets for the hex
+and entropy views. Trying `k` transforms adds `k` chances of a false accept;
+a union bound suggests raising the 16-bit total-evidence threshold by at least
+`log2(k)` bits.
+
+## 8. Non-code recognizers
+
+FPGA bitstreams should be recognized and excluded from ISA scoring, as D10 does
+for its FPGA component ([D10 support](d10-container.md)). They currently reach
+the raw-code model.
+
+| Impact | Format | Identification |
+| --- | --- | --- |
+| Medium | Xilinx `.bit` | Tag-length header (design name, part, date, time, length) followed by sync word `0xAA995566` |
+| Low | Lattice iCE40 | Sync `7E AA 99 7E` |
+| Low | Intel `.rbf` / `.sof` | `.rbf` has no magic, so recognition would be weak; `.sof` *layout not established here* |
+
+## Suggested order
+
+1. Section 1 defects together with gzip, xz/LZMA, LZ4 and zstd from section 2.
+   These make the existing uImage, zImage, FIT and bFLT support classify code.
+2. UF2: small, fixed layout, and the family ID is direct evidence.
+3. ZIP, CPIO and SquashFS member enumeration.
+4. Remaining entries according to available samples.

@@ -74,73 +74,130 @@ pub mod machine {
 
     /// Check if a machine type is valid/known.
     pub fn is_valid(machine: u16) -> bool {
-        super::ti_target(machine).is_some() || super::ti_target(machine.swap_bytes()).is_some() || matches!(
-            machine,
-            I386 | R3000
-                | R4000
-                | R10000
-                | WCEMIPSV2
-                | ALPHA
-                | SH3
-                | SH3DSP
-                | SH3E
-                | SH4
-                | SH5
-                | ARM
-                | THUMB
-                | ARMNT
-                | AM33
-                | POWERPC
-                | POWERPCFP
-                | IA64
-                | MIPS16
-                | ALPHA64
-                | MIPSFPU
-                | MIPSFPU16
-                | TRICORE
-                | EBC
-                | RISCV32
-                | RISCV64
-                | RISCV128
-                | LOONGARCH32
-                | LOONGARCH64
-                | AMD64
-                | M32R
-                | ARM64
-                | H8300_LEGACY
-                | I960_RO
-                | I960_RW
-                | I860
-                | H8300S_LEGACY
-                | TI_COFF1
-                | TI_COFF2
-                | TI_COFF1_BE
-                | ARM_THUMB_LEGACY
-                | M68K_LEGACY_BE
-                | ADSP_21XX_LEGACY
-                | MIPS_LEGACY_BE
-                | Z8_LEGACY
-                | TI_COFF2_BE
-        )
+        // TI COFF0 stores its target ID in f_magic, in either byte order.
+        super::ti_target(machine).is_some()
+            || super::ti_target(machine.swap_bytes()).is_some()
+            || matches!(
+                machine,
+                I386 | R3000
+                    | R4000
+                    | R10000
+                    | WCEMIPSV2
+                    | ALPHA
+                    | SH3
+                    | SH3DSP
+                    | SH3E
+                    | SH4
+                    | SH5
+                    | ARM
+                    | THUMB
+                    | ARMNT
+                    | AM33
+                    | POWERPC
+                    | POWERPCFP
+                    | IA64
+                    | MIPS16
+                    | ALPHA64
+                    | MIPSFPU
+                    | MIPSFPU16
+                    | TRICORE
+                    | EBC
+                    | RISCV32
+                    | RISCV64
+                    | RISCV128
+                    | LOONGARCH32
+                    | LOONGARCH64
+                    | AMD64
+                    | M32R
+                    | ARM64
+                    | H8300_LEGACY
+                    | I960_RO
+                    | I960_RW
+                    | I860
+                    | H8300S_LEGACY
+                    | TI_COFF1
+                    | TI_COFF2
+                    | TI_COFF1_BE
+                    | ARM_THUMB_LEGACY
+                    | M68K_LEGACY_BE
+                    | ADSP_21XX_LEGACY
+                    | MIPS_LEGACY_BE
+                    | Z8_LEGACY
+                    | TI_COFF2_BE
+            )
     }
 }
 
-/// TI COFF0 stores the target in f_magic and omits f_target_id.
-/// COFF1/2 use 22-byte headers with a separate target ID. Header byte order
-/// belongs to the producing host and is independent of target byte order.
-fn ti_info(data: &[u8], machine: u16) -> Option<(bool, u8, u16)> {
-    let (be, version) = match machine {
-        machine::TI_COFF1 => (false, 1), machine::TI_COFF2 => (false, 2),
-        machine::TI_COFF1_BE => (true, 1), machine::TI_COFF2_BE => (true, 2),
-        _ if ti_target(machine).is_some() => return Some((false, 0, machine)),
-        _ if ti_target(machine.swap_bytes()).is_some() => return Some((true, 0, machine.swap_bytes())),
-        _ => return None,
-    };
-    Some((be, version, read_u16(data, 20, !be).ok()?))
+/// TI COFF file header flags.
+const TI_F_EXEC: u16 = 0x0002;
+const TI_F_LITTLE: u16 = 0x0100;
+const TI_F_BIG: u16 = 0x0200;
+const TI_F_BYTE_ORDER: u16 = TI_F_LITTLE | TI_F_BIG;
+
+/// A TI COFF header (SPRAAO8). COFF0 stores the target ID in `f_magic` and
+/// has no `f_target_id`; COFF1/2 use a 22-byte file header with a separate target
+/// ID. Header byte order belongs to the producing host and is independent of
+/// the target's byte order.
+#[derive(Clone, Copy)]
+struct TiHeader {
+    big_endian: bool,
+    version: u8,
+    target: u16,
 }
 
-fn ti_octets(target: u16) -> u64 {
-    match target { 0x0093 => 4, 0x0098 | 0x009D => 2, _ => 1 }
+impl TiHeader {
+    fn read(data: &[u8], machine: u16) -> Option<Self> {
+        let coff0 = |big_endian, target| {
+            Some(Self {
+                big_endian,
+                version: 0,
+                target,
+            })
+        };
+        let (big_endian, version) = match machine {
+            machine::TI_COFF1 => (false, 1),
+            machine::TI_COFF2 => (false, 2),
+            machine::TI_COFF1_BE => (true, 1),
+            machine::TI_COFF2_BE => (true, 2),
+            _ if ti_target(machine).is_some() => return coff0(false, machine),
+            _ if ti_target(machine.swap_bytes()).is_some() => {
+                return coff0(true, machine.swap_bytes())
+            }
+            _ => return None,
+        };
+        let target = read_u16(data, 20, !big_endian).ok()?;
+        Some(Self {
+            big_endian,
+            version,
+            target,
+        })
+    }
+
+    fn file_header_size(self) -> usize {
+        if self.version == 0 {
+            20
+        } else {
+            22
+        }
+    }
+
+    fn section_header_size(self) -> usize {
+        if self.version == 2 {
+            48
+        } else {
+            40
+        }
+    }
+
+    /// Bytes per target address unit. Section sizes count these units:
+    /// 32-bit words on C3x/C4x, 16-bit words on C54x/C28x, bytes elsewhere.
+    fn address_unit(self) -> u64 {
+        match self.target {
+            0x0093 => 4,
+            0x0098 | 0x009D => 2,
+            _ => 1,
+        }
+    }
 }
 
 /// COFF characteristics flags.
@@ -292,8 +349,12 @@ pub fn ti_target(target_id: u16) -> Option<(Isa, u8, &'static str)> {
 
 /// Header layout of a COFF flavour: (big-endian, file header size, section header size).
 fn layout(data: &[u8], machine: u16) -> (bool, usize, usize) {
-    if let Some((be, version, _)) = ti_info(data, machine) {
-        return (be, if version == 0 {20} else {22}, if version == 2 {48} else {40});
+    if let Some(ti) = TiHeader::read(data, machine) {
+        return (
+            ti.big_endian,
+            ti.file_header_size(),
+            ti.section_header_size(),
+        );
     }
     match machine {
         // Big-endian legacy COFF whose magic reads byte-swapped as little-endian.
@@ -350,6 +411,7 @@ fn header_is_plausible(data: &[u8], machine: u16) -> bool {
     if table + num_sections * section_size > data.len() {
         return false;
     }
+    let size_unit = TiHeader::read(data, machine).map_or(1, TiHeader::address_unit);
     (0..num_sections).all(|i| {
         let sh = table + i * section_size;
         let name = &data[sh..sh + 8];
@@ -358,7 +420,7 @@ fn header_is_plausible(data: &[u8], machine: u16) -> bool {
         // four bytes zero) instead of an inline name.
         let named = name_len > 0 && name[..name_len].iter().all(u8::is_ascii_graphic);
         let offset_name = name[..4] == [0, 0, 0, 0];
-        let raw_size = u64::from(u32_at(sh + 16)) * ti_info(data, machine).map_or(1, |(_,_,target)|ti_octets(target));
+        let raw_size = u64::from(u32_at(sh + 16)) * size_unit;
         let raw_ptr = u64::from(u32_at(sh + 20));
         (named || offset_name) && (raw_ptr == 0 || raw_ptr + raw_size <= file_len)
     })
@@ -433,8 +495,8 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
 
     let machine = extract_machine(data).unwrap_or(read_u16(data, 0, true)?);
 
-    if let Some((be, version, target)) = ti_info(data, machine) {
-        return parse_ti(data, machine, be, version, target);
+    if let Some(ti) = TiHeader::read(data, machine) {
+        return parse_ti(data, machine, ti);
     }
 
     let (num_sections, num_symbols, characteristics) = if is_bigobj {
@@ -493,35 +555,66 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
     Ok(result)
 }
 
-fn parse_ti(data: &[u8], machine: u16, be: bool, version: u8, target: u16) -> Result<ClassificationResult> {
+/// TI COFF names its target in the header, so the ISA never comes from code.
+fn parse_ti(data: &[u8], machine: u16, ti: TiHeader) -> Result<ClassificationResult> {
+    let invalid = |message: &str| ClassifierError::PeParseError {
+        message: message.into(),
+    };
     if !header_is_plausible(data, machine) {
-        return Err(ClassifierError::PeParseError { message: "Invalid TI COFF header, section table, or word-sized payload range".into() });
+        return Err(invalid(
+            "Invalid TI COFF header, section table, or word-sized payload range",
+        ));
     }
-    let le = !be;
+    let le = !ti.big_endian;
+    let target = ti.target;
     let flags = read_u16(data, 18, le)?;
-    let endian_flags = matches!(target, 0x0097 | 0x0099 | 0x00A0);
-    if endian_flags && flags & 0x0300 == 0x0300 {
-        return Err(ClassifierError::PeParseError { message: "TI COFF sets both F_LITTLE and F_BIG".into() });
+    // TMS470, C6000 and MSP430 state the code byte order in the flags.
+    let has_byte_order_flags = matches!(target, 0x0097 | 0x0099 | 0x00A0);
+    if has_byte_order_flags && flags & TI_F_BYTE_ORDER == TI_F_BYTE_ORDER {
+        return Err(invalid("TI COFF sets both F_LITTLE and F_BIG"));
     }
-    let (isa,bits,name) = ti_target(target).unwrap_or((Isa::Unknown(u32::from(target)),0,"Unknown TI target"));
-    let endian = if endian_flags && flags & 0x0200 != 0 { Endianness::Big }
-        else if flags & 0x0100 != 0 { Endianness::Little }
-        else if matches!(target,0x009C|0x00A1) { Endianness::Big }
-        else { Endianness::Little };
-    let mut r = ClassificationResult::from_format(isa,bits,endian,FileFormat::Coff);
-    if matches!(isa,Isa::Unknown(_)) {r.confidence=0.0;}
-    r.variant = Variant::new(name);
-    r.metadata.section_count = Some(read_u16(data,2,le)? as usize);
-    r.metadata.symbol_count = Some(read_u32(data,12,le)? as usize);
-    r.metadata.flags = Some(u32::from(flags));
-    r.metadata.raw_machine = Some(u32::from(target));
-    let h = if version == 0 {20} else {22};
-    let optional = read_u16(data,16,le)? as usize;
-    if optional >= 28 {r.metadata.entry_point = Some(u64::from(read_u32(data,h+16,le)?));}
-    r.metadata.notes.push(format!("TI COFF{version}; target 0x{target:04X}; {}-endian host headers; target byte order is independent",if be {"big"}else{"little"}));
-    r.metadata.notes.push(format!("Section sizes use {} B target address units",ti_octets(target)));
-    if flags & 0x0002 != 0 {r.metadata.notes.push("Executable image".into());}
-    Ok(r)
+    let (isa, bitwidth, name) =
+        ti_target(target).unwrap_or((Isa::Unknown(u32::from(target)), 0, "Unknown TI target"));
+    // C55x and C55x+ default to big-endian code.
+    let endianness = if has_byte_order_flags && flags & TI_F_BIG != 0 {
+        Endianness::Big
+    } else if flags & TI_F_LITTLE != 0 {
+        Endianness::Little
+    } else if matches!(target, 0x009C | 0x00A1) {
+        Endianness::Big
+    } else {
+        Endianness::Little
+    };
+
+    let mut result = ClassificationResult::from_format(isa, bitwidth, endianness, FileFormat::Coff);
+    if matches!(isa, Isa::Unknown(_)) {
+        result.confidence = 0.0;
+    }
+    result.variant = Variant::new(name);
+    let metadata = &mut result.metadata;
+    metadata.section_count = Some(read_u16(data, 2, le)? as usize);
+    metadata.symbol_count = Some(read_u32(data, 12, le)? as usize);
+    metadata.flags = Some(u32::from(flags));
+    metadata.raw_machine = Some(u32::from(target));
+    // The optional (a.out) header stores the entry point at offset 16.
+    let optional_size = read_u16(data, 16, le)? as usize;
+    if optional_size >= 28 {
+        let entry = read_u32(data, ti.file_header_size() + 16, le)?;
+        metadata.entry_point = Some(u64::from(entry));
+    }
+    metadata.notes.push(format!(
+        "TI COFF{}; target 0x{target:04X}; {}-endian host headers; target byte order is independent",
+        ti.version,
+        if ti.big_endian { "big" } else { "little" }
+    ));
+    metadata.notes.push(format!(
+        "Section sizes use {} B target address units",
+        ti.address_unit()
+    ));
+    if flags & TI_F_EXEC != 0 {
+        metadata.notes.push("Executable image".into());
+    }
+    Ok(result)
 }
 
 /// Get a human-readable description of a COFF machine type.

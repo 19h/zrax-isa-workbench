@@ -259,6 +259,8 @@ and Extended Tektronix are shared formats, not proof of a TI device.
 Recognition does not imply that an encrypted payload can be decrypted, that
 every revision is supported, or that every member of an archive is recursively
 classified. Parser results and notes retain those distinctions.
+[Format coverage gaps](docs/format-gaps.md) lists known kernel-image defects
+and unsupported codecs, containers and dump transforms.
 
 The shipped `ISAM` version-1 model contains **94 classes**: 90 code variants and
 four non-code classes (`neg_media`, `neg_rodata`, `neg_table`, `neg_text`). Code
