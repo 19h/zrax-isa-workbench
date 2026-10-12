@@ -19,6 +19,8 @@
 //! - Apple kernelcache LZSS: see [`lzss`].
 //! - Brotli: RFC 7932. It has no magic and is decoded only where a
 //!   container names it.
+//! - Raw LZ4 blocks: lz4 v1.10.0 `doc/lz4_Block_format.md` (see
+//!   [`lz4_block`]). No magic; decoded only where a container names it.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -32,6 +34,7 @@ use crate::types::FileFormat;
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
 
+mod lz4_block;
 mod lzo;
 mod lzss;
 mod xz;
@@ -114,6 +117,8 @@ pub enum Codec {
     Lzss,
     /// Brotli stream (RFC 7932); no magic.
     Brotli,
+    /// Raw LZ4 block stream without a frame; no magic.
+    Lz4Block,
 }
 
 impl Codec {
@@ -132,6 +137,7 @@ impl Codec {
         Self::Lzfse,
         Self::Lzss,
         Self::Brotli,
+        Self::Lz4Block,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -150,6 +156,7 @@ impl Codec {
             Self::Lzfse => "LZFSE",
             Self::Lzss => "Apple LZSS",
             Self::Brotli => "Brotli",
+            Self::Lz4Block => "LZ4 block",
         }
     }
 
@@ -166,8 +173,9 @@ impl Codec {
             Self::Lzop => FileFormat::Lzop,
             Self::Lzfse => FileFormat::Lzfse,
             Self::Lzss => FileFormat::Lzss,
-            // Brotli has no magic and is never recognized standalone.
-            Self::Brotli => FileFormat::Raw,
+            // Brotli and raw LZ4 blocks have no magic and are never
+            // recognized standalone.
+            Self::Brotli | Self::Lz4Block => FileFormat::Raw,
         }
     }
 
@@ -187,6 +195,7 @@ impl Codec {
             Self::Lzfse => "LZFSE stream",
             Self::Lzss => "Apple LZSS kernelcache",
             Self::Brotli => "Brotli stream",
+            Self::Lz4Block => "raw LZ4 block stream",
         }
     }
 
@@ -356,6 +365,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
                 check: None,
             })
         }
+        Codec::Lz4Block => lz4_block::decode(data, limit),
     }
 }
 

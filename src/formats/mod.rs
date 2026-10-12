@@ -51,6 +51,7 @@ pub mod kernel;
 pub mod llvm_bc;
 pub mod lod;
 pub mod macho;
+pub mod mcu;
 pub mod mz;
 pub mod ols;
 pub mod omf;
@@ -516,6 +517,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // MCU update images: UF2 block magics, the DfuSe signature or the GBL
+    // header tag at offset 0.
+    if let Some(layout) = mcu::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Mcu(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -676,6 +685,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = bitstream::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Bitstream(layout),
+        };
+    }
+
+    // Cypress .cyacd/.cyacd2 text has no magic: the header and every row
+    // must parse, and every .cyacd row checksum must match.
+    if let Some(layout) = mcu::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Mcu(layout),
         };
     }
 

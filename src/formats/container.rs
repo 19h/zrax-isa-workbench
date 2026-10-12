@@ -14,7 +14,7 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
-    automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, optionrom, zxtape,
+    automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, optionrom, zxtape,
     MAX_PAYLOAD,
 };
 use crate::types::{
@@ -62,6 +62,8 @@ pub enum Kind {
     ZxTape(zxtape::Layout),
     /// An FPGA configuration bitstream.
     Bitstream(bitstream::Layout),
+    /// An MCU update image (UF2, `DfuSe`, GBL, `.cyacd`).
+    Mcu(mcu::Layout),
 }
 
 impl Kind {
@@ -76,6 +78,7 @@ impl Kind {
             Self::Huawei(layout) => layout.format(),
             Self::ZxTape(layout) => layout.format(),
             Self::Bitstream(layout) => layout.format(),
+            Self::Mcu(layout) => layout.format(),
         }
     }
 
@@ -90,6 +93,7 @@ impl Kind {
             Self::Huawei(layout) => layout.label(),
             Self::ZxTape(layout) => layout.label(),
             Self::Bitstream(layout) => layout.label(),
+            Self::Mcu(layout) => layout.label(),
         }
     }
 
@@ -104,6 +108,7 @@ impl Kind {
             Self::Huawei(layout) => layout.is_weak(),
             Self::ZxTape(layout) => layout.is_weak(),
             Self::Bitstream(layout) => layout.is_weak(),
+            Self::Mcu(layout) => layout.is_weak(),
         }
     }
 }
@@ -123,6 +128,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Huawei(layout) => huawei::parse_container(data, layout),
         Kind::ZxTape(layout) => zxtape::parse_container(data, layout),
         Kind::Bitstream(layout) => bitstream::parse_container(data, layout),
+        Kind::Mcu(layout) => mcu::parse_container(data, layout),
     }
 }
 

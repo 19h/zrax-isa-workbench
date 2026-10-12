@@ -85,6 +85,7 @@ const FORMAT_NAMES = {
   blackfinldr: 'Blackfin LDR', pcioptionrom: 'Option ROM', huaweiupdate: 'Huawei UPDATE.APP',
   zxtape: 'ZX Spectrum Tape',
   xilinxbit: 'Xilinx bitstream', latticebitstream: 'Lattice bitstream', intelfpga: 'Intel FPGA configuration',
+  uf2: 'UF2', dfuse: 'STM32 DfuSe', gbl: 'Silicon Labs GBL', cyacd: 'Cypress CYACD',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

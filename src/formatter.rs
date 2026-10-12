@@ -695,6 +695,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::XilinxBit => "Xilinx bitstream",
         FileFormat::LatticeBitstream => "Lattice bitstream",
         FileFormat::IntelFpga => "Intel FPGA configuration",
+        FileFormat::Uf2 => "UF2",
+        FileFormat::Dfuse => "STM32 DfuSe",
+        FileFormat::Gbl => "Silicon Labs GBL",
+        FileFormat::Cyacd => "Cypress CYACD",
     }
 }
 

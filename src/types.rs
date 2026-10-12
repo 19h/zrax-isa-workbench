@@ -868,6 +868,15 @@ pub enum FileFormat {
     LatticeBitstream,
     /// Intel (Altera) FPGA configuration file (Cyclone V `.rbf`, `.pof`)
     IntelFpga,
+    // MCU update images
+    /// UF2 (USB Flashing Format) block file
+    Uf2,
+    /// STM32 `DfuSe` file (prefix, target images and DFU suffix)
+    Dfuse,
+    /// Silicon Labs Gecko Bootloader file (GBL v3)
+    Gbl,
+    /// Cypress/Infineon bootloader text file (`.cyacd`, `.cyacd2`)
+    Cyacd,
 }
 
 impl fmt::Display for FileFormat {
@@ -998,6 +1007,11 @@ impl fmt::Display for FileFormat {
             FileFormat::XilinxBit => write!(f, "Xilinx bitstream"),
             FileFormat::LatticeBitstream => write!(f, "Lattice bitstream"),
             FileFormat::IntelFpga => write!(f, "Intel FPGA configuration"),
+            // MCU update images
+            FileFormat::Uf2 => write!(f, "UF2"),
+            FileFormat::Dfuse => write!(f, "STM32 DfuSe"),
+            FileFormat::Gbl => write!(f, "Silicon Labs GBL"),
+            FileFormat::Cyacd => write!(f, "Cypress CYACD"),
         }
     }
 }

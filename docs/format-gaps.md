@@ -82,6 +82,12 @@ This is not a general extractor. Most of these depend on section 2.
 
 ## 4. Containers with ISA-bearing or slice-bearing headers
 
+Status 2026-10-12: implemented so far are UF2 (family ID mapped to ISA,
+reassembly by `targetAddr`, one child per family), STM32 DfuSe (suffix CRC-32
+verified), Silicon Labs GBL (CRC-32 verified; encryption opaque, signatures
+not verified) and Cypress `.cyacd`/`.cyacd2` (weak); see
+[MCU update images](mcu.md). Other rows are updated as their families land.
+
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |
 | High | UF2 | 512-byte blocks: `0x0A324655` at 0, `0x9E5D5157` at 4, `0x0AB16F30` at 508; flag `0x2000` puts a family ID at offset 28 | Family ID maps to an MCU family (RP2040/RP2350, SAMD21/51, nRF52, ESP32-Sx, STM32 lines) | Payload is a sparse address map; reassemble by `targetAddr` before scoring |

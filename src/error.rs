@@ -62,6 +62,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an MCU update image (UF2, `DfuSe`, GBL, `.cyacd`).
+    #[error("MCU image parse error: {message}")]
+    McuImageParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {
