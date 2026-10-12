@@ -859,6 +859,8 @@ pub enum FileFormat {
     PciOptionRom,
     /// Huawei `UPDATE.APP` firmware package
     HuaweiUpdate,
+    /// ZX Spectrum tape image (TZX or TAP)
+    ZxTape,
 }
 
 impl fmt::Display for FileFormat {
@@ -984,6 +986,7 @@ impl fmt::Display for FileFormat {
             FileFormat::BlackfinLdr => write!(f, "Blackfin LDR"),
             FileFormat::PciOptionRom => write!(f, "Option ROM"),
             FileFormat::HuaweiUpdate => write!(f, "Huawei UPDATE.APP"),
+            FileFormat::ZxTape => write!(f, "ZX Spectrum tape"),
         }
     }
 }

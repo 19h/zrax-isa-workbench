@@ -691,6 +691,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::BlackfinLdr => "Blackfin LDR",
         FileFormat::PciOptionRom => "Option ROM",
         FileFormat::HuaweiUpdate => "Huawei UPDATE.APP",
+        FileFormat::ZxTape => "ZX Spectrum tape",
     }
 }
 

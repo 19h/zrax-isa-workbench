@@ -69,6 +69,7 @@ pub mod tmobj;
 pub mod vbf;
 pub mod wasm;
 pub mod xcoff;
+pub mod zxtape;
 
 use crate::error::{ClassifierError, Result};
 use crate::types::ClassificationResult;
@@ -499,6 +500,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // ZX Spectrum TZX tapes (`ZXTape!` signature).
+    if let Some(layout) = zxtape::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::ZxTape(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -648,6 +656,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = optionrom::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::OptionRom(layout),
+        };
+    }
+
+    // ZX Spectrum TAP tapes: every block's checksum, a header block first.
+    if let Some(layout) = zxtape::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::ZxTape(layout),
         };
     }
 

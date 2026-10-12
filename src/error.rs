@@ -89,6 +89,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a ZX Spectrum tape image (TZX, TAP).
+    #[error("ZX Spectrum tape parse error: {message}")]
+    ZxTapeParseError {
+        /// What is wrong with the tape image.
+        message: String,
+    },
+
     /// Error parsing PE/COFF format.
     #[error("PE/COFF parse error: {message}")]
     PeParseError { message: String },
