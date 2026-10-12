@@ -718,6 +718,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::AndroidSparse => "Android sparse image",
         FileFormat::AndroidOta => "Android OTA payload",
         FileFormat::AndroidBootloader => "Android bootloader pack",
+        FileFormat::XilinxBootBin => "Xilinx BOOT.BIN",
+        FileFormat::ImxImage => "NXP i.MX image",
+        FileFormat::NxpSb => "NXP Secure Binary",
     }
 }
 

@@ -65,6 +65,7 @@ pub mod pef;
 pub mod retro;
 pub mod sgo;
 pub mod socboot2;
+pub mod socboot;
 pub mod som;
 pub mod sox;
 pub mod spc;
@@ -573,6 +574,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // SoC boot images: the BOOT.BIN and Secure Binary magics, and an i.MX
+    // IVT at a documented offset whose pointers and boot data are
+    // consistent.
+    if let Some(layout) = socboot::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::SocBoot(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -749,6 +759,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = socboot2::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::SocBoot2(layout),
+        };
+    }
+
+    // i.MX AHAB containers have a two-byte key (version and tag): the
+    // header, image array and signature block header must validate.
+    if let Some(layout) = socboot::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::SocBoot(layout),
         };
     }
 

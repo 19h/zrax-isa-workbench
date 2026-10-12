@@ -920,6 +920,14 @@ pub enum FileFormat {
     AndroidOta,
     /// Android bootloader pack (`BOOTLDR!`, Qualcomm meta image, FBPK)
     AndroidBootloader,
+
+    // SoC boot images
+    /// Xilinx Zynq-7000 or `Zynq UltraScale+ MPSoC` boot image (`BOOT.BIN`)
+    XilinxBootBin,
+    /// NXP i.MX boot image (HAB image vector table or AHAB container)
+    ImxImage,
+    /// NXP Secure Binary (SB2.0, SB2.1, SB3.1)
+    NxpSb,
 }
 
 impl fmt::Display for FileFormat {
@@ -1078,6 +1086,10 @@ impl fmt::Display for FileFormat {
             FileFormat::AndroidSparse => write!(f, "Android sparse image"),
             FileFormat::AndroidOta => write!(f, "Android OTA payload"),
             FileFormat::AndroidBootloader => write!(f, "Android bootloader pack"),
+            // SoC boot images
+            FileFormat::XilinxBootBin => write!(f, "Xilinx BOOT.BIN"),
+            FileFormat::ImxImage => write!(f, "NXP i.MX image"),
+            FileFormat::NxpSb => write!(f, "NXP Secure Binary"),
         }
     }
 }

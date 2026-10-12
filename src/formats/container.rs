@@ -13,7 +13,10 @@
 //! `transform` names it and the bytes are owned.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, optionrom, socboot2, zxtape, MAX_PAYLOAD};
+use crate::formats::{
+    automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, optionrom, socboot,
+    socboot2, zxtape, MAX_PAYLOAD,
+};
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
     Variant,
@@ -70,6 +73,9 @@ pub enum Kind {
     Apple(super::apple::Layout),
     /// An Android boot, `vendor_boot`, sparse, OTA or bootloader-pack image.
     Android(super::android::Layout),
+    /// A system-on-chip boot image (Xilinx `BOOT.BIN`, NXP i.MX, NXP Secure
+    /// Binary).
+    SocBoot(socboot::Layout),
 }
 
 impl Kind {
@@ -89,6 +95,7 @@ impl Kind {
             Self::Retro(layout) => layout.format(),
             Self::Apple(layout) => layout.format(),
             Self::Android(layout) => layout.format(),
+            Self::SocBoot(layout) => layout.format(),
         }
     }
 
@@ -108,6 +115,7 @@ impl Kind {
             Self::Retro(layout) => layout.label(),
             Self::Apple(layout) => layout.label(),
             Self::Android(layout) => layout.label(),
+            Self::SocBoot(layout) => layout.label(),
         }
     }
 
@@ -127,6 +135,7 @@ impl Kind {
             Self::Retro(layout) => layout.is_weak(),
             Self::Apple(layout) => layout.is_weak(),
             Self::Android(layout) => layout.is_weak(),
+            Self::SocBoot(layout) => layout.is_weak(),
         }
     }
 }
@@ -151,6 +160,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Retro(layout) => super::retro::parse_container(data, layout),
         Kind::Apple(layout) => super::apple::parse_container(data, layout),
         Kind::Android(layout) => super::android::parse_container(data, layout),
+        Kind::SocBoot(layout) => socboot::parse_container(data, layout),
     }
 }
 

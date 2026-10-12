@@ -101,6 +101,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a system-on-chip boot image (Xilinx `BOOT.BIN`, NXP i.MX
+    /// image, NXP Secure Binary).
+    #[error("SoC boot image parse error: {message}")]
+    SocBootParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

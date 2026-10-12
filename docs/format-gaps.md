@@ -94,7 +94,12 @@ Android boot and `vendor_boot` images (kernel and ramdisk decoded and
 classified), sparse images (expanded, CRC-32 verified), OTA `payload.bin`
 (full operations reassembled, SHA-256 checked; delta operations opaque) and
 bootloader packs (`BOOTLDR!`, Qualcomm meta image, FBPK v1/v2); see
-[Android images](android.md). Other rows are updated as their families land.
+[Android images](android.md). Xilinx Zynq-7000/ZynqMP `BOOT.BIN`
+(partition targets from the destination-CPU field; bitstream partitions
+opaque), NXP i.MX IVT and AHAB images (no ISA inferred from the SoC family)
+and NXP SB2.0/2.1/3.1 (metadata only; signatures not verified); see
+[SoC boot images](socboot.md). Other rows are updated as their families
+land.
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |
