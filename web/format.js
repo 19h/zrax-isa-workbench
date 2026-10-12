@@ -91,6 +91,7 @@ const FORMAT_NAMES = {
   img4: 'Apple IMG4', im4p: 'Apple IM4P', dyldcache: 'dyld shared cache',
   androidboot: 'Android boot image', androidvendorboot: 'Android vendor_boot image', androidsparse: 'Android sparse image', androidota: 'Android OTA payload', androidbootloader: 'Android bootloader pack',
   xilinxbootbin: 'Xilinx BOOT.BIN', imximage: 'NXP i.MX Image', nxpsb: 'NXP Secure Binary',
+  ndsrom: 'Nintendo DS ROM', gbarom: 'Game Boy Advance ROM', gbrom: 'Game Boy ROM', nesrom: 'NES ROM', snesrom: 'SNES ROM', n64rom: 'Nintendo 64 ROM',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

@@ -687,6 +687,11 @@ fn classify_child(
             options,
             notes,
         );
+        // A platform-fixed CPU variant holds only while the named target
+        // does; a child whose own header names another ISA keeps it.
+        if let Some(variant) = child.variant.filter(|_| component.result.isa == target.isa) {
+            component.result.variant = Variant::new(variant);
+        }
     }
     if !member {
         notes.push(Note::info(format!(

@@ -109,6 +109,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Nintendo console ROM image (DS, GBA, Game Boy, NES,
+    /// SNES, Nintendo 64).
+    #[error("Nintendo ROM parse error: {message}")]
+    NintendoRomParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

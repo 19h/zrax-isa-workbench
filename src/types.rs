@@ -928,6 +928,20 @@ pub enum FileFormat {
     ImxImage,
     /// NXP Secure Binary (SB2.0, SB2.1, SB3.1)
     NxpSb,
+
+    // Nintendo
+    /// Nintendo DS / `DSi` cartridge image (`.nds`)
+    NdsRom,
+    /// Game Boy Advance cartridge or multiboot image (`.gba`)
+    GbaRom,
+    /// Game Boy / Game Boy Color cartridge image (`.gb`, `.gbc`)
+    GbRom,
+    /// iNES or NES 2.0 image (`.nes`)
+    NesRom,
+    /// SNES ROM with an internal header (`.sfc`, `.smc`)
+    SnesRom,
+    /// Nintendo 64 ROM in any dump byte order (`.z64`, `.v64`, `.n64`)
+    N64Rom,
 }
 
 impl fmt::Display for FileFormat {
@@ -1090,6 +1104,13 @@ impl fmt::Display for FileFormat {
             FileFormat::XilinxBootBin => write!(f, "Xilinx BOOT.BIN"),
             FileFormat::ImxImage => write!(f, "NXP i.MX image"),
             FileFormat::NxpSb => write!(f, "NXP Secure Binary"),
+            // Nintendo
+            FileFormat::NdsRom => write!(f, "Nintendo DS ROM"),
+            FileFormat::GbaRom => write!(f, "Game Boy Advance ROM"),
+            FileFormat::GbRom => write!(f, "Game Boy ROM"),
+            FileFormat::NesRom => write!(f, "NES ROM"),
+            FileFormat::SnesRom => write!(f, "SNES ROM"),
+            FileFormat::N64Rom => write!(f, "Nintendo 64 ROM"),
         }
     }
 }

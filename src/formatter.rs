@@ -721,6 +721,12 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::XilinxBootBin => "Xilinx BOOT.BIN",
         FileFormat::ImxImage => "NXP i.MX image",
         FileFormat::NxpSb => "NXP Secure Binary",
+        FileFormat::NdsRom => "Nintendo DS ROM",
+        FileFormat::GbaRom => "Game Boy Advance ROM",
+        FileFormat::GbRom => "Game Boy ROM",
+        FileFormat::NesRom => "NES ROM",
+        FileFormat::SnesRom => "SNES ROM",
+        FileFormat::N64Rom => "Nintendo 64 ROM",
     }
 }
 

@@ -14,8 +14,8 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
-    automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, optionrom, socboot,
-    socboot2, zxtape, MAX_PAYLOAD,
+    automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, nintendo, optionrom,
+    socboot, socboot2, zxtape, MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -76,6 +76,8 @@ pub enum Kind {
     /// A system-on-chip boot image (Xilinx `BOOT.BIN`, NXP i.MX, NXP Secure
     /// Binary).
     SocBoot(socboot::Layout),
+    /// A Nintendo console ROM image.
+    Nintendo(nintendo::Layout),
 }
 
 impl Kind {
@@ -96,6 +98,7 @@ impl Kind {
             Self::Apple(layout) => layout.format(),
             Self::Android(layout) => layout.format(),
             Self::SocBoot(layout) => layout.format(),
+            Self::Nintendo(layout) => layout.format(),
         }
     }
 
@@ -116,6 +119,7 @@ impl Kind {
             Self::Apple(layout) => layout.label(),
             Self::Android(layout) => layout.label(),
             Self::SocBoot(layout) => layout.label(),
+            Self::Nintendo(layout) => layout.label(),
         }
     }
 
@@ -136,6 +140,7 @@ impl Kind {
             Self::Apple(layout) => layout.is_weak(),
             Self::Android(layout) => layout.is_weak(),
             Self::SocBoot(layout) => layout.is_weak(),
+            Self::Nintendo(layout) => layout.is_weak(),
         }
     }
 }
@@ -161,6 +166,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Apple(layout) => super::apple::parse_container(data, layout),
         Kind::Android(layout) => super::android::parse_container(data, layout),
         Kind::SocBoot(layout) => socboot::parse_container(data, layout),
+        Kind::Nintendo(layout) => nintendo::parse_container(data, layout),
     }
 }
 
@@ -246,6 +252,9 @@ pub struct Child<'a> {
     pub opaque: bool,
     /// Architecture named for this child by the container.
     pub target: Option<Target>,
+    /// CPU variant the platform fixes for `target` (`ARMv4T (ARM7TDMI)`),
+    /// reported as the child's variant while its ISA is the target's.
+    pub variant: Option<&'static str>,
     /// Classification policy.
     pub classify: Classify,
 }
@@ -261,6 +270,7 @@ impl<'a> Child<'a> {
             transform: None,
             opaque: false,
             target: None,
+            variant: None,
             classify: Classify::Always,
         }
     }
@@ -282,6 +292,7 @@ impl<'a> Child<'a> {
             transform: Some(transform),
             opaque: false,
             target: None,
+            variant: None,
             classify: Classify::Always,
         }
     }
@@ -298,6 +309,13 @@ impl<'a> Child<'a> {
     #[must_use]
     pub fn with_target(mut self, target: Target) -> Self {
         self.target = Some(target);
+        self
+    }
+
+    /// Set the CPU variant the platform fixes for this child's target.
+    #[must_use]
+    pub fn with_variant(mut self, variant: &'static str) -> Self {
+        self.variant = Some(variant);
         self
     }
 

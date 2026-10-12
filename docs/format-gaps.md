@@ -131,7 +131,12 @@ land.
 Status 2026-10-12: Mega Drive/Genesis, PS-X EXE, Dreamcast IP.BIN, Wii U
 RPX/RPL (zlib sections inflated), 3DS NCCH/ExeFS (BLZ `.code` decoded) and
 3DSX, and PSP PBP are implemented; see [console images](retro.md). Nintendo
-DS, Game Boy, NES, SNES and N64 are in progress.
+DS/DSi (ARM9 and ARM7 slices with their core variants; secure and modcrypt
+areas opaque), Game Boy Advance, Game Boy/Color (`z80`, variant SM83),
+iNES/NES 2.0 (PRG-ROM as 6502; CHR-ROM opaque), SNES (weak; LoROM, HiROM and
+ExHiROM internal headers; `w65816` from the platform) and Nintendo 64 (all
+three byte orders; CIC check code verified) are implemented; see
+[Nintendo ROMs](nintendo-roms.md). Thumb is not distinguished on DS or GBA.
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as
@@ -151,7 +156,8 @@ labelled training data.
 | Low | Nintendo 3DS NCCH / ExeFS | `NCCH` at `0x100` | `arm` | Usually encrypted; code may be compressed |
 | Low | PSP PBP | `00 50 42 50` (`\0PBP`) | `mipsel` (Allegrex) | Embedded `~PSP` executables are usually encrypted |
 
-The SNES CPU (65816) has no model class; `m7700` is the nearest.
+The SNES CPU (65816) has no model class; `m7700` is the nearest. SNES ROMs
+are reported as `w65816` from the platform, without a code-model check.
 
 ## 6. Automotive
 

@@ -55,6 +55,7 @@ pub mod lod;
 pub mod macho;
 pub mod mcu;
 pub mod mz;
+pub mod nintendo;
 pub mod ols;
 pub mod omf;
 pub mod optionrom;
@@ -583,6 +584,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Nintendo console ROMs: the iNES and N64 first words, or the DS, GBA
+    // and Game Boy logos with their header checksums.
+    if let Some(layout) = nintendo::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Nintendo(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -767,6 +776,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = socboot::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::SocBoot(layout),
+        };
+    }
+
+    // The SNES internal header has no magic: checksum, complement, map mode,
+    // title and reset vector must all be consistent.
+    if let Some(layout) = nintendo::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Nintendo(layout),
         };
     }
 
