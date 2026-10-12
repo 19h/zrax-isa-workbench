@@ -33,6 +33,10 @@ fn is_valid_magic(m: u16) -> bool {
     )
 }
 
+/// SOM header version IDs: `VERSION_ID` (85082112) and `NEW_VERSION_ID`
+/// (87102412).
+const SOM_VERSION_IDS: [u32; 2] = [0x0512_4000, 0x0531_13cc];
+
 /// Detect SOM format.
 pub fn detect(data: &[u8]) -> bool {
     if data.len() < SOM_HEADER_MIN_SIZE {
@@ -46,6 +50,14 @@ pub fn detect(data: &[u8]) -> bool {
         return false;
     }
     if !is_valid_magic(mag) {
+        return false;
+    }
+
+    // Only two header versions exist (`VERSION_ID` and `NEW_VERSION_ID` in
+    // binutils `include/som/aout.h`); the system ID and magic alone are
+    // four bytes and appear in unrelated data.
+    let version = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+    if !SOM_VERSION_IDS.contains(&version) {
         return false;
     }
 
