@@ -95,6 +95,7 @@ const FORMAT_NAMES = {
   zip: 'ZIP', tar: 'tar', cpio: 'CPIO',
   squashfs: 'SquashFS', cramfs: 'CramFS', romfs: 'romfs',
   ubi: 'UBI', ubifs: 'UBIFS', jffs2: 'JFFS2',
+  ext: 'ext filesystem',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

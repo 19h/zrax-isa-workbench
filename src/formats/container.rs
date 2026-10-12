@@ -14,8 +14,8 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
-    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, huawei, mcu, mtd, nintendo,
-    optionrom, rofs, socboot, socboot2, zxtape, MAX_PAYLOAD,
+    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, ext, huawei, mcu, mtd,
+    nintendo, optionrom, rofs, socboot, socboot2, zxtape, MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -84,6 +84,8 @@ pub enum Kind {
     Rofs(rofs::Layout),
     /// A flash filesystem image: UBI, UBIFS or JFFS2.
     Mtd(mtd::Layout),
+    /// An ext2, ext3 or ext4 filesystem image.
+    Ext(ext::Layout),
 }
 
 impl Kind {
@@ -108,6 +110,7 @@ impl Kind {
             Self::Archive(layout) => layout.format(),
             Self::Rofs(layout) => layout.format(),
             Self::Mtd(layout) => layout.format(),
+            Self::Ext(layout) => layout.format(),
         }
     }
 
@@ -132,6 +135,7 @@ impl Kind {
             Self::Archive(layout) => layout.label(),
             Self::Rofs(layout) => layout.label(),
             Self::Mtd(layout) => layout.label(),
+            Self::Ext(layout) => layout.label(),
         }
     }
 
@@ -156,6 +160,7 @@ impl Kind {
             Self::Archive(layout) => layout.is_weak(),
             Self::Rofs(layout) => layout.is_weak(),
             Self::Mtd(layout) => layout.is_weak(),
+            Self::Ext(layout) => layout.is_weak(),
         }
     }
 }
@@ -185,6 +190,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Archive(layout) => archives::parse_container(data, layout),
         Kind::Rofs(layout) => rofs::parse_container(data, layout),
         Kind::Mtd(layout) => mtd::parse_container(data, layout),
+        Kind::Ext(layout) => ext::parse_container(data, layout),
     }
 }
 

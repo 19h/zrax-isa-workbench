@@ -4,7 +4,8 @@
 //! `0xEDB88320`, initial value and final XOR `0xFFFFFFFF`) used by gzip,
 //! ZIP, PNG, OAD and most firmware trailers. Adler-32 is defined by RFC 1950,
 //! section 9. CRC-16/MODBUS (reflected polynomial `0xA001`, initial value
-//! `0xFFFF`, no final XOR) is the Nintendo DS header checksum. CRC-64 is
+//! `0xFFFF`, no final XOR) is the Nintendo DS header checksum and the ext4
+//! `gdt_csum` group descriptor checksum (Linux `lib/crc16.c`). CRC-64 is
 //! the ECMA-182 / XZ variant (reflected polynomial `0xC96C5795D7870F42`,
 //! initial value and final XOR all ones; XZ file format 1.2.1, section 6).
 //! CRC-16/IBM-3740 (polynomial `0x1021`, most significant bit first,
@@ -12,12 +13,19 @@
 //! the Lattice iCE40 bitstream CRC.
 //! SHA-1 is FIPS 180-4, used only to check identifiers that formats store,
 //! never as evidence of authenticity.
+//! CRC-32C is the Castagnoli variant (reflected polynomial `0x82F63B78`)
+//! used by iSCSI and the ext4 `metadata_csum` feature, which keeps the raw
+//! register without the final XOR (Linux v6.11 `fs/ext4/ext4.h`,
+//! `ext4_chksum`).
 
 /// Reflected IEEE 802.3 CRC-32 polynomial.
 const CRC32_POLYNOMIAL: u32 = 0xedb8_8320;
 
 /// CRC-16/IBM-3740 polynomial, most significant bit first.
 const CRC16_CCITT_POLYNOMIAL: u16 = 0x1021;
+
+/// Reflected Castagnoli CRC-32C polynomial.
+const CRC32C_POLYNOMIAL: u32 = 0x82f6_3b78;
 
 /// Reflected ECMA-182 CRC-64 polynomial.
 const CRC64_POLYNOMIAL: u64 = 0xc96c_5795_d787_0f42;
@@ -30,9 +38,12 @@ const ADLER_BLOCK: usize = 5552;
 const ADLER_MODULUS: u32 = 65521;
 
 /// Byte-at-a-time lookup table for [`CRC32_POLYNOMIAL`].
-const CRC32_TABLE: [u32; 256] = crc32_table();
+const CRC32_TABLE: [u32; 256] = reflected_crc32_table(CRC32_POLYNOMIAL);
 
-const fn crc32_table() -> [u32; 256] {
+/// Byte-at-a-time lookup table for [`CRC32C_POLYNOMIAL`].
+const CRC32C_TABLE: [u32; 256] = reflected_crc32_table(CRC32C_POLYNOMIAL);
+
+const fn reflected_crc32_table(polynomial: u32) -> [u32; 256] {
     let mut table = [0u32; 256];
     let mut i: u32 = 0;
     while i < 256 {
@@ -42,7 +53,7 @@ const fn crc32_table() -> [u32; 256] {
             crc = if crc & 1 == 0 {
                 crc >> 1
             } else {
-                (crc >> 1) ^ CRC32_POLYNOMIAL
+                (crc >> 1) ^ polynomial
             };
             bit += 1;
         }
@@ -90,6 +101,17 @@ pub fn crc32(data: &[u8]) -> u32 {
     !crc32_update(!0, data)
 }
 
+/// Continue a Castagnoli CRC-32C over `data`. `crc` is the raw register:
+/// the standard CRC-32C starts with `0xFFFFFFFF` and finishes with `!crc`;
+/// ext4 seeds it with `0xFFFFFFFF` (or a checksum seed) and stores the
+/// register as it is.
+pub fn crc32c_update(mut crc: u32, data: &[u8]) -> u32 {
+    for &b in data {
+        crc = CRC32C_TABLE[((crc ^ u32::from(b)) & 0xff) as usize] ^ (crc >> 8);
+    }
+    crc
+}
+
 /// ECMA-182 CRC-64 of `data`, as used by XZ block checks.
 pub fn crc64(data: &[u8]) -> u64 {
     let mut crc = !0u64;
@@ -116,7 +138,13 @@ pub fn adler32(data: &[u8]) -> u32 {
 
 /// CRC-16/MODBUS of `data`.
 pub fn crc16_modbus(data: &[u8]) -> u16 {
-    let mut crc: u16 = 0xffff;
+    crc16_modbus_update(0xffff, data)
+}
+
+/// Continue a CRC-16/MODBUS over `data`. The CRC has no final XOR, so
+/// `crc` is both the register and the result: start with `0xFFFF` (the
+/// ext4 `gdt_csum` seed `~0`) and chain calls over discontiguous ranges.
+pub fn crc16_modbus_update(mut crc: u16, data: &[u8]) -> u16 {
     for &b in data {
         crc ^= u16::from(b);
         for _ in 0..8 {
@@ -323,6 +351,7 @@ mod tests {
         assert_eq!(adler32(b"123456789"), 0x091e_01de);
         assert_eq!(crc16_modbus(b"123456789"), 0x4b37);
         assert_eq!(crc64(b"123456789"), 0x995d_c9bb_df19_39fa);
+        assert_eq!(!crc32c_update(!0, b"123456789"), 0xe306_9283);
         assert_eq!(crc32(b""), 0);
         assert_eq!(adler32(b""), 1);
     }
@@ -332,6 +361,14 @@ mod tests {
         let whole = crc32(b"hello world");
         let split = !crc32_update(crc32_update(!0, b"hello "), b"world");
         assert_eq!(whole, split);
+    }
+
+    #[test]
+    fn crc16_and_crc32c_updates_compose_over_split_input() {
+        let split = crc16_modbus_update(crc16_modbus_update(0xffff, b"1234"), b"56789");
+        assert_eq!(split, crc16_modbus(b"123456789"));
+        let split = crc32c_update(crc32c_update(!0, b"1234"), b"56789");
+        assert_eq!(split, crc32c_update(!0, b"123456789"));
     }
 
     #[test]

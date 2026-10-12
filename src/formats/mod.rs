@@ -44,6 +44,7 @@ pub mod elf;
 pub mod epoc;
 pub mod epr;
 pub mod esp;
+pub mod ext;
 pub mod fatelf;
 pub mod frf;
 pub mod goff;
@@ -616,6 +617,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = mtd::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Mtd(layout),
+        };
+    }
+
+    // ext2/3/4: magic 0xEF53 at 0x438 and a consistent superblock geometry.
+    // Checked after the executable and firmware formats, whose headers lie
+    // in the first kilobyte that an ext image leaves to the boot loader.
+    if let Some(layout) = ext::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Ext(layout),
         };
     }
 

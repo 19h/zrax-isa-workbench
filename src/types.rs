@@ -966,6 +966,10 @@ pub enum FileFormat {
     Ubifs,
     /// JFFS2 image
     Jffs2,
+
+    // ext filesystems
+    /// ext2, ext3 or ext4 filesystem image
+    Ext,
 }
 
 impl fmt::Display for FileFormat {
@@ -1147,6 +1151,8 @@ impl fmt::Display for FileFormat {
             FileFormat::Ubi => write!(f, "UBI"),
             FileFormat::Ubifs => write!(f, "UBIFS"),
             FileFormat::Jffs2 => write!(f, "JFFS2"),
+            // ext filesystems
+            FileFormat::Ext => write!(f, "ext filesystem"),
         }
     }
 }

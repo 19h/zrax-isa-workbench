@@ -139,6 +139,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an ext2, ext3 or ext4 filesystem image.
+    #[error("ext filesystem parse error: {message}")]
+    ExtParseError {
+        /// What is wrong with the filesystem.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

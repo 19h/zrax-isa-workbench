@@ -736,6 +736,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Ubi => "UBI",
         FileFormat::Ubifs => "UBIFS",
         FileFormat::Jffs2 => "JFFS2",
+        FileFormat::Ext => "ext filesystem",
     }
 }
 
