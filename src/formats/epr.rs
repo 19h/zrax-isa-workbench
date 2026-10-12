@@ -59,6 +59,9 @@ const MIN_EPR_SIZE: usize = RECORD_SIZE * 4;
 /// Maximum number of records we'll scan for metadata extraction.
 const MAX_METADATA_RECORDS: usize = 64;
 
+/// Record type of the file header, which comes first.
+const HEADER_RECORD: u8 = 0x01;
+
 /// Known ECU type strings and their corresponding ISA mappings.
 struct EcuTypeMapping {
     /// Substring to match in EPR metadata
@@ -254,9 +257,17 @@ const ECU_MAPPINGS: &[EcuTypeMapping] = &[
 ///    - Record types generally in range 0x00–0x74 or 0xFF
 /// 4. Header records (type 0x01) should contain date-like ASCII strings
 /// 5. Data records should contain VIN-like or part-number-like strings
+///
+/// The first record must be the file header (type 0x01) with a date in its
+/// payload, unless the file holds the triple-redundant data records. Without
+/// that, any raw dump whose size is a multiple of 512 B and which contains
+/// a string such as `ECU` or `FLASH` was taken for an EPR container.
 pub fn detect(data: &[u8]) -> bool {
     // Must be at least 512 bytes and an exact multiple of 128
     if data.len() < MIN_EPR_SIZE || data.len() % RECORD_SIZE != 0 {
+        return false;
+    }
+    if !has_dated_header(data) && !has_triple_redundancy(data) {
         return false;
     }
 
@@ -841,6 +852,14 @@ fn contains_automotive_string(data: &[u8]) -> bool {
     false
 }
 
+/// Is the first record a file header (type 0x01) whose payload holds a
+/// date?
+fn has_dated_header(data: &[u8]) -> bool {
+    data.get(..RECORD_SIZE).is_some_and(|header| {
+        header[0] == HEADER_RECORD && contains_date_pattern(&header[PAYLOAD_OFFSET..])
+    })
+}
+
 /// Check for the triple-redundancy pattern (types 0x08, 0x09, 0x0A with same payload).
 fn has_triple_redundancy(data: &[u8]) -> bool {
     let total_records = data.len() / RECORD_SIZE;
@@ -931,6 +950,19 @@ mod tests {
         let mut data = vec![0u8; 512];
         data[0..4].copy_from_slice(&[0x7F, b'E', b'L', b'F']);
         assert!(!detect(&data));
+    }
+
+    #[test]
+    fn firmware_with_ecu_strings_but_no_header_is_not_epr() {
+        // A sparse dump: code, a boot string and erased space, 64 KiB.
+        let mut data = vec![0u8; 0x1_0000];
+        data[..4].copy_from_slice(&[0x97, 0x01, 0x00, 0x00]);
+        data[0x1800..0x1814].copy_from_slice(b"ECU boot: FLASH init");
+        assert!(!detect(&data));
+        // The same bytes behind a dated header record are an EPR file.
+        data[0] = HEADER_RECORD;
+        data[PAYLOAD_OFFSET..PAYLOAD_OFFSET + 8].copy_from_slice(b"04-11-09");
+        assert!(detect(&data));
     }
 
     #[test]
