@@ -901,6 +901,14 @@ pub enum FileFormat {
     N3ds3dsx,
     /// PSP `EBOOT.PBP` package
     PspPbp,
+    // Apple
+    /// Apple Image4 file (`IMG4`), or a standalone `IM4M` manifest or `IM4R`
+    /// restore info
+    Img4,
+    /// Apple Image4 payload (`IM4P`)
+    Im4p,
+    /// Apple dyld shared cache (`dyld_v1`)
+    DyldCache,
 }
 
 impl fmt::Display for FileFormat {
@@ -1049,6 +1057,10 @@ impl fmt::Display for FileFormat {
             FileFormat::N3dsNcch => write!(f, "3DS NCCH"),
             FileFormat::N3ds3dsx => write!(f, "3DSX"),
             FileFormat::PspPbp => write!(f, "PSP PBP"),
+            // Apple
+            FileFormat::Img4 => write!(f, "Apple IMG4"),
+            FileFormat::Im4p => write!(f, "Apple IM4P"),
+            FileFormat::DyldCache => write!(f, "dyld shared cache"),
         }
     }
 }

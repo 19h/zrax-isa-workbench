@@ -88,8 +88,9 @@ verified), Silicon Labs GBL (CRC-32 verified; encryption opaque, signatures
 not verified) and Cypress `.cyacd`/`.cyacd2` (weak); see
 [MCU update images](mcu.md); Allwinner eGON/TOC0, Rockchip RKFW/RKAF/RKBOOT and
 idbloader, MediaTek preloader headers and legacy Qualcomm MBN (SBL and 40-byte
-v3); see [SoC loaders](socboot2.md). Other rows are updated as their families
-land.
+v3); see [SoC loaders](socboot2.md). Apple IMG4/IM4P (payloads decoded; KBAG
+payloads opaque) and dyld shared caches; see [Apple images](apple.md). Other
+rows are updated as their families land.
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

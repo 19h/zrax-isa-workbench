@@ -85,6 +85,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an Apple image: Image4 (IMG4, IM4P, IM4M, IM4R) or a
+    /// dyld shared cache.
+    #[error("Apple image parse error: {message}")]
+    AppleParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

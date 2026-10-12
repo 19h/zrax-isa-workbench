@@ -22,6 +22,7 @@
 pub mod amiga_hunk;
 pub mod aof;
 pub mod aout;
+pub mod apple;
 pub mod ar;
 pub mod automotive;
 pub mod bcf;
@@ -550,6 +551,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = retro::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Retro(layout),
+        };
+    }
+
+    // Apple Image4 (a DER SEQUENCE whose first element is the IA5String
+    // "IMG4", "IM4P", "IM4M" or "IM4R") and dyld shared caches ("dyld_v1").
+    // Before the compressed streams: an IM4P payload is often LZFSE or LZSS,
+    // and the container must report itself.
+    if let Some(layout) = apple::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Apple(layout),
         };
     }
 
