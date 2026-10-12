@@ -114,20 +114,70 @@ pub mod section_type {
     pub const STYP_OVRFLO: u32 = 0x8000;
 }
 
-/// Check if data looks like XCOFF and return the bitwidth.
+/// Auxiliary-header sizes in real files: none (objects), the 28-byte
+/// short form and the full 72-byte header (XCOFF32), or the 120-byte
+/// header (XCOFF64).
+const XCOFF32_AUX_SIZES: [usize; 3] = [0, 28, XCOFF32_AOUT_HEADER_SIZE];
+const XCOFF64_AUX_SIZES: [usize; 2] = [0, XCOFF64_AOUT_HEADER_SIZE];
+
+/// Most sections a plausible XCOFF file declares.
+const MAX_SECTIONS: usize = 1024;
+
+/// Check whether `data` is XCOFF and return the bitwidth. The magic is only
+/// two bytes, so the header must be consistent: a known auxiliary-header
+/// size, at least one section, and a section table within the file whose
+/// stored sections lie within the file.
 pub fn detect(data: &[u8]) -> Option<u8> {
-    if data.len() < 2 {
+    let magic = u16::from_be_bytes([*data.first()?, *data.get(1)?]);
+    let (bits, header, aux_at, aux_sizes, section_size): (u8, usize, usize, &[usize], usize) =
+        match magic {
+            magic::XCOFF32 => (
+                32,
+                XCOFF32_HEADER_SIZE,
+                16,
+                &XCOFF32_AUX_SIZES,
+                XCOFF32_SECTION_HEADER_SIZE,
+            ),
+            magic::XCOFF64 => (
+                64,
+                XCOFF64_HEADER_SIZE,
+                16,
+                &XCOFF64_AUX_SIZES,
+                XCOFF64_SECTION_HEADER_SIZE,
+            ),
+            _ => return None,
+        };
+    let sections = usize::from(read_u16(data, 2, false).ok()?);
+    let aux = usize::from(read_u16(data, aux_at, false).ok()?);
+    if sections == 0 || sections > MAX_SECTIONS || !aux_sizes.contains(&aux) {
         return None;
     }
-
-    // XCOFF is big-endian
-    let magic = u16::from_be_bytes([data[0], data[1]]);
-
-    match magic {
-        magic::XCOFF32 => Some(32),
-        magic::XCOFF64 => Some(64),
-        _ => None,
+    let table = header + aux;
+    if table + sections * section_size > data.len() {
+        return None;
     }
+    for i in 0..sections {
+        let at = table + i * section_size;
+        let (size, raw, flags) = if bits == 32 {
+            (
+                u64::from(read_u32(data, at + 16, false).ok()?),
+                u64::from(read_u32(data, at + 20, false).ok()?),
+                read_u32(data, at + 36, false).ok()?,
+            )
+        } else {
+            (
+                read_u64(data, at + 24, false).ok()?,
+                read_u64(data, at + 32, false).ok()?,
+                read_u32(data, at + 64, false).ok()?,
+            )
+        };
+        let kind = flags & 0xffff;
+        let stored = !matches!(kind, section_type::STYP_BSS | section_type::STYP_TBSS);
+        if stored && raw != 0 && raw.checked_add(size)? > data.len() as u64 {
+            return None;
+        }
+    }
+    Some(bits)
 }
 
 /// Parse an XCOFF32 file.
@@ -315,7 +365,10 @@ mod tests {
     use super::*;
 
     fn make_xcoff32_header(num_sections: u16, opt_size: u16, flags: u16) -> Vec<u8> {
-        let mut data = vec![0u8; 256];
+        let table = XCOFF32_HEADER_SIZE
+            + usize::from(opt_size)
+            + usize::from(num_sections) * XCOFF32_SECTION_HEADER_SIZE;
+        let mut data = vec![0u8; table.max(256)];
 
         // Magic (big-endian)
         data[0] = (magic::XCOFF32 >> 8) as u8;
@@ -346,7 +399,10 @@ mod tests {
     }
 
     fn make_xcoff64_header(num_sections: u16, opt_size: u16, flags: u16) -> Vec<u8> {
-        let mut data = vec![0u8; 256];
+        let table = XCOFF64_HEADER_SIZE
+            + usize::from(opt_size)
+            + usize::from(num_sections) * XCOFF64_SECTION_HEADER_SIZE;
+        let mut data = vec![0u8; table.max(256)];
 
         // Magic (big-endian)
         data[0] = (magic::XCOFF64 >> 8) as u8;
@@ -386,6 +442,25 @@ mod tests {
     fn test_detect_xcoff64() {
         let data = make_xcoff64_header(5, 0, 0);
         assert_eq!(detect(&data), Some(64));
+    }
+
+    #[test]
+    fn random_bytes_after_an_xcoff_magic_are_not_xcoff() {
+        let mut x: u32 = 0x1234_5678;
+        let mut data: Vec<u8> = (0..4096)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x.to_le_bytes()[0]
+            })
+            .collect();
+        data[..2].copy_from_slice(&magic::XCOFF32.to_be_bytes());
+        assert_eq!(detect(&data), None);
+        // A declared section table beyond the file is not XCOFF either.
+        let mut short = make_xcoff32_header(3, 0, 0);
+        short.truncate(XCOFF32_HEADER_SIZE + 2 * XCOFF32_SECTION_HEADER_SIZE);
+        assert_eq!(detect(&short), None);
     }
 
     #[test]

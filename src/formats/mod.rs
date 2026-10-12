@@ -540,14 +540,9 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Aout { variant };
     }
 
-    // XCOFF
-    if data.len() >= 2 {
-        if data[..2] == magic::XCOFF_32 {
-            return DetectedFormat::Xcoff { bits: 32 };
-        }
-        if data[..2] == magic::XCOFF_64 {
-            return DetectedFormat::Xcoff { bits: 64 };
-        }
+    // XCOFF: a two-byte magic, so the header and section table must agree.
+    if let Some(bits) = xcoff::detect(data) {
+        return DetectedFormat::Xcoff { bits };
     }
 
     // ECOFF (check before standalone COFF since ECOFF has specific magic)
