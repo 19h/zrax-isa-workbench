@@ -621,10 +621,32 @@ fn component<'a>(
     }
 }
 
-/// Kernel images that must be recognized before the generic PE check:
-/// an EFI zboot image is a valid PE file whose DOS header carries `zimg`.
+/// DOS header magic at the start of a PE file, and of a Linux kernel with
+/// an EFI stub.
+const DOS_MAGIC: &[u8; 2] = b"MZ";
+
+/// Kernel images that must be recognized before the generic PE check: an
+/// EFI zboot image is a valid PE file whose DOS header carries `zimg`, and
+/// a Linux kernel with an EFI stub (x86 `bzImage`, arm64 and RISC-V
+/// `Image`, Arm `zImage`) is a valid PE file whose Linux boot header
+/// locates the kernel itself (Linux `Documentation/admin-guide/efi-stub.rst`).
+/// The boot header describes the image better than the stub does, so the
+/// kernel parser takes it, unless an x86 file is too short to hold the
+/// setup code and payload its header names.
 pub fn detect_pe_wrapped(data: &[u8]) -> Option<KernelFormat> {
-    linux::is_zboot(data).then_some(KernelFormat::LinuxZboot)
+    if linux::is_zboot(data) {
+        return Some(KernelFormat::LinuxZboot);
+    }
+    if !data.starts_with(DOS_MAGIC) {
+        return None;
+    }
+    match linux::detect(data)? {
+        KernelFormat::LinuxX86 { protocol_version } => {
+            linux::is_complete_x86(data, protocol_version)
+                .then_some(KernelFormat::LinuxX86 { protocol_version })
+        }
+        format => Some(format),
+    }
 }
 
 /// Detect kernel/boot format.
@@ -659,7 +681,7 @@ pub fn detect(data: &[u8]) -> Option<KernelFormat> {
 /// [`ClassifierError::KernelParseError`] for a truncated or inconsistent
 /// header, structure block or payload range.
 pub fn parse_container(data: &[u8], format: KernelFormat) -> Result<Container<'_>> {
-    match format {
+    let mut c = match format {
         KernelFormat::LinuxX86 { protocol_version } => linux::x86(data, protocol_version),
         KernelFormat::LinuxArm64 => linux::arm64(data),
         KernelFormat::LinuxRiscv => linux::riscv(data),
@@ -668,7 +690,19 @@ pub fn parse_container(data: &[u8], format: KernelFormat) -> Result<Container<'_
         KernelFormat::UImage { .. } => uimage::parse(data),
         KernelFormat::Fit => fit::parse(data),
         KernelFormat::Dtb => fit::parse_dtb(data),
+    }?;
+    let is_linux = matches!(
+        format,
+        KernelFormat::LinuxX86 { .. }
+            | KernelFormat::LinuxArm64
+            | KernelFormat::LinuxRiscv
+            | KernelFormat::LinuxArm { .. }
+    );
+    if is_linux && data.starts_with(DOS_MAGIC) {
+        c.notes
+            .push("EFI stub: the image is also a PE/COFF executable (MZ header at 0)".into());
     }
+    Ok(c)
 }
 
 /// Parse kernel/boot format.

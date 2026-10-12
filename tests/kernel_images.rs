@@ -311,6 +311,32 @@ fn bzimage_xlf_kernel_64_means_x86_64() {
     assert_eq!((x86.primary.isa, x86.primary.bitwidth), (Isa::X86, 32));
 }
 
+/// PE header of an EFI stub in the unused boot sector: `MZ` at 0,
+/// `e_lfanew` 0x40 at 0x3C, `PE\0\0` and the COFF machine at 0x40.
+fn add_efi_stub(data: &mut [u8], machine: u16) {
+    data[..2].copy_from_slice(b"MZ");
+    data[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+    data[0x40..0x44].copy_from_slice(b"PE\0\0");
+    data[0x44..0x46].copy_from_slice(&machine.to_le_bytes());
+}
+
+#[test]
+fn efi_stub_kernels_are_kernel_images_unless_only_headers_are_present() {
+    let mut image = bzimage(0x020f, 0x0001, &gzip(&elf(2, false, EM_X86_64)));
+    add_efi_stub(&mut image, 0x8664);
+    let p = classify(&image);
+    assert_eq!(p.format.format, FileFormat::ZImage);
+    assert_eq!(p.slices[0].isa, Isa::X86_64);
+    assert!(p
+        .notes
+        .iter()
+        .any(|n| n.message == "EFI stub: the image is also a PE/COFF executable (MZ header at 0)"));
+    // The setup header names a payload beyond the file: the PE parser
+    // takes the headers.
+    let headers = &image[..0x480];
+    assert_ne!(classify(headers).format.format, FileFormat::ZImage);
+}
+
 #[test]
 fn bzimage_before_protocol_2_12_takes_the_isa_from_the_payload() {
     let p = classify(&bzimage(0x020a, 0, &gzip(&elf(2, false, EM_X86_64))));

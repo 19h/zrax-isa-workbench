@@ -21,6 +21,14 @@ kernel code instead of compressed data.
 | `zimage` (RISC-V) | 64-byte `Image` header, `RISCV` at 0x30 or `RSC\x05` at 0x38 | RISC-V; the header does not encode XLEN, so 64-bit is assumed and noted | [Linux `riscv/boot-image-header.rst`](https://docs.kernel.org/arch/riscv/boot-image-header.html) |
 | `bflt` | 64-byte big-endian header; text from 0x40 to `data_start`; `FLAT_FLAG_GZIP` text decoded | None, except `FLAT_FLAG_L1STK`, which exists only on Blackfin. The ISA otherwise comes from the text | Linux v6.6 `include/uapi/linux/flat.h`, `fs/binfmt_flat.c` |
 
+Kernels with an EFI stub (x86 `bzImage`, arm64 and RISC-V `Image`, Arm
+`zImage` built with `CONFIG_EFI_STUB`) start with `MZ` and are also valid
+PE files (Linux `Documentation/admin-guide/efi-stub.rst`). Like zboot
+images, they are recognized before the generic PE check, because the boot
+header locates the kernel and its payload, and a note says the image is also
+a PE/COFF executable. An x86 file too short for the setup code and payload
+its header names (headers only) is left to the PE parser.
+
 ## Payload identification
 
 A compressed Linux payload is identified the way `lib/decompress.c` does it,
@@ -62,6 +70,7 @@ BE8 kernels) is not cross-checked against it.
 | K3 | A device tree is data | DTB classification yields no candidates |
 | K4 | The first decodable codec header after the zImage header is the kernel | Bounded by the `KLSZ` size word when present; decoded size compared with it |
 | K5 | The RISC-V `Image` header does not distinguish RV32 from RV64 | Reported with a note; an RV32 `Image` would be misreported as 64-bit |
+| K6 | A file that starts with `MZ` and carries a Linux boot header is a kernel with an EFI stub, best described by the boot header | `efi_stub_kernels_are_kernel_images_unless_only_headers_are_present`; on 2026-10-13 Alpine's `vmlinuz-virt` (12,575,744 B, boot protocol 2.15) reported a bzImage whose gzip payload decoded to a 39,274,268 B x86-64 ELF, where it was reported as PE/COFF before |
 
 ## Known boundaries
 

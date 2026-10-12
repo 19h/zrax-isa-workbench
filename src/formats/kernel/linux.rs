@@ -104,6 +104,34 @@ pub(super) fn is_zboot(data: &[u8]) -> bool {
     data.starts_with(ZBOOT_MAGIC) && le_u32(data, 0x38).is_ok_and(|m| m == LINUX_PE_MAGIC)
 }
 
+/// Do the x86 setup code and, from boot protocol 2.08, the payload the
+/// setup header locates lie inside `data`? A file that holds only the
+/// headers of an EFI-stub kernel is left to the PE parser.
+pub(super) fn is_complete_x86(data: &[u8], protocol: u16) -> bool {
+    let Some(&sects) = data.get(SETUP_SECTS) else {
+        return false;
+    };
+    let setup_sects = match usize::from(sects) {
+        0 => DEFAULT_SETUP_SECTS,
+        n => n,
+    };
+    let kernel_start = (setup_sects + 1) * SECTOR;
+    if kernel_start > data.len() {
+        return false;
+    }
+    if protocol < PROTOCOL_PAYLOAD {
+        return true;
+    }
+    let (Ok(offset), Ok(length)) = (le_u32(data, PAYLOAD_OFFSET), le_u32(data, PAYLOAD_LENGTH))
+    else {
+        return false;
+    };
+    kernel_start
+        .checked_add(offset as usize)
+        .and_then(|start| start.checked_add(length as usize))
+        .is_some_and(|end| end <= data.len())
+}
+
 /// EFI zboot image: a PE stub that decompresses the kernel `Image` stored
 /// after it. The PE `Machine` field names the kernel's architecture.
 pub(super) fn zboot(data: &[u8]) -> Result<Container<'_>> {
