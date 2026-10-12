@@ -909,6 +909,17 @@ pub enum FileFormat {
     Im4p,
     /// Apple dyld shared cache (`dyld_v1`)
     DyldCache,
+    // Android
+    /// Android boot image (`ANDROID!`, header versions 0-4)
+    AndroidBoot,
+    /// Android `vendor_boot` image (`VNDRBOOT`, header versions 3-4)
+    AndroidVendorBoot,
+    /// Android sparse image (libsparse)
+    AndroidSparse,
+    /// Android and Chrome OS update payload (`CrAU`)
+    AndroidOta,
+    /// Android bootloader pack (`BOOTLDR!`, Qualcomm meta image, FBPK)
+    AndroidBootloader,
 }
 
 impl fmt::Display for FileFormat {
@@ -1061,6 +1072,12 @@ impl fmt::Display for FileFormat {
             FileFormat::Img4 => write!(f, "Apple IMG4"),
             FileFormat::Im4p => write!(f, "Apple IM4P"),
             FileFormat::DyldCache => write!(f, "dyld shared cache"),
+            // Android
+            FileFormat::AndroidBoot => write!(f, "Android boot image"),
+            FileFormat::AndroidVendorBoot => write!(f, "Android vendor_boot image"),
+            FileFormat::AndroidSparse => write!(f, "Android sparse image"),
+            FileFormat::AndroidOta => write!(f, "Android OTA payload"),
+            FileFormat::AndroidBootloader => write!(f, "Android bootloader pack"),
         }
     }
 }

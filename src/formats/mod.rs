@@ -20,6 +20,7 @@
 //! - Raw binary analysis
 
 pub mod amiga_hunk;
+pub mod android;
 pub mod aof;
 pub mod aout;
 pub mod apple;
@@ -561,6 +562,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = apple::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Apple(layout),
+        };
+    }
+
+    // Android boot, vendor_boot, sparse, OTA and bootloader-pack images.
+    // Their magics are distinct from every format above.
+    if let Some(layout) = android::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Android(layout),
         };
     }
 

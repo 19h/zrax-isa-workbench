@@ -89,8 +89,12 @@ not verified) and Cypress `.cyacd`/`.cyacd2` (weak); see
 [MCU update images](mcu.md); Allwinner eGON/TOC0, Rockchip RKFW/RKAF/RKBOOT and
 idbloader, MediaTek preloader headers and legacy Qualcomm MBN (SBL and 40-byte
 v3); see [SoC loaders](socboot2.md). Apple IMG4/IM4P (payloads decoded; KBAG
-payloads opaque) and dyld shared caches; see [Apple images](apple.md). Other
-rows are updated as their families land.
+payloads opaque) and dyld shared caches; see [Apple images](apple.md).
+Android boot and `vendor_boot` images (kernel and ramdisk decoded and
+classified), sparse images (expanded, CRC-32 verified), OTA `payload.bin`
+(full operations reassembled, SHA-256 checked; delta operations opaque) and
+bootloader packs (`BOOTLDR!`, Qualcomm meta image, FBPK v1/v2); see
+[Android images](android.md). Other rows are updated as their families land.
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

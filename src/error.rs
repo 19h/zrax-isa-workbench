@@ -93,6 +93,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an Android image: boot or `vendor_boot` image, sparse
+    /// image, OTA payload or bootloader pack.
+    #[error("Android image parse error: {message}")]
+    AndroidParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an automotive flash container (ODX, RWD, CUW, CFF).
     #[error("Automotive container parse error: {message}")]
     AutomotiveParseError {

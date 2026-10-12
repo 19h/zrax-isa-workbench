@@ -713,6 +713,11 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Img4 => "Apple IMG4",
         FileFormat::Im4p => "Apple IM4P",
         FileFormat::DyldCache => "dyld shared cache",
+        FileFormat::AndroidBoot => "Android boot image",
+        FileFormat::AndroidVendorBoot => "Android vendor_boot image",
+        FileFormat::AndroidSparse => "Android sparse image",
+        FileFormat::AndroidOta => "Android OTA payload",
+        FileFormat::AndroidBootloader => "Android bootloader pack",
     }
 }
 
