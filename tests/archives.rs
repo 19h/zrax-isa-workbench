@@ -1,8 +1,9 @@
 //! Archive containers: ZIP, tar and CPIO members are listed only when they
-//! are a recognized format and are classified on their own bytes; slices
-//! keep stored offsets with decoded ranges; package layouts are labels
-//! only; corrupt, truncated and mutated archives are errors or bounded
-//! results, never panics.
+//! are a recognized format (or, in a PDX package, a data file an ODX
+//! document names) and are classified on their own bytes; slices keep
+//! stored offsets with decoded ranges; package layouts are labels only;
+//! corrupt, truncated and mutated archives are errors or bounded results,
+//! never panics.
 
 use zrax::formats::checksum::crc32;
 use zrax::formats::{self, archives, DetectedFormat};
@@ -722,6 +723,113 @@ fn package_layouts_are_labels_and_never_an_isa() {
         &p,
         "APK Signing Block before the central directory; signatures not verified"
     ));
+}
+
+/// `AArch64` machine code (`transforms/aarch64.text.bin`).
+fn aarch64_code() -> Vec<u8> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/transforms/aarch64.text.bin"
+    );
+    std::fs::read(path).expect("fixture is committed")
+}
+
+/// An `EXTERN-FLASHDATA` element (odxtools 11.7.0 `externflashdata.py`):
+/// short name, data format, an optional `ENCRYPT-COMPRESS-METHOD` and the
+/// `DATAFILE` path.
+fn extern_flashdata(id: &str, selection: &str, file: &str, transformed: bool) -> String {
+    let method = if transformed {
+        r#"<ENCRYPT-COMPRESS-METHOD TYPE="A_UINT32">17</ENCRYPT-COMPRESS-METHOD>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<FLASHDATA ID="{id}" xsi:type="EXTERN-FLASHDATA"><SHORT-NAME>{id}</SHORT-NAME><DATAFORMAT SELECTION="{selection}"/>{method}<DATAFILE LATEBOUND-DATAFILE="false">{file}</DATAFILE></FLASHDATA>"#
+    )
+}
+
+/// An ODX-F document whose `FLASHDATAS` hold `flashdatas`.
+fn odx_flash(flashdatas: &[String]) -> Vec<u8> {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<ODX MODEL-VERSION="2.2.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <FLASH ID="FL.pdx"><SHORT-NAME>pdx</SHORT-NAME><ECU-MEMS><ECU-MEM ID="EM.1">
+    <SHORT-NAME>mem</SHORT-NAME><MEM><FLASHDATAS>
+{}
+    </FLASHDATAS></MEM></ECU-MEM></ECU-MEMS></FLASH>
+</ODX>
+"#,
+        flashdatas.join("\n")
+    )
+    .into_bytes()
+}
+
+/// Intel HEX text of one 16-byte data record at 0 and the EOF record.
+const CALIBRATION_HEX: &[u8] = b":10000000000102030405060708090A0B0C0D0E0F78\n:00000001FF\n";
+
+#[test]
+fn pdx_data_files_are_listed_in_the_coding_their_document_states() {
+    let document = odx_flash(&[
+        extern_flashdata("FD.APP", "BINARY", "app.bin", false),
+        extern_flashdata("FD.CAL", "INTEL-HEX", "CAL.HEX", false),
+        extern_flashdata("FD.ENC", "BINARY", "enc.bin", true),
+        extern_flashdata("FD.GONE", "BINARY", "gone.bin", false),
+    ]);
+    let members = [
+        ZipMember::stored("index.xml", b"<CATALOG/>"),
+        ZipMember::deflated("ecu.odx-f", &document),
+        ZipMember::deflated("app.bin", &aarch64_code()),
+        ZipMember::stored("cal.hex", CALIBRATION_HEX),
+        ZipMember::stored("enc.bin", &[0x5a; 256]),
+    ];
+    let p = classify(&zip(&members, false).bytes).unwrap();
+    assert_eq!(p.format.format, FileFormat::Zip);
+    assert!(matches!(metadata(&p, "zip_package"), Some(MetadataValue::String(s)) if s == "pdx"));
+    let app = slice(&p, "app.bin");
+    assert_eq!(app.isa, Isa::AArch64);
+    assert!(app.decoded.is_some());
+    assert_eq!(p.primary.isa, Isa::AArch64);
+    assert!(matches!(slice(&p, "cal.hex").isa, Isa::Unknown(_)));
+    assert!(matches!(slice(&p, "enc.bin").isa, Isa::Unknown(_)));
+    assert!(has_note(
+        &p,
+        "app.bin: data file of FD.APP (BINARY) in ecu.odx-f; binary flash data, classified as code"
+    ));
+    assert!(has_note(
+        &p,
+        "cal.hex: data file of FD.CAL (INTEL-HEX) in ecu.odx-f; Intel HEX records"
+    ));
+    assert!(has_note(
+        &p,
+        "enc.bin: data file of FD.ENC (BINARY) in ecu.odx-f; encrypted, compressed or user-defined data; not analyzed"
+    ));
+    assert!(has_note(
+        &p,
+        "FD.GONE (BINARY) in ecu.odx-f: data file gone.bin is not in the package"
+    ));
+    assert!(has_note(
+        &p,
+        "3 data files that the package's documents name listed whatever their format"
+    ));
+
+    // Truncated and mutated packages are errors or bounded results.
+    let archive = zip(&members, false).bytes;
+    for end in 0..archive.len() {
+        let _ = classify_without_transforms(&archive[..end]);
+    }
+    for i in 0..archive.len() {
+        let mut mutated = archive.clone();
+        mutated[i] ^= 0xff;
+        let _ = classify_without_transforms(&mutated);
+    }
+
+    // Without index.xml the archive is not a PDX package, and unrecognized
+    // data files are not listed.
+    let p = classify(&zip(&members[1..], false).bytes).unwrap();
+    assert!(p
+        .slices
+        .iter()
+        .all(|s| s.label.as_deref() != Some("app.bin")));
 }
 
 #[test]

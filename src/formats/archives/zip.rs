@@ -14,9 +14,13 @@
 //! verified. Deflate64 (9), other methods and encrypted members (flag bit 0
 //! or method 99, 4.4.4 and Appendix E) are opaque. Package types are
 //! labelled from member names; none of them names an ISA, and "version made
-//! by" names a host system, not an ISA (4.4.2).
+//! by" names a host system, not an ISA (4.4.2). In a PDX package, the data
+//! files the ODX documents name are listed whatever their format (see
+//! [`pdx`]).
 
 use super::*;
+
+mod pdx;
 
 /// Local file header signature `0x04034B50` (4.3.7).
 const LOCAL_HEADER_SIGNATURE: [u8; 4] = *b"PK\x03\x04";
@@ -268,10 +272,16 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
 
     let mut c = Container::new(FileFormat::Zip, Layout::Zip.label(), "zip");
     c.consumed = directory.end;
+    let data_files = pdx::data_files(data, &entries, &records);
     let mut members = Members::default();
     let mut tally = Tally::default();
     for (entry, record) in entries.iter().zip(&records) {
-        extract(data, entry, record, &mut c, &mut members, &mut tally);
+        let walk = Walk {
+            data_files: &data_files,
+            members: &mut members,
+            tally: &mut tally,
+        };
+        extract(data, entry, record, &mut c, walk);
     }
     let package = package(&entries, tally.manifest.as_deref());
     push_notes(
@@ -283,6 +293,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         &mut c,
     );
     members.push_notes(&mut c);
+    pdx::push_notes(&mut c, &data_files, &entries);
     if let Some(found) = package {
         c.variant = found.package.label().to_string();
         c.push_metadata("zip_package", "Package type", found.package.id());
@@ -784,15 +795,29 @@ fn check_overlaps(entries: &[Entry<'_>], records: &[Local]) -> Result<()> {
     Ok(())
 }
 
-/// Decode, verify and offer one member.
+/// The state a member walk updates.
+struct Walk<'w> {
+    /// Data files the archive's own index names (PDX).
+    data_files: &'w [pdx::DataFile],
+    members: &'w mut Members,
+    tally: &'w mut Tally,
+}
+
+/// Read one member: directories and encrypted members are counted, file
+/// members are decoded and CRC-checked, then listed when they are a
+/// recognized format or a data file the archive's index names.
 fn extract<'a>(
     data: &'a [u8],
     entry: &Entry<'a>,
     record: &Local,
     c: &mut Container<'a>,
-    members: &mut Members,
-    tally: &mut Tally,
+    walk: Walk<'_>,
 ) {
+    let Walk {
+        data_files,
+        members,
+        tally,
+    } = walk;
     if record.has_descriptor {
         tally.descriptors += 1;
     }
@@ -808,31 +833,13 @@ fn extract<'a>(
     if !members.has_room(c) {
         return;
     }
-    let stored = &data[record.data_offset..record.data_end];
-    let Some(contents) = contents(entry, stored, record.data_offset, members, tally) else {
+    let Some(contents) = verified_contents(data, entry, record, members, tally) else {
         return;
     };
-    if contents.data.len() as u64 != entry.uncompressed_size {
-        tally.failed.push(format!(
-            "{}: {} B of data, the central directory declares {} B",
-            entry.name,
-            contents.data.len(),
-            entry.uncompressed_size
-        ));
-        return;
-    }
-    let crc = checksum::crc32(&contents.data);
-    if crc != entry.crc {
-        tally.failed.push(format!(
-            "{}: CRC-32 0x{crc:08X}, the central directory declares 0x{:08X}",
-            entry.name, entry.crc
-        ));
-        return;
-    }
-    tally.crc_verified += 1;
     if entry.name_bytes == b"manifest.json" && entry.uncompressed_size <= MAX_MANIFEST_SIZE {
         tally.manifest = Some(contents.data.to_vec());
     }
+    let stored = &data[record.data_offset..record.data_end];
     let child = match contents.transform {
         Some(transform) => Child::decoded(
             entry.name.clone(),
@@ -843,7 +850,43 @@ fn extract<'a>(
         ),
         None => Child::stored(entry.name.clone(), record.data_offset, stored),
     };
-    members.offer(c, child);
+    match data_files.iter().find(|file| file.is_named(&entry.name)) {
+        Some(file) => pdx::list_data_file(c, members, child, file),
+        None => members.offer(c, child),
+    }
+}
+
+/// A file member's contents, decoded within the extraction limits and
+/// checked against the central directory's size and CRC-32. Failures are
+/// tallied and give `None`.
+fn verified_contents<'a>(
+    data: &'a [u8],
+    entry: &Entry<'_>,
+    record: &Local,
+    members: &mut Members,
+    tally: &mut Tally,
+) -> Option<Contents<'a>> {
+    let stored = &data[record.data_offset..record.data_end];
+    let contents = contents(entry, stored, record.data_offset, members, tally)?;
+    if contents.data.len() as u64 != entry.uncompressed_size {
+        tally.failed.push(format!(
+            "{}: {} B of data, the central directory declares {} B",
+            entry.name,
+            contents.data.len(),
+            entry.uncompressed_size
+        ));
+        return None;
+    }
+    let crc = checksum::crc32(&contents.data);
+    if crc != entry.crc {
+        tally.failed.push(format!(
+            "{}: CRC-32 0x{crc:08X}, the central directory declares 0x{:08X}",
+            entry.name, entry.crc
+        ));
+        return None;
+    }
+    tally.crc_verified += 1;
+    Some(contents)
 }
 
 /// A member's contents and the codec that produced them from the stored
@@ -1046,11 +1089,7 @@ fn package(entries: &[Entry<'_>], manifest: Option<&[u8]>) -> Option<PackageMatc
             evidence: format!("manifest.json names {}", images.join(", ")),
         });
     }
-    let has_index = entries
-        .iter()
-        .any(|e| e.name_bytes.eq_ignore_ascii_case(b"index.xml"));
-    let has_odx = entries.iter().any(|e| is_odx_name(&e.name));
-    if has_index && has_odx {
+    if is_pdx(entries) {
         return Some(PackageMatch {
             package: Package::Pdx,
             evidence: "index.xml at the root and .odx* members".to_string(),
@@ -1063,6 +1102,15 @@ fn package(entries: &[Entry<'_>], manifest: Option<&[u8]>) -> Option<PackageMatc
         });
     }
     None
+}
+
+/// Is the archive shaped like an ASAM PDX package: `index.xml` at the root
+/// and at least one `.odx*` member?
+fn is_pdx(entries: &[Entry<'_>]) -> bool {
+    let has_index = entries
+        .iter()
+        .any(|e| e.name_bytes.eq_ignore_ascii_case(b"index.xml"));
+    has_index && entries.iter().any(|e| is_odx_name(&e.name))
 }
 
 /// The application bundle of an IPA member path `Payload/<name>.app/...`.

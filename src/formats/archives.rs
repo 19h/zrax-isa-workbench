@@ -287,6 +287,9 @@ struct Members {
     unexamined: usize,
     /// Members not decoded because a limit would be exceeded.
     undecoded: NameList,
+    /// Members listed whatever their format because the archive's own
+    /// index names them (PDX data files).
+    referenced: usize,
 }
 
 impl Members {
@@ -316,6 +319,13 @@ impl Members {
         self.listed += 1;
     }
 
+    /// List `child` whatever its format: the archive's own index names it
+    /// as content.
+    fn list<'a>(&mut self, c: &mut Container<'a>, child: Child<'a>) {
+        c.children.push(child);
+        self.referenced += 1;
+    }
+
     /// Reserve `size` decoded bytes for the member `name`. Returns false,
     /// and records the member as not decoded, when the member exceeds
     /// [`MAX_PAYLOAD`] or the archive would exceed [`MAX_EXTRACTED`].
@@ -340,6 +350,12 @@ impl Members {
             c.notes.push(format!(
                 "{} of {} file members are in a recognized format and listed",
                 self.listed, self.examined
+            ));
+        }
+        if self.referenced > 0 {
+            c.notes.push(format!(
+                "{} that the package's documents name listed whatever their format",
+                count(self.referenced, "data file", "data files")
             ));
         }
         if !self.undecoded.is_empty() {

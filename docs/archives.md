@@ -55,6 +55,17 @@ APK Signing Block right before the central directory is noted as present
 and not verified. The Nordic keys come from nrfutil package output, not a
 published specification.
 
+PDX data files are the one case where a member is listed whatever its
+format. When the archive has the PDX member names, its ODX-F documents are
+read first, and every `EXTERN-FLASHDATA` element's `DATAFILE` names a member
+(matched exactly, else ignoring ASCII case; assumption A9). That member is
+listed in the coding the document states: `BINARY` data goes straight to the
+code model, `INTEL-HEX` and `MOTOROLA-S` records to their parsers, and data
+with an `ENCRYPT-COMPRESS-METHOD` or a `USER-DEFINED` format is opaque. A
+note names each data file, its flash data element and document, or says
+that the package does not hold it. Data files are capped at 4096 per
+archive; the documents are decoded with their own extraction budget.
+
 ## Wire units and byte order
 
 All offsets and sizes are bytes; slice offsets are stored file offsets.
@@ -118,6 +129,7 @@ file as Linux initramfs counts them. No archive field is a code byte order.
 | A6 | A 4 KiB prefix is enough to recognize a member | Magic-bearing formats are recognized from their header (`members_larger_than_the_recognition_prefix_are_listed`: a CPIO member whose first file ends past 4 KiB); weak formats that need the whole input (zlib, LZMA-alone, old binary CPIO, structure-only firmware layouts) are not listed when larger than 4 KiB |
 | A7 | A PDX package has `index.xml` at the root and at least one `.odx*` member | odxtools loads every `.odx*` member and reads only the catalog's `SHORT-NAME`; a PDX with only auxiliary files would be labelled a plain ZIP |
 | A8 | Nordic DFU packages name their images under the `manifest` object of `manifest.json` | Taken from nrfutil package output, not a published specification; a manifest with other keys is not labelled |
+| A9 | A `DATAFILE` path names a PDX member by its path inside the archive, exactly or ignoring ASCII case | Read from odxtools 11.7.0 `externflashdata.py`, not from the ASAM schema; `pdx_data_files_are_listed_in_the_coding_their_document_states` matches `CAL.HEX` to `cal.hex`; a package that stores data files under another directory would report them as not in the package |
 
 ## Known boundaries
 
@@ -137,6 +149,11 @@ file as Linux initramfs counts them. No archive field is a code byte order.
 ## Verification
 
 On 2026-10-13 (macOS AArch64, rustc 1.100.0-nightly 2026-09-05):
+
+- After PDX data files were resolved, `tests/archives.rs` (28 tests,
+  including a PDX package built from the documented layout with an
+  every-prefix truncation and byte-mutation sweep) and the whole native
+  suite (1136 tests, 6 ignored) passed. No real PDX package was tested.
 
 - The unit tests in `src/formats/archives.rs` and its `zip`, `tar` and
   `cpio` submodules (17 tests) and the 27 tests in `tests/archives.rs`

@@ -23,6 +23,8 @@ mod odx;
 mod rwd;
 mod xml;
 
+pub(crate) use odx::{external_flash_data, ExternalFlashData, FlashCoding};
+
 /// A recognized automotive layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layout {

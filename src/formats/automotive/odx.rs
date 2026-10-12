@@ -83,6 +83,99 @@ fn hex_bytes(text: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
+/// How the bytes of a flash data element are coded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlashCoding {
+    /// `BINARY`: hexadecimal text inside the document, raw bytes in an
+    /// external data file.
+    Binary,
+    /// `INTEL-HEX` records.
+    IntelHex,
+    /// `MOTOROLA-S` records.
+    MotorolaS,
+    /// Encrypted or compressed (`ENCRYPT-COMPRESS-METHOD` present), or a
+    /// `USER-DEFINED` format: not analyzed.
+    Opaque,
+}
+
+/// A data file an ODX-F document references through `EXTERN-FLASHDATA`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExternalFlashData {
+    /// The `DATAFILE` path, relative to the PDX package root.
+    pub file: String,
+    /// The flash data's label, `SHORT-NAME (SELECTION)`.
+    pub label: String,
+    /// How the file's bytes are coded.
+    pub coding: FlashCoding,
+}
+
+/// What a `FLASHDATA` element says about its data.
+struct FlashDataElement {
+    id: String,
+    kind: String,
+    label: String,
+    coding: FlashCoding,
+    datafile: Option<String>,
+}
+
+/// Read the `FLASHDATA` element `node`, the `index`-th of its document.
+fn flash_data_element(doc: &Document, node: usize, index: usize) -> FlashDataElement {
+    let element = &doc.nodes[node];
+    let short_name = doc
+        .child_text(node, "SHORT-NAME")
+        .map_or_else(|| format!("flash data {}", index + 1), str::to_string);
+    let selection = doc
+        .child(node, "DATAFORMAT")
+        .and_then(|f| doc.nodes[f].attribute("SELECTION"))
+        .unwrap_or("USER-DEFINED")
+        .to_string();
+    let transformed = doc.child(node, "ENCRYPT-COMPRESS-METHOD").is_some();
+    let coding = match selection.as_str() {
+        _ if transformed => FlashCoding::Opaque,
+        BINARY => FlashCoding::Binary,
+        INTEL_HEX => FlashCoding::IntelHex,
+        MOTOROLA_S => FlashCoding::MotorolaS,
+        _ => FlashCoding::Opaque,
+    };
+    FlashDataElement {
+        id: element.attribute("ID").unwrap_or("").to_string(),
+        kind: element
+            .attribute("xsi:type")
+            .or_else(|| element.attribute("type"))
+            .unwrap_or("FLASHDATA")
+            .to_string(),
+        label: format!("{short_name} ({selection})"),
+        coding,
+        datafile: doc.child_text(node, "DATAFILE").map(str::to_string),
+    }
+}
+
+/// The data files an ODX-F document references, at most
+/// [`MAX_COMPONENTS`]. A document that does not parse, or has no `FLASH`
+/// category, references none.
+pub(crate) fn external_flash_data(data: &[u8]) -> Vec<ExternalFlashData> {
+    let Ok(doc) = Document::parse(data) else {
+        return Vec::new();
+    };
+    let Some(flash) = doc.child(0, "FLASH").filter(|_| doc.root().name == "ODX") else {
+        return Vec::new();
+    };
+    doc.descendants(flash, "FLASHDATA")
+        .iter()
+        .take(MAX_COMPONENTS)
+        .enumerate()
+        .filter_map(|(i, &node)| {
+            let element = flash_data_element(&doc, node, i);
+            let file = element.datafile?;
+            Some(ExternalFlashData {
+                file,
+                label: element.label,
+                coding: element.coding,
+            })
+        })
+        .collect()
+}
+
 pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let doc = Document::parse(data)?;
     if doc.root().name != "ODX" {
@@ -142,30 +235,21 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
 
     let flashdatas = doc.descendants(flash, "FLASHDATA");
     for (i, &node) in flashdatas.iter().enumerate().take(MAX_COMPONENTS) {
-        let element = &doc.nodes[node];
-        let id = element.attribute("ID").unwrap_or("");
-        let kind = element
-            .attribute("xsi:type")
-            .or_else(|| element.attribute("type"))
-            .unwrap_or("FLASHDATA");
-        let short_name = doc
-            .child_text(node, "SHORT-NAME")
-            .map_or_else(|| format!("flash data {}", i + 1), str::to_string);
-        let selection = doc
-            .child(node, "DATAFORMAT")
-            .and_then(|f| doc.nodes[f].attribute("SELECTION"))
-            .unwrap_or("USER-DEFINED")
-            .to_string();
-        let label = format!("{short_name} ({selection})");
-        let transformed = doc.child(node, "ENCRYPT-COMPRESS-METHOD").is_some();
+        let FlashDataElement {
+            id,
+            kind,
+            label,
+            coding,
+            datafile,
+        } = flash_data_element(&doc, node, i);
         let placement = placements
             .iter()
-            .find(|(r, _)| r == id)
+            .find(|(r, _)| *r == id)
             .map_or(String::new(), |(_, d)| format!("; {d}"));
         c.notes.push(format!("{label}: {kind}{placement}"));
-        if let Some(file) = doc.child_text(node, "DATAFILE") {
+        if let Some(file) = datafile {
             c.notes.push(format!(
-                "{label}: external data file {file} is not part of a standalone ODX document"
+                "{label}: external data file {file}, supplied by the PDX package that holds the document"
             ));
             continue;
         }
@@ -177,28 +261,27 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         let (offset, stored_size) = doc.nodes[data_node]
             .text_span
             .map_or((0, 0), |(start, end)| (start, end - start));
-        let child = if transformed || !matches!(selection.as_str(), INTEL_HEX | MOTOROLA_S | BINARY)
-        {
-            c.notes.push(format!(
-                "{label}: encrypted, compressed or user-defined data; not analyzed"
-            ));
-            Child::opaque(label, offset, slice(data, offset, stored_size)?)
-        } else if selection == BINARY {
-            Child::decoded(
+        let child = match coding {
+            FlashCoding::Opaque => {
+                c.notes.push(format!(
+                    "{label}: encrypted, compressed or user-defined data; not analyzed"
+                ));
+                Child::opaque(label, offset, slice(data, offset, stored_size)?)
+            }
+            FlashCoding::Binary => Child::decoded(
                 label,
                 offset,
                 stored_size,
                 Cow::Owned(hex_bytes(text)?),
                 "ODX hex text",
-            )
-        } else {
-            Child::decoded(
+            ),
+            FlashCoding::IntelHex | FlashCoding::MotorolaS => Child::decoded(
                 label,
                 offset,
                 stored_size,
                 Cow::Owned(hex_records(text)),
                 "ODX text",
-            )
+            ),
         };
         c.children.push(child);
     }

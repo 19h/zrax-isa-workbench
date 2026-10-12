@@ -5,7 +5,7 @@ them names the ECU's CPU, so the ISA always comes from extracted flash data.
 
 | JSON format ID | Layout | Recognition | Primary source |
 | --- | --- | --- | --- |
-| `odx` | ASAM ODX document; for the FLASH category, every `FLASHDATA`: `INTEL-HEX`/`MOTOROLA-S` text decoded by the hex parsers, `BINARY` hex text decoded; `USER-DEFINED` or `ENCRYPT-COMPRESS-METHOD` data opaque; `EXTERN-FLASHDATA` noted | Strong: `ODX` root element after the XML declaration | odxtools 11.7.0 (the ASAM schemas are not public) |
+| `odx` | ASAM ODX document; for the FLASH category, every `FLASHDATA`: `INTEL-HEX`/`MOTOROLA-S` text decoded by the hex parsers, `BINARY` hex text decoded; `USER-DEFINED` or `ENCRYPT-COMPRESS-METHOD` data opaque; `EXTERN-FLASHDATA` noted, and resolved by the ZIP container inside a PDX package | Strong: `ODX` root element after the XML declaration | odxtools 11.7.0 (the ASAM schemas are not public) |
 | `hondarwd` | Formats `0x5A` (six length-prefixed headers, one firmware block) and `0x31` (delimited headers, 130-byte records merged into blocks) | Strong: format byte and CR LF plus the trailing 32-bit sum | rwd-xray `83b990e3` (community reverse engineering) |
 | `toyotacuw` | `\0CALIBRATION\0`, format type, CRC-32 over the declared range, members with CRC-32; formats `0x04`/`0x67` member lists | Strong: 13-byte magic | `kaikozlov/ghidra_rh850` `7b31684d` (community reverse engineering) |
 | `mercedescff` | Caesar flash file: stub, header size, bit-flag flash header, data blocks and segments | Weak: un-inverted CRC-32 over the file and a consistent header | `CaesarSuite` `f8e8463f` (community reverse engineering) |
@@ -20,9 +20,10 @@ levels, and requires balanced elements. Components are capped at 4096.
 
 Known boundaries: Mercedes SMR-F has no public layout and is not recognized.
 RWD formats `0x58`, `0x59` and `0x30` have no established layout. PDX
-packages are ZIP archives: the ZIP container labels them and classifies
-each `.odx*` member on its own, so ODX `EXTERN-FLASHDATA` references to
-other members are not resolved yet.
+packages are ZIP archives: the ZIP container labels them, classifies each
+`.odx*` member on its own, and lists the members that `EXTERN-FLASHDATA`
+elements name in the coding their document states ([archives](archives.md)).
+A standalone ODX document notes its external data files without them.
 
 Verification: on 2026-10-12 (macOS AArch64), `tests/automotive.rs` (9 tests,
 synthetic fixtures built from the documented layouts, with truncation and
