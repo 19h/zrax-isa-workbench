@@ -125,6 +125,11 @@ HFS+, ext, FAT/exFAT and ISO 9660 volumes larger than the bytes given (for
 example cut at the 64 MiB extraction limit) are read as truncated volumes:
 files whose data is present are listed and the others counted; a FAT
 volume cut by more than its weak detection allows is still not detected.
+NTFS volumes followed (`$MFT` runlist and attribute list, fixups verified,
+named streams, sparse and LZNT1-compressed data decoded, paths from parent
+references, truncated volumes); `$I30` index walks, `$LogFile` replay, EFS
+decryption and WOF (XPRESS/LZX) compression are not implemented; see
+[NTFS volumes](ntfs.md).
 APFS containers followed (checkpoint choice with Fletcher-64 verified,
 object maps, file-system trees, decmpfs decoded, encrypted volumes opaque,
 containers in GPT partitions and Apple disk images reached as children);

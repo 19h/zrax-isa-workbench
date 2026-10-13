@@ -46,6 +46,8 @@
 //! - LZX as Microsoft cabinet folders store it (`typeCompress` 3): see
 //!   [`lzx`]. No magic; decoded only where a cabinet names it, with the
 //!   window size the cabinet gives.
+//! - LZNT1 as NTFS compressed attributes store it: see [`lznt1`]. No
+//!   magic; decoded only where an NTFS compression unit names it.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -66,6 +68,7 @@ mod jffs2;
 mod lz4_block;
 mod lzo;
 mod lzss;
+mod lznt1;
 mod lzx;
 mod microlzma;
 mod xz;
@@ -188,6 +191,9 @@ pub enum Codec {
         /// Window size in bits: 15 to 21 (32 KiB to 2 MiB).
         window_bits: u8,
     },
+    /// LZNT1 chunks ([MS-XCA] section 2.5), as NTFS compression units store
+    /// them; no magic.
+    Lznt1,
 }
 
 impl Codec {
@@ -221,6 +227,7 @@ impl Codec {
         Self::Lzx {
             window_bits: lzx::MAX_WINDOW_BITS,
         },
+        Self::Lznt1,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -252,6 +259,7 @@ impl Codec {
             Self::Adc => "ADC",
             Self::Lzvn => "LZVN",
             Self::Lzx { .. } => "LZX",
+            Self::Lznt1 => "LZNT1",
         }
     }
 
@@ -287,6 +295,8 @@ impl Codec {
             Self::Lzvn => FileFormat::Raw,
             // LZX has no magic; only cabinet folders name it.
             Self::Lzx { .. } => FileFormat::Raw,
+            // LZNT1 has no magic; only NTFS compressed attributes name it.
+            Self::Lznt1 => FileFormat::Raw,
         }
     }
 
@@ -319,6 +329,7 @@ impl Codec {
             Self::Adc => "ADC stream",
             Self::Lzvn => "raw LZVN stream",
             Self::Lzx { .. } => "LZX stream",
+            Self::Lznt1 => "LZNT1 stream",
         }
     }
 
@@ -520,13 +531,14 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::Adc => adc::decode(data, limit),
         Codec::Lzvn => lzss::lzvn_raw(data, limit),
         Codec::Lzx { window_bits } => lzx::decode(data, window_bits, limit),
+        Codec::Lznt1 => lznt1::decode(data, limit),
     }
 }
 
 /// The first `limit` bytes (at most [`MAX_PAYLOAD`]) of a stream too long
 /// to decode whole. Codecs that decode as a stream stop at the limit:
 /// gzip, zlib, raw DEFLATE, Zstandard, bzip2, LZ4 frames, raw LZ4 blocks,
-/// LZMA-alone and xz. Other codecs decode as [`decode_limited`] does. The
+/// LZMA-alone, xz and LZNT1. Other codecs decode as [`decode_limited`] does. The
 /// integrity checks cover the whole output, so a prefix verifies none.
 ///
 /// # Errors
@@ -552,6 +564,7 @@ pub fn decode_prefix(codec: Codec, data: &[u8], limit: usize) -> Result<Vec<u8>>
         Codec::Lzma => Ok(xz::lzma_until(data, limit, AtLimit::Stop)?.data),
         Codec::Xz => Ok(xz::xz_until(data, limit, AtLimit::Stop)?.data),
         Codec::Lz4Block => Ok(lz4_block::decode_until(data, limit, AtLimit::Stop)?.data),
+        Codec::Lznt1 => Ok(lznt1::decode_until(data, limit, AtLimit::Stop)?.data),
         _ => Ok(decode_limited(codec, data, limit)?.data),
     }
 }

@@ -137,6 +137,7 @@ const FORMAT_NAMES = {
   ffu: 'Full Flash Update image',
   rpm: 'RPM package',
   pyinstaller: 'PyInstaller archive', asar: 'Electron ASAR archive', dotnetbundle: '.NET single-file bundle',
+  ntfs: 'NTFS volume',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

@@ -54,6 +54,14 @@ pub enum ClassifierError {
         limit: usize,
     },
 
+    /// Error parsing an NTFS volume (boot sector, MFT record, runlist or
+    /// attribute list).
+    #[error("NTFS volume parse error: {message}")]
+    NtfsParseError {
+        /// What is wrong with the volume.
+        message: String,
+    },
+
     /// Error parsing an APFS container (container superblock, checkpoint,
     /// object map, volume superblock or B-tree).
     #[error("APFS parse error: {message}")]

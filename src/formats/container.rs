@@ -176,6 +176,8 @@ pub enum Kind {
     /// An application bundle: `PyInstaller` archive, Electron ASAR archive or
     /// .NET single-file bundle.
     AppBundle(super::appbundle::Layout),
+    /// An NTFS volume.
+    Ntfs(super::ntfs::Layout),
 }
 
 impl Kind {
@@ -240,6 +242,7 @@ impl Kind {
             Self::Ffu(layout) => layout.format(),
             Self::Rpm(layout) => layout.format(),
             Self::AppBundle(layout) => layout.format(),
+            Self::Ntfs(layout) => layout.format(),
         }
     }
 
@@ -304,6 +307,7 @@ impl Kind {
             Self::Ffu(layout) => layout.label(),
             Self::Rpm(layout) => layout.label(),
             Self::AppBundle(layout) => layout.label(),
+            Self::Ntfs(layout) => layout.label(),
         }
     }
 
@@ -368,6 +372,7 @@ impl Kind {
             Self::Ffu(layout) => layout.is_weak(),
             Self::Rpm(layout) => layout.is_weak(),
             Self::AppBundle(layout) => layout.is_weak(),
+            Self::Ntfs(layout) => layout.is_weak(),
         }
     }
 }
@@ -437,6 +442,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Ffu(layout) => super::ffu::parse_container(data, layout),
         Kind::Rpm(layout) => super::rpm::parse_container(data, layout),
         Kind::AppBundle(layout) => super::appbundle::parse_container(data, layout),
+        Kind::Ntfs(layout) => super::ntfs::parse_container(data, layout),
     }
 }
 

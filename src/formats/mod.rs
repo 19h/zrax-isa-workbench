@@ -86,6 +86,7 @@ pub mod mz;
 pub mod nintendo;
 pub mod nintendo2;
 pub mod nlm;
+pub mod ntfs;
 pub mod ols;
 pub mod omf;
 pub mod optionrom;
@@ -699,6 +700,19 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = dmg::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Dmg(layout),
+        };
+    }
+
+    // NTFS volumes: the OEM ID `NTFS    ` at 3, the end marker `55 AA` at
+    // 510 and a BIOS parameter block that ntfs-3g accepts. After the virtual
+    // disks and Apple disk images, whose data starts with a guest disk's
+    // first sector, and before the archive, filesystem, ISO 9660, partition
+    // and FAT checks, which probe offsets inside the volume (257, 0x400,
+    // 0x438, 0x8001) where file data may lie; no format they claim starts
+    // with an NTFS boot sector, and the MBR check refuses one.
+    if let Some(layout) = ntfs::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Ntfs(layout),
         };
     }
 

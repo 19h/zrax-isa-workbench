@@ -1246,6 +1246,9 @@ pub enum FileFormat {
     Asar,
     /// .NET single-file bundle: files and a manifest appended to an apphost
     DotnetBundle,
+    // NTFS volumes
+    /// NTFS volume (`NTFS    ` boot sector and master file table)
+    Ntfs,
 }
 
 impl fmt::Display for FileFormat {
@@ -1580,6 +1583,8 @@ impl fmt::Display for FileFormat {
             FileFormat::PyInstaller => write!(f, "PyInstaller archive"),
             FileFormat::Asar => write!(f, "Electron ASAR archive"),
             FileFormat::DotnetBundle => write!(f, ".NET single-file bundle"),
+            // NTFS volumes
+            FileFormat::Ntfs => write!(f, "NTFS volume"),
         }
     }
 }
