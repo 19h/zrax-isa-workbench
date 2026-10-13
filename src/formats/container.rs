@@ -150,6 +150,9 @@ pub enum Kind {
     Atari8(super::atari8::Layout),
     /// An Apple II disk image: DOS 3.3, `ProDOS` or 2IMG.
     Apple2(super::apple2::Layout),
+    /// An Amstrad CPC or Spectrum +3 disk image, or a file with an AMSDOS
+    /// or +3DOS header.
+    CpcDsk(super::cpcdsk::Layout),
 }
 
 impl Kind {
@@ -203,6 +206,7 @@ impl Kind {
             Self::Adf(layout) => layout.format(),
             Self::Atari8(layout) => layout.format(),
             Self::Apple2(layout) => layout.format(),
+            Self::CpcDsk(layout) => layout.format(),
         }
     }
 
@@ -256,6 +260,7 @@ impl Kind {
             Self::Adf(layout) => layout.label(),
             Self::Atari8(layout) => layout.label(),
             Self::Apple2(layout) => layout.label(),
+            Self::CpcDsk(layout) => layout.label(),
         }
     }
 
@@ -309,6 +314,7 @@ impl Kind {
             Self::Adf(layout) => layout.is_weak(),
             Self::Atari8(layout) => layout.is_weak(),
             Self::Apple2(layout) => layout.is_weak(),
+            Self::CpcDsk(layout) => layout.is_weak(),
         }
     }
 }
@@ -367,6 +373,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Adf(layout) => super::adf::parse_container(data, layout),
         Kind::Atari8(layout) => super::atari8::parse_container(data, layout),
         Kind::Apple2(layout) => super::apple2::parse_container(data, layout),
+        Kind::CpcDsk(layout) => super::cpcdsk::parse_container(data, layout),
     }
 }
 

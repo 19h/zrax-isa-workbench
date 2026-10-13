@@ -45,6 +45,7 @@ pub mod compressed;
 pub mod console;
 pub mod container;
 pub mod coreboot;
+pub mod cpcdsk;
 pub mod d10;
 pub mod dex;
 pub mod discimg;
@@ -956,6 +957,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // CPC and +3 disk images (`MV - CPC`, `EXTENDED CPC DSK`) and +3DOS
+    // files (`PLUS3DOS` and the soft-EOF byte): ASCII signatures at offset
+    // 0 that no format above starts with.
+    if let Some(layout) = cpcdsk::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::CpcDsk(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -1280,6 +1290,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = apple2::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Apple2(layout),
+        };
+    }
+
+    // AMSDOS headers have no magic: the 16-bit checksum, the user number,
+    // the name, the zero fields, the file type, both lengths and the file
+    // size must all agree.
+    if let Some(layout) = cpcdsk::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::CpcDsk(layout),
         };
     }
 

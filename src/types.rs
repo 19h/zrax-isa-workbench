@@ -1191,6 +1191,13 @@ pub enum FileFormat {
     ProDos,
     /// Apple II 2IMG disk image (`.2mg`)
     TwoImg,
+    // CPC and Spectrum +3 disks
+    /// Amstrad CPC / Spectrum +3 disk image (CPCEMU or Extended DSK)
+    CpcDsk,
+    /// File with a Spectrum +3DOS header (`PLUS3DOS`)
+    Plus3Dos,
+    /// File with an Amstrad CPC AMSDOS header
+    Amsdos,
 }
 
 impl fmt::Display for FileFormat {
@@ -1493,6 +1500,10 @@ impl fmt::Display for FileFormat {
             FileFormat::Apple2Dos => write!(f, "Apple II DOS 3.3 disk"),
             FileFormat::ProDos => write!(f, "ProDOS volume"),
             FileFormat::TwoImg => write!(f, "2IMG disk image"),
+            // CPC and Spectrum +3 disks
+            FileFormat::CpcDsk => write!(f, "CPC DSK disk image"),
+            FileFormat::Plus3Dos => write!(f, "+3DOS file"),
+            FileFormat::Amsdos => write!(f, "AMSDOS file"),
         }
     }
 }

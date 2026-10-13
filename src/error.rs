@@ -128,6 +128,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an Amstrad CPC or Spectrum +3 disk image (CPCEMU or
+    /// Extended DSK) or a file with an AMSDOS or +3DOS header.
+    #[error("CPC disk image parse error: {message}")]
+    CpcDskParseError {
+        /// What is wrong with the image or header.
+        message: String,
+    },
+
     /// Error parsing a partition table (MBR, GPT or Apple Partition Map).
     #[error("Partition table parse error: {message}")]
     PartitionParseError {

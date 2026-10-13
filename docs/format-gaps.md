@@ -235,7 +235,10 @@ files followed; XFD, DCM, ATX, PRO and CAS images and MyDOS/SpartaDOS file
 systems are not implemented; see [Atari 8-bit](atari8.md). Apple II disk
 images followed: raw DOS 3.3 and ProDOS images (weak) and 2IMG (strong);
 DOS 3.2, nibble images (.nib, .nb2, WOZ), physical and CP/M sector orders
-are not implemented; see [Apple II disk images](apple2.md).
+are not implemented; see [Apple II disk images](apple2.md). CPCEMU and
+Extended DSK images (AMSDOS and +3DOS file systems; AMSDOS binary and +3DOS
+CODE files as Z80) and standalone +3DOS and AMSDOS headered files followed;
+see [CPC and Spectrum +3 disk images](cpcdsk.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as

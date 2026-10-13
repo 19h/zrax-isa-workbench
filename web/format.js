@@ -126,6 +126,7 @@ const FORMAT_NAMES = {
   adf: 'Amiga disk image (ADF)', amigahdf: 'Amiga hard disk image',
   atr: 'Atari ATR disk image', atarixex: 'Atari binary load file',
   apple2dos: 'Apple II DOS 3.3 disk', prodos: 'ProDOS volume', twoimg: '2IMG disk image',
+  cpcdsk: 'CPC DSK disk image', plus3dos: '+3DOS file', amsdos: 'AMSDOS file',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

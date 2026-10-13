@@ -824,6 +824,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Apple2Dos => "Apple II DOS 3.3 disk",
         FileFormat::ProDos => "ProDOS volume",
         FileFormat::TwoImg => "2IMG disk image",
+        FileFormat::CpcDsk => "CPC DSK disk image",
+        FileFormat::Plus3Dos => "+3DOS file",
+        FileFormat::Amsdos => "AMSDOS file",
     }
 }
 
