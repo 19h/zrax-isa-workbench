@@ -117,8 +117,10 @@ const PREFIXES: &[(&str, Expect)] = &[
     ("tms320c6_", Is(&[TiC6000])),
     ("tms320c67_", Is(&[TiC6000])),
     ("tms320c64_", Is(&[TiC6000])),
-    ("tms320c54_", Is(&[TiC5500])),
-    ("tms32054_", Is(&[TiC5500])),
+    // IDA's tms320c54 module; the COFF samples carry target ID 0x0098
+    // (TMS320C5400).
+    ("tms320c54_", Is(&[TiC5400])),
+    ("tms32054_", Is(&[TiC5400])),
     ("tms32055_", Is(&[TiC5500])),
     ("tms32055-", Is(&[TiC5500])),
     ("tms320c5_", Is(&[TiC5500])),
