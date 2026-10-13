@@ -154,7 +154,10 @@ real dumps) and kernel crash dump headers (`PAGEDUMP`, `PAGEDU64`; bodies
 not parsed) followed; see [Windows crash dumps](minidump.md). NetWare
 Loadable Modules (the i386, SPARC, PowerPC and Alpha signatures as the
 target field; packed NLMPACK modules opaque, not decoded) followed; see
-[NetWare modules](nlm.md).
+[NetWare modules](nlm.md). PC/GEOS geodes (2.0 and 1.x headers; `HAF_CODE`
+resources as 16-bit x86; relocations counted, not applied; GEOS VM and
+data files recognized but not parsed) followed; see [PC/GEOS
+geodes](geos.md).
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

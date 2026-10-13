@@ -127,6 +127,8 @@ pub enum Kind {
     Minidump(super::minidump::Layout),
     /// A `NetWare` Loadable Module.
     Nlm(super::nlm::Layout),
+    /// A PC/GEOS geode.
+    Geos(super::geos::Layout),
 }
 
 impl Kind {
@@ -169,6 +171,7 @@ impl Kind {
             Self::JavaImage(layout) => layout.format(),
             Self::Minidump(layout) => layout.format(),
             Self::Nlm(layout) => layout.format(),
+            Self::Geos(layout) => layout.format(),
         }
     }
 
@@ -211,6 +214,7 @@ impl Kind {
             Self::JavaImage(layout) => layout.label(),
             Self::Minidump(layout) => layout.label(),
             Self::Nlm(layout) => layout.label(),
+            Self::Geos(layout) => layout.label(),
         }
     }
 
@@ -253,6 +257,7 @@ impl Kind {
             Self::JavaImage(layout) => layout.is_weak(),
             Self::Minidump(layout) => layout.is_weak(),
             Self::Nlm(layout) => layout.is_weak(),
+            Self::Geos(layout) => layout.is_weak(),
         }
     }
 }
@@ -300,6 +305,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::JavaImage(layout) => super::javaimage::parse_container(data, layout),
         Kind::Minidump(layout) => super::minidump::parse_container(data, layout),
         Kind::Nlm(layout) => super::nlm::parse_container(data, layout),
+        Kind::Geos(layout) => super::geos::parse_container(data, layout),
     }
 }
 

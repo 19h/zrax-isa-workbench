@@ -1127,6 +1127,9 @@ pub enum FileFormat {
     // NetWare
     /// `NetWare` Loadable Module (NLM)
     NetWareNlm,
+    // PC/GEOS
+    /// PC/GEOS geode (`.geo` application, library or driver)
+    GeosGeode,
 }
 
 impl fmt::Display for FileFormat {
@@ -1393,6 +1396,8 @@ impl fmt::Display for FileFormat {
             FileFormat::WindowsKernelDump => write!(f, "Windows kernel dump"),
             // NetWare
             FileFormat::NetWareNlm => write!(f, "NetWare NLM"),
+            // PC/GEOS
+            FileFormat::GeosGeode => write!(f, "PC/GEOS geode"),
         }
     }
 }

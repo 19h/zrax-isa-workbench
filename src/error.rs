@@ -104,6 +104,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a PC/GEOS geode (`.geo` application, library or
+    /// driver).
+    #[error("GEOS geode parse error: {message}")]
+    GeosParseError {
+        /// What is wrong with the geode.
+        message: String,
+    },
+
     /// Error parsing an Espressif firmware image or flash dump (ESP32
     /// family, ESP8266, ESP-IDF partition table).
     #[error("Espressif image parse error: {message}")]

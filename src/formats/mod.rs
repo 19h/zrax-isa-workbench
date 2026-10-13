@@ -52,6 +52,7 @@ pub mod ext;
 pub mod fat;
 pub mod fatelf;
 pub mod frf;
+pub mod geos;
 pub mod goff;
 pub mod hex;
 pub mod huawei;
@@ -813,6 +814,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = nlm::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Nlm(layout),
+        };
+    }
+
+    // PC/GEOS files: the `GEAS` (2.0) or `GEOS` (1.x) file header signature,
+    // with the high bits of its first and third letters set, at offset 0.
+    if let Some(layout) = geos::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Geos(layout),
         };
     }
 
