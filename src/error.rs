@@ -68,6 +68,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a DOS MZ, NE or LE/LX executable header (an LE/LX
+    /// header without an MZ stub that does not validate).
+    #[error("MZ/NE/LE/LX parse error: {message}")]
+    MzParseError {
+        /// What is wrong with the header.
+        message: String,
+    },
+
     /// Error parsing a partition table (MBR, GPT or Apple Partition Map).
     #[error("Partition table parse error: {message}")]
     PartitionParseError {

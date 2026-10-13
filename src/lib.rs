@@ -1423,7 +1423,14 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
             FormatDetection::with_variant(FileFormat::Aout, format!("{:?}", variant))
         }
         DetectedFormat::Mz { variant } => {
-            FormatDetection::with_variant(FileFormat::Mz, format!("{:?}", variant))
+            let mut detection =
+                FormatDetection::with_variant(variant.detected_format(), format!("{:?}", variant));
+            // A linear header without an MZ stub is recognized from its
+            // complete structure, not a magic value.
+            if variant.is_weak() {
+                detection.confidence = 0.85;
+            }
+            detection
         }
         DetectedFormat::Pef => FormatDetection::new(FileFormat::Pef),
         DetectedFormat::Wasm => FormatDetection::new(FileFormat::Wasm),

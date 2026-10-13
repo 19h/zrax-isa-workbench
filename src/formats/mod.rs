@@ -350,16 +350,21 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
 
     // PE/COFF - check for PE first, then fall through to MZ/NE/LE/LX
     if data.len() >= 2 && data[..2] == magic::MZ {
-        if data.len() >= 0x40 {
-            let pe_offset = u32::from_le_bytes([data[0x3C], data[0x3D], data[0x3E], data[0x3F]]);
-            let pe_off = pe_offset as usize;
-            if pe_off + 4 <= data.len() && data[pe_off..pe_off + 4] == magic::PE {
-                return DetectedFormat::Pe { pe_offset };
-            }
+        if let Some(pe_offset) = mz::pe_header_offset(data) {
+            return DetectedFormat::Pe { pe_offset };
         }
         // Not PE, try MZ/NE/LE/LX
         if let Some(variant) = mz::detect(data) {
             return DetectedFormat::Mz { variant };
+        }
+    }
+
+    // A `ZM` DOS header (the byte-swapped signature MS-DOS also accepts)
+    // counts only with the PE signature at `e_lfanew`: on its own it is a
+    // two-byte key with nothing else checked.
+    if data[..2] == mz::ZM_SIGNATURE {
+        if let Some(pe_offset) = mz::pe_header_offset(data) {
+            return DetectedFormat::Pe { pe_offset };
         }
     }
 
@@ -1147,6 +1152,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // LE/LX headers without an MZ stub: a two-byte signature at offset 0,
+    // so the header fields, the object table and the page table must all
+    // validate. Stubbed files are claimed by the DOS header check above.
+    if let Some(variant) = mz::detect_bare(data) {
+        return DetectedFormat::Mz { variant };
+    }
+
     // zlib and LZMA-alone: two-byte or properties-only signatures,
     // recognized only from a complete decode.
     if let Some(codec) = compressed::detect_weak(data) {
@@ -1170,7 +1182,7 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
 pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<ClassificationResult> {
     match *format {
         DetectedFormat::Elf { class, endian } => elf::parse(data, class, endian),
-        DetectedFormat::Pe { pe_offset } => pe::parse(data, pe_offset),
+        DetectedFormat::Pe { pe_offset } => mz::parse_pe(data, pe_offset),
         DetectedFormat::MachO { bits, big_endian } => macho::parse(data, bits, big_endian),
         DetectedFormat::MachOFat { big_endian, .. } => macho::parse_fat(data, big_endian),
         DetectedFormat::Coff { .. } => coff::parse(data),

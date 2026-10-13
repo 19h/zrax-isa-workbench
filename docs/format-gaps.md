@@ -164,7 +164,11 @@ non-executable and extended AIF; compressed payloads opaque, no documented
 codec) followed; see [ARM AIF](aif.md). Symbian OS v9 SIS packages (UID
 checksum, controller and data CRC-16s and per-file SHA-1 verified; files by
 target path; signatures not verified; pre-v9 EPOC SIS not implemented)
-followed; see [Symbian SIS packages](sis.md).
+followed; see [Symbian SIS packages](sis.md). LE/LX headers without an MZ
+stub (weak; header, object table, page table and page extents validated;
+the CPU type is the ISA evidence) and PE images whose DOS header starts
+with `ZM` (only with the PE signature at `e_lfanew`) followed; see
+[DOS-family headers](mz.md).
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |
