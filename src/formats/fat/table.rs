@@ -267,6 +267,15 @@ impl Chain {
     }
 }
 
+/// Stored bytes and their file offset: a run of clusters, or the
+/// FAT12/FAT16 root directory region.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Extent<'a> {
+    /// File offset.
+    pub(super) offset: usize,
+    pub(super) bytes: &'a [u8],
+}
+
 /// The cluster heap: cluster 2 starts at `offset` in the input. The heap
 /// lies inside the volume (the cluster count is derived from, or checked
 /// against, the volume size), so a cluster past the end of the input lies
@@ -285,7 +294,7 @@ impl<'a> Heap<'a> {
 
     /// The first `len` stored bytes of `run` (at most the whole run), with
     /// their file offset; absent when they pass the end of the input.
-    pub(super) fn read(&self, run: Run, len: u64) -> ReadResult<(usize, &'a [u8])> {
+    pub(super) fn read(&self, run: Run, len: u64) -> ReadResult<Extent<'a>> {
         let run_size = u64::from(run.clusters) * self.cluster_size;
         let start = self.cluster_offset(run.first);
         let end = start + len.min(run_size);
@@ -294,7 +303,10 @@ impl<'a> Heap<'a> {
             .zip(usize::try_from(end).ok())
             .filter(|&(_, end)| end <= self.data.len());
         match range {
-            Some((start, end)) => Ok((start, &self.data[start..end])),
+            Some((start, end)) => Ok(Extent {
+                offset: start,
+                bytes: &self.data[start..end],
+            }),
             None => Err(Fault::Absent),
         }
     }

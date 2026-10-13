@@ -274,12 +274,34 @@ pub(super) struct DescriptorSet {
     /// Descriptors of the reserved types 4-254.
     reserved: usize,
     /// ECMA-167 descriptors after the terminator: identifier and sector.
-    udf: Vec<(&'static str, &'static str, usize)>,
+    udf: Vec<UdfDescriptor>,
+}
+
+/// The bytes of a volume descriptor that tell its kind: the volume
+/// descriptor type (offset 0, 8.1.1) and version (offset 6, 8.1.3).
+#[derive(Debug, Clone, Copy)]
+struct DescriptorHeader {
+    /// Volume descriptor type: `TYPE_PRIMARY`, `TYPE_TERMINATOR` and so on.
+    kind: u8,
+    /// Volume descriptor version.
+    version: u8,
+}
+
+/// An ECMA-167 volume structure descriptor of the recognition sequence
+/// (2/9.1).
+#[derive(Debug, Clone, Copy)]
+struct UdfDescriptor {
+    /// Standard identifier, one of [`UDF_DESCRIPTORS`].
+    identifier: &'static str,
+    /// What the identifier means, from [`UDF_DESCRIPTORS`].
+    meaning: &'static str,
+    /// Sector number, in 2048-byte sectors.
+    sector: usize,
 }
 
 /// The type and version bytes of the descriptor in `sector`, if it carries
 /// `CD001`.
-fn descriptor_header(data: &[u8], sector: usize) -> Result<Option<(u8, u8)>> {
+fn descriptor_header(data: &[u8], sector: usize) -> Result<Option<DescriptorHeader>> {
     let at = sector * SECTOR_SIZE;
     let header = slice(data, at, SECTOR_SIZE).map_err(|_| {
         error(format!(
@@ -289,18 +311,19 @@ fn descriptor_header(data: &[u8], sector: usize) -> Result<Option<(u8, u8)>> {
     if &header[STANDARD_ID_OFFSET..STANDARD_ID_OFFSET + STANDARD_ID.len()] != STANDARD_ID {
         return Ok(None);
     }
-    Ok(Some((header[0], header[6])))
+    Ok(Some(DescriptorHeader {
+        kind: header[0],
+        version: header[6],
+    }))
 }
 
 /// The first primary volume descriptor of the set, for detection. Reads no
 /// further than the primary descriptor or the terminator.
 pub(super) fn find_primary(data: &[u8]) -> Result<Volume> {
     for sector in FIRST_DESCRIPTOR_SECTOR..FIRST_DESCRIPTOR_SECTOR + MAX_DESCRIPTORS {
-        match descriptor_header(data, sector)? {
-            Some((TYPE_PRIMARY, _)) => {
-                return Volume::parse(data, sector * SECTOR_SIZE, Charset::Ascii)
-            }
-            Some((TYPE_TERMINATOR, _)) | None => break,
+        match descriptor_header(data, sector)?.map(|header| header.kind) {
+            Some(TYPE_PRIMARY) => return Volume::parse(data, sector * SECTOR_SIZE, Charset::Ascii),
+            Some(TYPE_TERMINATOR) | None => break,
             Some(_) => {}
         }
     }
@@ -327,7 +350,7 @@ pub(super) fn read_set(data: &[u8]) -> Result<DescriptorSet> {
     let mut terminator = None;
     for sector in FIRST_DESCRIPTOR_SECTOR..last {
         let at = sector * SECTOR_SIZE;
-        let Some((kind, version)) = descriptor_header(data, sector)? else {
+        let Some(DescriptorHeader { kind, version }) = descriptor_header(data, sector)? else {
             return Err(error(format!(
                 "Missing volume descriptor set terminator: sector {sector} at 0x{at:X} does not \
                  hold CD001"
@@ -424,13 +447,13 @@ impl DescriptorSet {
             let listed: Vec<String> = self
                 .udf
                 .iter()
-                .map(|(id, meaning, sector)| format!("{id} ({meaning}) at sector {sector}"))
+                .map(|d| format!("{} ({}) at sector {}", d.identifier, d.meaning, d.sector))
                 .collect();
             c.notes.push(format!(
                 "UDF bridge: ECMA-167 recognition sequence {}; the UDF structures are not parsed",
                 listed.join(", ")
             ));
-            let ids: Vec<&str> = self.udf.iter().map(|(id, _, _)| *id).collect();
+            let ids: Vec<&str> = self.udf.iter().map(|udf| udf.identifier).collect();
             c.push_metadata("iso9660_udf_descriptors", "UDF descriptors", ids.join(", "));
         }
         for other in &self.other_supplementary {
@@ -497,11 +520,7 @@ fn escape_text(escapes: &[u8]) -> String {
 /// version 1 and a known identifier (2/9.1). The sequence ends at the
 /// first sector that is not one (2/8.3.1, note 1); further ECMA-119
 /// terminators are skipped.
-fn recognition_sequence(
-    data: &[u8],
-    first: usize,
-    last: usize,
-) -> Vec<(&'static str, &'static str, usize)> {
+fn recognition_sequence(data: &[u8], first: usize, last: usize) -> Vec<UdfDescriptor> {
     let mut found = Vec::new();
     for sector in first..last {
         let Some(header) = data.get(sector * SECTOR_SIZE..sector * SECTOR_SIZE + 7) else {
@@ -516,7 +535,11 @@ fn recognition_sequence(
             .find(|(id, _)| identifier == id.as_bytes());
         match known {
             Some(&(id, meaning)) if header[0] == 0 && header[6] == VERSION_1 => {
-                found.push((id, meaning, sector));
+                found.push(UdfDescriptor {
+                    identifier: id,
+                    meaning,
+                    sector,
+                });
             }
             _ => break,
         }
@@ -754,7 +777,7 @@ mod tests {
             data[at + 6] = 1;
         }
         let found = recognition_sequence(&data, 0, 4);
-        let ids: Vec<&str> = found.iter().map(|(id, _, _)| *id).collect();
+        let ids: Vec<&str> = found.iter().map(|udf| udf.identifier).collect();
         assert_eq!(ids, ["BEA01", "NSR03", "TEA01"]);
     }
 }

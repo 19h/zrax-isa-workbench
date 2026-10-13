@@ -66,11 +66,20 @@ pub(super) struct Tree<'a> {
     image: Image<'a>,
     /// Logical block size in bytes.
     block_size: usize,
-    /// File offset and size in bytes of the root directory.
-    root: (usize, usize),
+    /// The root directory's extent.
+    root: Extent,
     pub(super) names: Names,
     /// Why a Joliet hierarchy was not used although Rock Ridge was absent.
     pub(super) joliet_unusable: Option<String>,
+}
+
+/// The extent of a directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Extent {
+    /// File offset in bytes.
+    offset: usize,
+    /// Size in bytes.
+    size: usize,
 }
 
 /// File offset and size of a directory's extent, checked against the
@@ -79,7 +88,7 @@ fn directory_extent(
     image: Image<'_>,
     offset: Option<usize>,
     size: u32,
-) -> std::result::Result<(usize, usize), String> {
+) -> std::result::Result<Extent, String> {
     let size = size as usize;
     let Some(offset) = offset.filter(|&offset| image.holds(offset, size)) else {
         return Err(format!("extent of {size} B lies outside the volume"));
@@ -87,7 +96,7 @@ fn directory_extent(
     if size == 0 {
         return Err("empty directory extent".to_string());
     }
-    Ok((offset, size))
+    Ok(Extent { offset, size })
 }
 
 /// Whether the first sector of a directory's extent, which holds its `.`
@@ -114,7 +123,7 @@ impl<'a> Tree<'a> {
                     primary.offset + ROOT_RECORD_OFFSET
                 ))
             })?;
-        if !has_first_sector(image, root.0, root.1) {
+        if !has_first_sector(image, root.offset, root.size) {
             return Ok(None);
         }
         let mut tree = Self {
@@ -125,7 +134,7 @@ impl<'a> Tree<'a> {
             joliet_unusable: None,
         };
         // The root's `.` record carries the SUSP `SP` and `ER` entries.
-        let dot = directory::records(image.bytes, root.0, root.1.min(SECTOR_SIZE))
+        let dot = directory::records(image.bytes, root.offset, root.size.min(SECTOR_SIZE))
             .next()
             .and_then(std::result::Result::ok)
             .filter(Record::is_self);
@@ -142,7 +151,7 @@ impl<'a> Tree<'a> {
         }
         if let Some(joliet) = &set.joliet {
             match joliet_root(image, &joliet.volume) {
-                Ok(root) if !has_first_sector(image, root.0, root.1) => return Ok(None),
+                Ok(root) if !has_first_sector(image, root.offset, root.size) => return Ok(None),
                 Ok(root) => {
                     tree.root = root;
                     tree.names = Names::Joliet;
@@ -160,7 +169,7 @@ impl<'a> Tree<'a> {
 }
 
 /// The Joliet hierarchy's root directory.
-fn joliet_root(image: Image<'_>, volume: &Volume) -> std::result::Result<(usize, usize), String> {
+fn joliet_root(image: Image<'_>, volume: &Volume) -> std::result::Result<Extent, String> {
     directory_extent(image, volume.root_offset, volume.root_size).map_err(|reason| {
         format!(
             "its root directory record at 0x{:X}: {reason}",
@@ -262,7 +271,7 @@ pub(super) fn walk<'a>(tree: &Tree<'a>, boot_offsets: &[usize]) -> Walked<'a> {
             parent: 0,
             name: String::new(),
         }],
-        visited: HashSet::from([tree.root.0]),
+        visited: HashSet::from([tree.root.offset]),
         census: Census::default(),
         members: Vec::new(),
         boot_files: HashMap::new(),
@@ -270,8 +279,8 @@ pub(super) fn walk<'a>(tree: &Tree<'a>, boot_offsets: &[usize]) -> Walked<'a> {
         directory_budget: tree.image.bytes.len().saturating_mul(2),
     };
     let mut pending = vec![PendingDirectory {
-        offset: tree.root.0,
-        size: tree.root.1,
+        offset: tree.root.offset,
+        size: tree.root.size,
         node: 0,
         depth: 0,
     }];
@@ -538,7 +547,7 @@ impl<'a> Walker<'_, 'a> {
             None => Ok((record.data_offset(block_size), record.data_len)),
         };
         let checked = extent.and_then(|(offset, size)| directory_extent(image, offset, size));
-        let (offset, size) = match checked {
+        let Extent { offset, size } = match checked {
             Ok(extent) => extent,
             Err(reason) => {
                 self.problem(format!("{path}: directory not walked: {reason}"));
@@ -900,7 +909,11 @@ mod tests {
             bytes: &bytes,
             size: bytes.len(),
         };
-        assert_eq!(directory_extent(image, Some(2048), 2048), Ok((2048, 2048)));
+        let second_sector = Extent {
+            offset: 2048,
+            size: 2048,
+        };
+        assert_eq!(directory_extent(image, Some(2048), 2048), Ok(second_sector));
         assert!(directory_extent(image, Some(2048), 2049).is_err());
         assert!(directory_extent(image, None, 1).is_err());
         assert!(directory_extent(image, Some(0), 0).is_err());
@@ -912,7 +925,7 @@ mod tests {
         };
         assert_eq!(
             directory_extent(truncated, Some(2048), 2048),
-            Ok((2048, 2048))
+            Ok(second_sector)
         );
         assert!(!has_first_sector(truncated, 2048, 2048));
         assert!(has_first_sector(truncated, 0, 4096));

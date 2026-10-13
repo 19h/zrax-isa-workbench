@@ -176,6 +176,13 @@ struct Located<'a> {
     primary_failure: Option<String>,
 }
 
+/// A header and its partition entry array, both checked.
+struct Table<'a> {
+    header: Header,
+    /// `entry_count` entries of `entry_size` bytes.
+    array: &'a [u8],
+}
+
 /// `EFI_GUID` text: the first three fields are little-endian
 /// (`UINT32, UINT16, UINT16, UINT8[8]`, as GRUB's `grub_cpu_to_le32` and
 /// `le16` spell the BIOS boot GUID).
@@ -364,10 +371,10 @@ fn entry_array<'a>(data: &'a [u8], header: &Header, block_size: usize) -> Result
 }
 
 /// The header and entry array at `lba`, both checked.
-fn table(data: &[u8], block_size: usize, lba: u64, copy: TableCopy) -> Result<(Header, &[u8])> {
+fn table(data: &[u8], block_size: usize, lba: u64, copy: TableCopy) -> Result<Table<'_>> {
     let header = parse_header(data, block_size, lba, copy)?;
     let array = entry_array(data, &header, block_size)?;
-    Ok((header, array))
+    Ok(Table { header, array })
 }
 
 /// Find a valid table: the primary at LBA 1 for each block size whose LBA 1
@@ -386,7 +393,7 @@ fn locate(data: &[u8]) -> Result<Located<'_>> {
             u64::from(GPT_HEADER_LBA),
             TableCopy::Primary,
         ) {
-            Ok((header, array)) => {
+            Ok(Table { header, array }) => {
                 return Ok(Located {
                     block_size,
                     header,
@@ -406,7 +413,8 @@ fn locate(data: &[u8]) -> Result<Located<'_>> {
         if last <= GPT_HEADER_LBA as usize || !has_signature_at(data, last * block_size) {
             continue;
         }
-        if let Ok((header, array)) = table(data, block_size, last as u64, TableCopy::Backup) {
+        let backup = table(data, block_size, last as u64, TableCopy::Backup);
+        if let Ok(Table { header, array }) = backup {
             let failure = match primary_error.take() {
                 Some(e) => error_message(e),
                 None => "no \"EFI PART\" signature at LBA 1".to_string(),
@@ -650,7 +658,10 @@ fn backup_note(data: &[u8], primary: &Header, primary_array: &[u8], block_size: 
             "Backup GPT header at LBA {lba} lies beyond the end of the file; not verified"
         );
     }
-    let (backup, array) = match table(data, block_size, lba, TableCopy::Backup) {
+    let Table {
+        header: backup,
+        array,
+    } = match table(data, block_size, lba, TableCopy::Backup) {
         Ok(table) => table,
         Err(e) => {
             return format!(

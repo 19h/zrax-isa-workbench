@@ -4,7 +4,7 @@
 //! chains and listed when they start with a recognized format, and the
 //! census of what the walk found and left out.
 
-use super::table::{Chain, Heap, Table};
+use super::table::{Chain, Extent, Heap, Table};
 use super::*;
 use crate::formats::container::{self, MAX_COMPONENTS, MAX_EXTRACTED};
 use crate::formats::MAX_PAYLOAD;
@@ -27,25 +27,29 @@ const MAX_PROBLEM_NOTES: usize = 16;
 /// as zeros ([EXFAT] 7.6.5).
 const VALID_DATA_TRANSFORM: &str = "exFAT valid data length";
 
-/// Stored directory bytes: a run of clusters, or the FAT12/FAT16 root
-/// directory region.
+/// A directory entry ([FATGEN] "FAT Directory Structure"; [EXFAT] 6) and
+/// where it is stored.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Extent<'a> {
+pub(super) struct DirectoryEntry<'a> {
     /// File offset.
     pub(super) offset: usize,
+    /// The entry's [`DIRECTORY_ENTRY_SIZE`] bytes.
     pub(super) bytes: &'a [u8],
 }
 
 /// The entries of `extents` in order, with their file offsets.
 pub(super) fn entries<'e, 'a>(
     extents: &'e [Extent<'a>],
-) -> impl Iterator<Item = (usize, &'a [u8])> + 'e {
+) -> impl Iterator<Item = DirectoryEntry<'a>> + 'e {
     extents.iter().flat_map(|extent| {
         extent
             .bytes
             .chunks_exact(DIRECTORY_ENTRY_SIZE)
             .enumerate()
-            .map(move |(i, entry)| (extent.offset + i * DIRECTORY_ENTRY_SIZE, entry))
+            .map(move |(i, bytes)| DirectoryEntry {
+                offset: extent.offset + i * DIRECTORY_ENTRY_SIZE,
+                bytes,
+            })
     })
 }
 
@@ -254,11 +258,11 @@ impl<'v, 'a> Walker<'v, 'a> {
             let present = self.heap.present_part(*run);
             absent_clusters += run.clusters - present.clusters;
             if present.clusters > 0 {
-                let (offset, bytes) = self
+                let extent = self
                     .heap
                     .read(present, remaining)
                     .expect("the present part of a run is in the input");
-                extents.push(Extent { offset, bytes });
+                extents.push(extent);
             }
             remaining -= remaining.min(u64::from(run.clusters) * cluster_size);
         }
@@ -295,19 +299,19 @@ impl<'v, 'a> Walker<'v, 'a> {
             if remaining == 0 {
                 break;
             }
-            let (offset, bytes) = self.heap.read(*run, remaining)?;
-            remaining -= bytes.len() as u64;
-            stored.push((offset, bytes));
+            let extent = self.heap.read(*run, remaining)?;
+            remaining -= extent.bytes.len() as u64;
+            stored.push(extent);
         }
         let (offset, stored_size) = stored.first().map_or(
             (self.heap.cluster_offset_in_input(file.first_cluster), 0),
-            |&(offset, bytes)| (offset, bytes.len()),
+            |extent| (extent.offset, extent.bytes.len()),
         );
         let terminated = chain.terminated;
-        if let [(_, bytes)] = stored.as_slice() {
+        if let [extent] = stored.as_slice() {
             if written == len {
                 return Ok(FileData {
-                    bytes: Cow::Borrowed(*bytes),
+                    bytes: Cow::Borrowed(extent.bytes),
                     offset,
                     stored_size,
                     transform: self.chain_transform,
@@ -317,8 +321,8 @@ impl<'v, 'a> Walker<'v, 'a> {
         }
         let len = usize::try_from(len).map_err(|_| format!("{len} B exceed the address space"))?;
         let mut bytes = Vec::with_capacity(len);
-        for (_, run) in &stored {
-            bytes.extend_from_slice(run);
+        for extent in &stored {
+            bytes.extend_from_slice(extent.bytes);
         }
         bytes.resize(len, 0);
         let transform = if stored.len() > 1 {

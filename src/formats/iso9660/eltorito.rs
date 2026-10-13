@@ -319,6 +319,16 @@ fn skip_extensions(catalog: &[u8], mut pos: usize) -> usize {
     pos
 }
 
+/// The size of a boot image and what gave it.
+#[derive(Debug)]
+struct ImageSize {
+    /// Size in bytes.
+    size: usize,
+    /// Where the size comes from, as the notes name it: a file, the
+    /// emulated floppy geometry, the MBR or the sector count.
+    source: String,
+}
+
 /// The size of an entry's image and where it comes from. A file whose data
 /// starts at the image gives its size; otherwise the media type (floppy),
 /// the MBR (hard disk) or the sector count (no emulation) does. An EFI
@@ -329,31 +339,37 @@ fn image_size(
     entry: &Entry,
     offset: usize,
     file: Option<&BootFile>,
-) -> std::result::Result<(usize, String), String> {
+) -> std::result::Result<ImageSize, String> {
     let floppy = |sectors_per_track: usize| {
         let size = FLOPPY_TRACKS * FLOPPY_HEADS * sectors_per_track * VIRTUAL_SECTOR_SIZE;
-        Ok((size, "the emulated floppy geometry".to_string()))
+        Ok(ImageSize {
+            size,
+            source: "the emulated floppy geometry".to_string(),
+        })
     };
     match (entry.media, file) {
         (MEDIA_FLOPPY_1200, _) => floppy(0x0F),
         (MEDIA_FLOPPY_1440, _) => floppy(0x12),
         (MEDIA_FLOPPY_2880, _) => floppy(0x24),
-        (_, Some(file)) => Ok((file.size, format!("file {}", file.path))),
+        (_, Some(file)) => Ok(ImageSize {
+            size: file.size,
+            source: format!("file {}", file.path),
+        }),
         (MEDIA_HARD_DISK, None) => hard_disk_size(image, offset),
-        (_, None) if entry.platform == PLATFORM_EFI && entry.sector_count < 2 => Ok((
-            image.size - offset,
-            "the rest of the volume (sector count below 2)".to_string(),
-        )),
+        (_, None) if entry.platform == PLATFORM_EFI && entry.sector_count < 2 => Ok(ImageSize {
+            size: image.size - offset,
+            source: "the rest of the volume (sector count below 2)".to_string(),
+        }),
         (_, None) if entry.sector_count == 0 => Err("the sector count is 0".to_string()),
-        (_, None) => Ok((
-            usize::from(entry.sector_count) * VIRTUAL_SECTOR_SIZE,
-            "the sector count".to_string(),
-        )),
+        (_, None) => Ok(ImageSize {
+            size: usize::from(entry.sector_count) * VIRTUAL_SECTOR_SIZE,
+            source: "the sector count".to_string(),
+        }),
     }
 }
 
 /// An emulated hard disk ends where its first partition ends (4.1).
-fn hard_disk_size(image: Image<'_>, offset: usize) -> std::result::Result<(usize, String), String> {
+fn hard_disk_size(image: Image<'_>, offset: usize) -> std::result::Result<ImageSize, String> {
     if image.holds(offset, VIRTUAL_SECTOR_SIZE)
         && image.present(offset, VIRTUAL_SECTOR_SIZE).is_none()
     {
@@ -374,7 +390,10 @@ fn hard_disk_size(image: Image<'_>, offset: usize) -> std::result::Result<(usize
         .ok()
         .filter(|size| *size > 0)
         .ok_or_else(|| format!("the MBR's first partition ends at sector {end}"))?;
-    Ok((size, "the MBR's first partition".to_string()))
+    Ok(ImageSize {
+        size,
+        source: "the MBR's first partition".to_string(),
+    })
 }
 
 /// The child for one bootable entry, or why there is none.
@@ -388,7 +407,7 @@ fn boot_child<'a>(
         .image_offset()
         .filter(|offset| *offset < image.size)
         .ok_or_else(|| format!("load RBA 0x{:X} lies outside the volume", entry.load_rba))?;
-    let (size, source) = image_size(image, entry, offset, files.get(&offset))?;
+    let ImageSize { size, source } = image_size(image, entry, offset, files.get(&offset))?;
     if !image.holds(offset, size) {
         return Err(format!(
             "the {size} B image at 0x{offset:X} (size from {source}) extends past the volume"
@@ -553,7 +572,7 @@ mod tests {
             bytes: &[],
             size: 0,
         };
-        let (size, _) = image_size(empty, &entry, 0, None).unwrap();
+        let size = image_size(empty, &entry, 0, None).unwrap().size;
         assert_eq!(size, 1_474_560);
     }
 }

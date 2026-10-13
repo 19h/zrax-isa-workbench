@@ -5,7 +5,7 @@
 //! backup boot sectors ([FATGEN] "FAT32 `FSInfo` Sector Structure and Backup
 //! Boot Sector").
 
-use super::table::{EntryKind, Table};
+use super::table::{EntryKind, Extent, Table};
 use super::*;
 
 /// The values `BPB_BytsPerSec` may take.
@@ -182,6 +182,18 @@ struct Bpb {
     fat_sectors: u32,
 }
 
+/// Where the data region starts and how many clusters it holds ([FATGEN]
+/// "FAT Type Determination").
+#[derive(Debug, Clone, Copy)]
+struct DataRegion {
+    /// `FirstDataSector`: the sector of cluster 2, counted in
+    /// `BPB_BytsPerSec` sectors from the start of the volume.
+    first_data_sector: u32,
+    /// `CountofClusters`: the whole clusters from there to the end of the
+    /// volume.
+    cluster_count: u32,
+}
+
 impl Bpb {
     /// Read the BPB, checking `BPB_BytsPerSec`, `BPB_SecPerClus`,
     /// `BPB_RsvdSecCnt`, `BPB_NumFATs`, `BPB_Media`, the total sectors and
@@ -254,7 +266,7 @@ impl Bpb {
     /// `FirstDataSector` and `CountofClusters` ([FATGEN] "FAT Type
     /// Determination"): the sectors of the reserved region, the FATs and
     /// the root directory region, and the whole clusters after them.
-    fn regions(&self) -> Result<(u32, u32)> {
+    fn regions(&self) -> Result<DataRegion> {
         let root_dir_sectors = div_round_up(
             u64::from(self.root_entries) * DIRECTORY_ENTRY_SIZE as u64,
             u64::from(self.bytes_per_sector),
@@ -275,10 +287,11 @@ impl Bpb {
                 ))
             })?;
         // Both are below the 32-bit total sector count.
-        Ok((
-            u32::try_from(first_data_sector).expect("less than the total sectors"),
-            u32::try_from(cluster_count).expect("fewer clusters than sectors"),
-        ))
+        Ok(DataRegion {
+            first_data_sector: u32::try_from(first_data_sector)
+                .expect("less than the total sectors"),
+            cluster_count: u32::try_from(cluster_count).expect("fewer clusters than sectors"),
+        })
     }
 }
 
@@ -367,7 +380,10 @@ impl Geometry {
     pub(super) fn parse(data: &[u8]) -> Result<Self> {
         check_boot_sector(data)?;
         let bpb = Bpb::read(data)?;
-        let (first_data_sector, cluster_count) = bpb.regions()?;
+        let DataRegion {
+            first_data_sector,
+            cluster_count,
+        } = bpb.regions()?;
         let layout = layout_for(cluster_count);
         let fat32 = check_layout(data, layout, cluster_count, &bpb)?;
         check_type_fields(&bpb, layout)?;
@@ -484,11 +500,14 @@ impl Geometry {
     }
 
     /// The FAT12/FAT16 root directory region: its file offset and bytes.
-    pub(super) fn root_region<'a>(&self, data: &'a [u8]) -> (usize, &'a [u8]) {
+    pub(super) fn root_region<'a>(&self, data: &'a [u8]) -> Extent<'a> {
         let start = self.sector_offset(self.reserved_sectors + self.fat_count * self.fat_sectors);
         let start = usize::try_from(start).expect("in the input");
         let size = usize::try_from(self.root_entries).expect("16-bit count") * DIRECTORY_ENTRY_SIZE;
-        (start, &data[start..start + size])
+        Extent {
+            offset: start,
+            bytes: &data[start..start + size],
+        }
     }
 
     /// Where boot code may start: after the BPB and the boot sector fields

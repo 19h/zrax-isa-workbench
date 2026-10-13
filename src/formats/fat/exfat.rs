@@ -5,7 +5,7 @@
 //! entries with their Stream Extension and File Name entries everywhere.
 
 use super::table::{EntryKind, Heap, Table};
-use super::walk::{self, DirectoryData, FileRef, Span, Walker, MAX_DEPTH};
+use super::walk::{self, DirectoryData, DirectoryEntry, FileRef, Span, Walker, MAX_DEPTH};
 use super::*;
 
 /// `FileSystemName` at offset 3, with three trailing spaces.
@@ -752,7 +752,11 @@ impl RootEntries {
 /// the walk skips them.
 fn check_primary_entries(contents: &DirectoryData<'_>, is_root: bool) -> Walk<()> {
     let mut entries = walk::entries(&contents.extents);
-    while let Some((offset, entry)) = entries.next() {
+    while let Some(DirectoryEntry {
+        offset,
+        bytes: entry,
+    }) = entries.next()
+    {
         let entry_type = entry[0];
         if entry_type == END_OF_DIRECTORY {
             break;
@@ -805,7 +809,11 @@ impl<'a> ExFatWalk<'_, '_, 'a> {
         self.walker.census.directories += 1;
         let mut subdirectories = Vec::new();
         let mut entries = walk::entries(&contents.extents);
-        while let Some((offset, entry)) = entries.next() {
+        while let Some(DirectoryEntry {
+            offset,
+            bytes: entry,
+        }) = entries.next()
+        {
             let entry_type = entry[0];
             if entry_type == END_OF_DIRECTORY {
                 break;
@@ -830,7 +838,7 @@ impl<'a> ExFatWalk<'_, '_, 'a> {
                     let count = usize::from(entry[1]);
                     let mut set = Vec::with_capacity(count + 1);
                     set.push(entry);
-                    set.extend(entries.by_ref().take(count).map(|(_, entry)| entry));
+                    set.extend(entries.by_ref().take(count).map(|entry| entry.bytes));
                     if set.len() != count + 1 {
                         self.walker.census.invalid_entries += 1;
                         break;

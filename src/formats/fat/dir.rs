@@ -7,7 +7,7 @@
 
 use super::bpb::{self, Geometry};
 use super::table::Heap;
-use super::walk::{self, DirectoryData, Extent, FileRef, Span, Walker, MAX_DEPTH};
+use super::walk::{self, DirectoryData, FileRef, Span, Walker, MAX_DEPTH};
 use super::*;
 
 /// `DIR_Attr` bits.
@@ -147,9 +147,8 @@ fn walk_volume<'a>(g: &Geometry, data: &'a [u8], c: &mut Container<'a>) {
     } else {
         // The root directory region is part of the metadata region, which
         // [`Geometry::parse`] found in the input.
-        let (offset, bytes) = g.root_region(data);
         Ok(DirectoryData {
-            extents: vec![Extent { offset, bytes }],
+            extents: vec![g.root_region(data)],
             cut: false,
             absent_clusters: 0,
         })
@@ -212,7 +211,7 @@ impl<'a> DirectoryWalk<'_, '_, 'a> {
         }
         let mut subdirectories = Vec::new();
         let mut long = LongState::None;
-        for (_, entry) in walk::entries(&contents.extents) {
+        for entry in walk::entries(&contents.extents).map(|entry| entry.bytes) {
             let attr = entry[11];
             let is_long = attr & ATTR_LONG_NAME_MASK == ATTR_LONG_NAME;
             match entry[0] {
