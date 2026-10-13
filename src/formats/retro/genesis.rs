@@ -63,7 +63,7 @@ const INITIAL_PC: usize = 4;
 /// Mega-CD disc identifiers at offset 0 (rom-properties `MCD_SystemID`, Sega
 /// Retro). A disc also carries a Mega Drive header at 0x100, but its first
 /// bytes are not a vector table, so it is not a cartridge ROM.
-const MEGA_CD_IDS: [&[u8]; 2] = [b"SEGADISCSYSTEM", b"SEGADATADISC"];
+pub(crate) const MEGA_CD_IDS: [&[u8]; 2] = [b"SEGADISCSYSTEM", b"SEGADATADISC"];
 
 /// System types with a CPU other than the 68000 alone (Plutiedev).
 const SYSTEM_32X: &str = "SEGA 32X";
@@ -75,12 +75,17 @@ const SMD_HEADER_SIZE: usize = 0x200;
 const SMD_BLOCK_SIZE: usize = 0x4000;
 const SMD_HALF_BLOCK: usize = 0x2000;
 
-/// 32X security program user header fields.
+/// 32X security program user header fields (32X Hardware Manual §5.1).
+const MARS_HEADER: usize = 0x3c0;
+const MARS_MODULE_NAME_SIZE: usize = 16;
+const MARS_VERSION: usize = 0x3d0;
 const MARS_SOURCE: usize = 0x3d4;
 const MARS_DESTINATION: usize = 0x3d8;
 const MARS_SIZE: usize = 0x3dc;
 const MARS_MASTER_START: usize = 0x3e0;
 const MARS_SLAVE_START: usize = 0x3e4;
+const MARS_MASTER_VBR: usize = 0x3e8;
+const MARS_SLAVE_VBR: usize = 0x3ec;
 const MARS_HEADER_END: usize = 0x3f0;
 
 /// `PicoDrive` masks the source and destination with `~0xF0000000`.
@@ -117,7 +122,7 @@ fn has_magic(data: &[u8], offset: usize, magic: &[u8]) -> bool {
 }
 
 /// The check the TMSS boot ROM makes on cartridge bytes in address order.
-fn has_tmss_magic(image: &[u8]) -> bool {
+pub(crate) fn has_tmss_magic(image: &[u8]) -> bool {
     has_magic(image, SYSTEM_TYPE, TMSS_MAGIC)
         || has_magic(image, TMSS_ALTERNATIVE_OFFSET, TMSS_ALTERNATIVE)
 }
@@ -198,7 +203,7 @@ fn image(data: &[u8], dump: GenesisDump) -> Result<Image<'_>> {
 /// The 16-bit sum of the big-endian words from 0x200 to the end; a missing
 /// final low byte counts as zero (derived from Genesis Plus GX, which reads
 /// one byte past the end).
-fn checksum(image: &[u8]) -> u16 {
+pub(crate) fn checksum(image: &[u8]) -> u16 {
     image
         .get(HEADER_END..)
         .unwrap_or_default()
@@ -208,22 +213,23 @@ fn checksum(image: &[u8]) -> u16 {
 }
 
 /// The ROM header fields that reach notes and metadata.
-struct Header {
-    system_type: String,
+pub(crate) struct Header {
+    pub(crate) system_type: String,
     copyright: String,
-    domestic_title: String,
-    overseas_title: String,
-    serial: String,
+    pub(crate) domestic_title: String,
+    pub(crate) overseas_title: String,
+    pub(crate) serial: String,
     devices: String,
-    region: String,
-    stored_checksum: u16,
+    pub(crate) region: String,
+    pub(crate) stored_checksum: u16,
     rom_start: u32,
     rom_end: u32,
     ram_start: u32,
     ram_end: u32,
 }
 
-fn header(image: &[u8]) -> Result<Header> {
+/// The Mega Drive header of a ROM image in address order.
+pub(crate) fn header(image: &[u8]) -> Result<Header> {
     if image.len() < HEADER_END {
         return Err(error(format!(
             "Truncated Mega Drive ROM header: {} B of {HEADER_END} B",
@@ -296,7 +302,7 @@ pub(super) fn parse(data: &[u8], dump: GenesisDump) -> Result<Container<'_>> {
             .into(),
     );
     if header.system_type == SYSTEM_32X {
-        push_mars_program(&mut c, data, &image)?;
+        push_mars_program(&mut c, data, &image);
     }
     c.sections.push(section(
         "ROM",
@@ -394,20 +400,63 @@ fn push_checksum(c: &mut Container<'_>, header: &Header, image: &[u8]) {
     );
 }
 
+/// The 32X security program user header (rom-properties
+/// `_32X_SecurityProgram_UserHeader`), big-endian at 0x3C0-0x3EF. Source
+/// and destination keep their low 28 bits, as `PicoDrive` reads them.
+pub(crate) struct MarsHeader<'a> {
+    pub(crate) module_name: &'a [u8],
+    pub(crate) version: u32,
+    /// Byte offset of the SH-2 program in the ROM.
+    pub(crate) source: u32,
+    /// Byte offset in SDRAM the program is copied to.
+    pub(crate) destination: u32,
+    /// Program size in bytes.
+    pub(crate) size: u32,
+    pub(crate) master_start: u32,
+    pub(crate) slave_start: u32,
+    pub(crate) master_vbr: u32,
+    pub(crate) slave_vbr: u32,
+    /// Source or destination had top bits that were masked off.
+    pub(crate) masked: bool,
+}
+
+/// The 32X user header of a ROM image in address order, when the image is
+/// long enough to hold it.
+pub(crate) fn mars_header(image: &[u8]) -> Option<MarsHeader<'_>> {
+    let word = |at: usize| be_u32(image, at).ok();
+    let raw_source = word(MARS_SOURCE)?;
+    let raw_destination = word(MARS_DESTINATION)?;
+    Some(MarsHeader {
+        module_name: image.get(MARS_HEADER..MARS_HEADER + MARS_MODULE_NAME_SIZE)?,
+        version: word(MARS_VERSION)?,
+        source: raw_source & MARS_ADDRESS_MASK,
+        destination: raw_destination & MARS_ADDRESS_MASK,
+        size: word(MARS_SIZE)?,
+        master_start: word(MARS_MASTER_START)?,
+        slave_start: word(MARS_SLAVE_START)?,
+        master_vbr: word(MARS_MASTER_VBR)?,
+        slave_vbr: word(MARS_SLAVE_VBR)?,
+        masked: (raw_source | raw_destination) & !MARS_ADDRESS_MASK != 0,
+    })
+}
+
 /// The 32X SH-2 program named by the security program user header, as a
 /// child for the SH-2 (big-endian `SuperH`; the header names no SH-2 model).
-fn push_mars_program<'a>(c: &mut Container<'a>, data: &'a [u8], image: &Image<'_>) -> Result<()> {
+fn push_mars_program<'a>(c: &mut Container<'a>, data: &'a [u8], image: &Image<'_>) {
     let bytes = &image.bytes;
-    if bytes.len() < MARS_HEADER_END {
+    let Some(mars) = mars_header(bytes).filter(|_| bytes.len() >= MARS_HEADER_END) else {
         c.notes
             .push("SEGA 32X: the security program user header at 0x3C0 is missing".into());
-        return Ok(());
-    }
-    let source = be_u32(bytes, MARS_SOURCE)? & MARS_ADDRESS_MASK;
-    let destination = be_u32(bytes, MARS_DESTINATION)? & MARS_ADDRESS_MASK;
-    let size = be_u32(bytes, MARS_SIZE)?;
-    let master = be_u32(bytes, MARS_MASTER_START)?;
-    let slave = be_u32(bytes, MARS_SLAVE_START)?;
+        return;
+    };
+    let MarsHeader {
+        source,
+        destination,
+        size,
+        master_start: master,
+        slave_start: slave,
+        ..
+    } = mars;
     c.notes.push(format!(
         "SEGA 32X: SH-2 program at ROM 0x{source:X} + {size} B, copied to SDRAM 0x{:08X}; master SH-2 start 0x{master:08X}; slave SH-2 start 0x{slave:08X}",
         MARS_SDRAM + u64::from(destination)
@@ -415,7 +464,7 @@ fn push_mars_program<'a>(c: &mut Container<'a>, data: &'a [u8], image: &Image<'_
     if size == 0 {
         c.notes
             .push("SEGA 32X: the SH-2 program size is 0; nothing extracted".into());
-        return Ok(());
+        return;
     }
     let start = source as usize;
     let Some(program) = start
@@ -424,7 +473,7 @@ fn push_mars_program<'a>(c: &mut Container<'a>, data: &'a [u8], image: &Image<'_
     else {
         c.notes
             .push("SEGA 32X: the SH-2 program range lies outside the ROM; not extracted".into());
-        return Ok(());
+        return;
     };
     let label = "32X SH-2 program";
     let child = match image.dump {
@@ -452,7 +501,6 @@ fn push_mars_program<'a>(c: &mut Container<'a>, data: &'a [u8], image: &Image<'_
     };
     c.children
         .push(child.with_target(Target::new(Isa::Sh, 32, Endianness::Big)));
-    Ok(())
 }
 
 #[cfg(test)]

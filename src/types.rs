@@ -1048,6 +1048,31 @@ pub enum FileFormat {
     Img3,
     /// Apple S5L8900 `8900` container
     Apple8900,
+    // Console and home-computer images
+    /// Sega Master System or Game Gear ROM with a `TMR SEGA` header (`.sms`, `.gg`)
+    SmsRom,
+    /// Sega 32X cartridge ROM (`.32x`)
+    Sega32xRom,
+    /// Sega Saturn `IP.BIN` (start of the disc system area)
+    SaturnIp,
+    /// Sega CD / Mega-CD system area (`SEGADISCSYSTEM`)
+    SegaCdIp,
+    /// MSX cartridge ROM with an `AB` header (`.rom`)
+    MsxRom,
+    /// Atari Lynx cartridge image (`.lnx`)
+    LynxRom,
+    /// Atari 7800 cartridge image with an A78 header (`.a78`)
+    Atari7800Rom,
+    /// Commodore 64 cartridge image (`.crt`)
+    C64Crt,
+    /// Atari ST GEMDOS executable (`.prg`, `.tos`, `.ttp`)
+    AtariStPrg,
+    /// ZX Spectrum memory snapshot (`.z80`, `.sna`)
+    ZxSnapshot,
+    /// Bandai `WonderSwan` or `WonderSwan` Color ROM (`.ws`, `.wsc`)
+    WonderSwanRom,
+    /// Neo Geo Pocket or Neo Geo Pocket Color ROM (`.ngp`, `.ngc`)
+    NgpRom,
 }
 
 impl fmt::Display for FileFormat {
@@ -1270,6 +1295,19 @@ impl fmt::Display for FileFormat {
             // Apple legacy firmware
             FileFormat::Img3 => write!(f, "Apple Img3"),
             FileFormat::Apple8900 => write!(f, "Apple 8900"),
+            // Console and home-computer images
+            FileFormat::SmsRom => write!(f, "Master System ROM"),
+            FileFormat::Sega32xRom => write!(f, "Sega 32X ROM"),
+            FileFormat::SaturnIp => write!(f, "Saturn IP.BIN"),
+            FileFormat::SegaCdIp => write!(f, "Sega CD system area"),
+            FileFormat::MsxRom => write!(f, "MSX ROM"),
+            FileFormat::LynxRom => write!(f, "Atari Lynx ROM"),
+            FileFormat::Atari7800Rom => write!(f, "Atari 7800 ROM"),
+            FileFormat::C64Crt => write!(f, "C64 cartridge"),
+            FileFormat::AtariStPrg => write!(f, "Atari ST program"),
+            FileFormat::ZxSnapshot => write!(f, "ZX Spectrum snapshot"),
+            FileFormat::WonderSwanRom => write!(f, "WonderSwan ROM"),
+            FileFormat::NgpRom => write!(f, "Neo Geo Pocket ROM"),
         }
     }
 }

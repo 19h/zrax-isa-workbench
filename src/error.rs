@@ -62,6 +62,15 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a console or home-computer image (Master System,
+    /// 32X, Saturn IP.BIN, Sega CD, MSX, Lynx, Atari 7800, C64 CRT, Atari
+    /// ST program, ZX Spectrum snapshot, `WonderSwan`, Neo Geo Pocket).
+    #[error("Console or home computer image parse error: {message}")]
+    RetroHomeParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a miscellaneous boot image (OP-TEE header, Amlogic
     /// burning image, Allwinner `IMAGEWTY`, barebox).
     #[error("Boot image parse error: {message}")]

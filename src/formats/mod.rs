@@ -71,6 +71,7 @@ pub mod pe;
 pub mod pef;
 pub mod qnx;
 pub mod retro;
+pub mod retro2;
 pub mod rofs;
 pub mod router;
 pub mod sgo;
@@ -559,6 +560,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Sega 32X ROMs are Mega Drive ROMs with the 32X security program, so
+    // they are checked before the Mega Drive check in `retro::detect`.
+    if let Some(layout) = retro2::detect_32x(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Retro2(layout),
+        };
+    }
+
     // Console executables and ROM images: identification strings at fixed
     // offsets (`SEGA` at 0x100, `PS-X EXE`, `SEGA SEGAKATANA`, `NCCH` at
     // 0x100, `3DSX`, `\0PBP`).
@@ -710,6 +719,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = bootmisc::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::BootMisc(layout),
+        };
+    }
+
+    // Console and home-computer images: identification strings at fixed
+    // offsets (`SEGA SEGASATURN `, `SEGADISCSYSTEM`, `LYNX`, `ATARI7800`,
+    // `C64 CARTRIDGE`, the SNK code, `TMR SEGA`), and GEMDOS programs whose
+    // sizes and relocation table are consistent. After the Mega Drive
+    // check, as PicoDrive tests the Mega Drive header before `TMR SEGA`.
+    if let Some(layout) = retro2::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Retro2(layout),
         };
     }
 
@@ -971,6 +991,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = pcfw::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::PcFw(layout),
+        };
+    }
+
+    // Snapshots, MSX cartridges and WonderSwan footers have no magic: every
+    // block must decode, every address fit, or the checksum match.
+    if let Some(layout) = retro2::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Retro2(layout),
         };
     }
 

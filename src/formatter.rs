@@ -766,6 +766,18 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::BareboxImage => "barebox image",
         FileFormat::Img3 => "Apple Img3",
         FileFormat::Apple8900 => "Apple 8900",
+        FileFormat::SmsRom => "Master System ROM",
+        FileFormat::Sega32xRom => "Sega 32X ROM",
+        FileFormat::SaturnIp => "Saturn IP.BIN",
+        FileFormat::SegaCdIp => "Sega CD system area",
+        FileFormat::MsxRom => "MSX ROM",
+        FileFormat::LynxRom => "Atari Lynx ROM",
+        FileFormat::Atari7800Rom => "Atari 7800 ROM",
+        FileFormat::C64Crt => "C64 cartridge",
+        FileFormat::AtariStPrg => "Atari ST program",
+        FileFormat::ZxSnapshot => "ZX Spectrum snapshot",
+        FileFormat::WonderSwanRom => "WonderSwan ROM",
+        FileFormat::NgpRom => "Neo Geo Pocket ROM",
     }
 }
 

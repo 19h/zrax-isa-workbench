@@ -105,6 +105,10 @@ pub enum Kind {
     /// A miscellaneous boot image: OP-TEE header, Amlogic burning image,
     /// Allwinner `IMAGEWTY` or barebox.
     BootMisc(super::bootmisc::Layout),
+    /// A console or home-computer image (Master System, 32X, Saturn, Sega
+    /// CD, MSX, Lynx, 7800, C64, Atari ST, ZX Spectrum, `WonderSwan`, Neo
+    /// Geo Pocket).
+    Retro2(super::retro2::Layout),
 }
 
 impl Kind {
@@ -138,6 +142,7 @@ impl Kind {
             Self::WinCe(layout) => layout.format(),
             Self::PcFw(layout) => layout.format(),
             Self::BootMisc(layout) => layout.format(),
+            Self::Retro2(layout) => layout.format(),
         }
     }
 
@@ -171,6 +176,7 @@ impl Kind {
             Self::WinCe(layout) => layout.label(),
             Self::PcFw(layout) => layout.label(),
             Self::BootMisc(layout) => layout.label(),
+            Self::Retro2(layout) => layout.label(),
         }
     }
 
@@ -204,6 +210,7 @@ impl Kind {
             Self::WinCe(layout) => layout.is_weak(),
             Self::PcFw(layout) => layout.is_weak(),
             Self::BootMisc(layout) => layout.is_weak(),
+            Self::Retro2(layout) => layout.is_weak(),
         }
     }
 }
@@ -242,6 +249,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::WinCe(layout) => wince::parse_container(data, layout),
         Kind::PcFw(layout) => pcfw::parse_container(data, layout),
         Kind::BootMisc(layout) => super::bootmisc::parse_container(data, layout),
+        Kind::Retro2(layout) => super::retro2::parse_container(data, layout),
     }
 }
 

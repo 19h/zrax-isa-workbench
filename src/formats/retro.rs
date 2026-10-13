@@ -40,7 +40,7 @@ use crate::types::{Endianness, FileFormat, Isa};
 use std::borrow::Cow;
 
 mod dreamcast;
-mod genesis;
+pub(crate) mod genesis;
 mod n3ds;
 mod n3dsx;
 mod pbp;

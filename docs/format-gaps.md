@@ -172,6 +172,10 @@ iNES/NES 2.0 (PRG-ROM as 6502; CHR-ROM opaque), SNES (weak; LoROM, HiROM and
 ExHiROM internal headers; `w65816` from the platform) and Nintendo 64 (all
 three byte orders; CIC check code verified) are implemented; see
 [Nintendo ROMs](nintendo-roms.md). Thumb is not distinguished on DS or GBA.
+Beyond the table, Master System/Game Gear, Sega 32X, Saturn IP.BIN, Sega CD
+system areas, MSX cartridges, Atari Lynx and 7800, C64 CRT, Atari ST GEMDOS
+executables, ZX Spectrum .z80/.sna snapshots, WonderSwan and Neo Geo Pocket
+followed; see [console and home-computer images](retro2.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as
