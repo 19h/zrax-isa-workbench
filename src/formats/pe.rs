@@ -2,9 +2,16 @@
 //!
 //! Comprehensive PE parser supporting all machine types including
 //! modern architectures like ARM64, ARM64EC, and RISC-V.
+//!
+//! Hybrid ARM64EC and ARM64X images are told apart by the CHPE metadata
+//! that the load configuration points to, as LLVM reads it (llvm-project
+//! tag `llvmorg-19.1.0`, `llvm/include/llvm/Object/COFF.h`:
+//! `coff_load_configuration64::CHPEMetadataPointer`, `chpe_metadata`,
+//! `chpe_range_entry`, and `COFFObjectFile::getMachine`, which reports an
+//! AMD64 image with CHPE metadata as ARM64EC and an ARM64 one as ARM64X).
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{read_u16, read_u32};
+use crate::formats::{read_u16, read_u32, read_u64};
 use crate::types::{
     ClassificationMetadata, ClassificationResult, Endianness, FileFormat, Isa, Variant,
 };
@@ -225,7 +232,189 @@ pub fn parse(data: &[u8], pe_offset: u32) -> Result<ClassificationResult> {
         }
     }
 
+    // ARM64EC images carry the AMD64 machine value so that x64 code can load
+    // them, and ARM64X images the ARM64 one; CHPE metadata marks both.
+    if is_pe32plus && matches!(machine, machine::AMD64 | machine::ARM64) {
+        let headers = OptionalHeader {
+            offset: coff_off + 20,
+            size: usize::from(size_of_optional),
+        };
+        let sections = SectionTable {
+            offset: headers.offset + headers.size,
+            count: num_sections,
+        };
+        apply_chpe(
+            &mut result,
+            machine,
+            chpe_metadata(data, &headers, &sections),
+        );
+    }
+
     Ok(result)
+}
+
+/// A PE32+ optional header: its file offset and `SizeOfOptionalHeader`.
+struct OptionalHeader {
+    offset: usize,
+    size: usize,
+}
+
+/// PE32+ optional header offsets: `ImageBase`, `NumberOfRvaAndSizes` and
+/// the data directories.
+const PE32PLUS_IMAGE_BASE: usize = 24;
+const PE32PLUS_DIRECTORY_COUNT: usize = 108;
+const PE32PLUS_DIRECTORIES: usize = 112;
+
+/// Size of a data directory entry (`VirtualAddress`, `Size`).
+const DATA_DIRECTORY_SIZE: usize = 8;
+
+/// Data directory index of the load configuration table.
+const LOAD_CONFIG_DIRECTORY: usize = 10;
+
+/// Offset of `CHPEMetadataPointer` (a virtual address) in
+/// `IMAGE_LOAD_CONFIG_DIRECTORY64`, whose first field `Size` says how much
+/// of the structure is present.
+const LOAD_CONFIG64_CHPE_METADATA: usize = 0xC8;
+
+/// `chpe_metadata`: `Version`, then the code map RVA and entry count.
+const CHPE_CODE_MAP: usize = 4;
+const CHPE_CODE_MAP_COUNT: usize = 8;
+
+/// `chpe_range_entry`: `StartOffset`, whose two low bits hold the range
+/// type, and `Length`.
+const CHPE_RANGE_ENTRY_SIZE: usize = 8;
+const CHPE_RANGE_TYPE_MASK: u32 = 3;
+
+/// `chpe_range_type` values.
+const CHPE_RANGE_ARM64: u32 = 0;
+const CHPE_RANGE_ARM64EC: u32 = 1;
+const CHPE_RANGE_AMD64: u32 = 2;
+
+/// What the CHPE code map of a hybrid image lists, in bytes per range type.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ChpeCodeMap {
+    version: u32,
+    ranges: u32,
+    arm64: u64,
+    arm64ec: u64,
+    amd64: u64,
+}
+
+/// The CHPE metadata of a PE32+ image.
+#[derive(Debug, PartialEq, Eq)]
+enum Chpe {
+    /// No load configuration, one too short to hold the pointer, or a zero
+    /// `CHPEMetadataPointer`: not a hybrid image.
+    Absent,
+    /// A nonzero pointer whose metadata or code map is not in the file.
+    Unreadable {
+        /// The `CHPEMetadataPointer` virtual address.
+        pointer: u64,
+    },
+    Present(ChpeCodeMap),
+}
+
+/// The CHPE metadata the load configuration of a PE32+ image points to.
+fn chpe_metadata(data: &[u8], headers: &OptionalHeader, sections: &SectionTable) -> Chpe {
+    let Some(pointer) = chpe_pointer(data, headers, sections) else {
+        return Chpe::Absent;
+    };
+    let image_base = read_u64(data, headers.offset + PE32PLUS_IMAGE_BASE, true).ok();
+    let code_map = image_base
+        .and_then(|base| pointer.checked_sub(base))
+        .and_then(|rva| u32::try_from(rva).ok())
+        .and_then(|rva| sections.file_offset(data, rva))
+        .and_then(|offset| chpe_code_map(data, sections, offset));
+    match code_map {
+        Some(code_map) => Chpe::Present(code_map),
+        None => Chpe::Unreadable { pointer },
+    }
+}
+
+/// A nonzero `CHPEMetadataPointer` from the load configuration directory.
+fn chpe_pointer(data: &[u8], headers: &OptionalHeader, sections: &SectionTable) -> Option<u64> {
+    let count = read_u32(data, headers.offset + PE32PLUS_DIRECTORY_COUNT, true).ok()?;
+    let entry = PE32PLUS_DIRECTORIES + LOAD_CONFIG_DIRECTORY * DATA_DIRECTORY_SIZE;
+    if count as usize <= LOAD_CONFIG_DIRECTORY || entry + DATA_DIRECTORY_SIZE > headers.size {
+        return None;
+    }
+    let rva = read_u32(data, headers.offset + entry, true).ok()?;
+    if rva == 0 {
+        return None;
+    }
+    let config = sections.file_offset(data, rva)?;
+    let config_size = read_u32(data, config, true).ok()? as usize;
+    if config_size < LOAD_CONFIG64_CHPE_METADATA + 8 {
+        return None;
+    }
+    let pointer = read_u64(data, config.checked_add(LOAD_CONFIG64_CHPE_METADATA)?, true).ok()?;
+    (pointer != 0).then_some(pointer)
+}
+
+/// The code map of the CHPE metadata at file offset `metadata`. Every
+/// entry must be in the file.
+fn chpe_code_map(data: &[u8], sections: &SectionTable, metadata: usize) -> Option<ChpeCodeMap> {
+    let version = read_u32(data, metadata, true).ok()?;
+    let map_rva = read_u32(data, metadata.checked_add(CHPE_CODE_MAP)?, true).ok()?;
+    let ranges = read_u32(data, metadata.checked_add(CHPE_CODE_MAP_COUNT)?, true).ok()?;
+    let mut code_map = ChpeCodeMap {
+        version,
+        ranges,
+        ..ChpeCodeMap::default()
+    };
+    if ranges == 0 {
+        return Some(code_map);
+    }
+    let map = sections.file_offset(data, map_rva)?;
+    let map_size = (ranges as usize).checked_mul(CHPE_RANGE_ENTRY_SIZE)?;
+    let entries = data.get(map..map.checked_add(map_size)?)?;
+    for entry in entries.chunks_exact(CHPE_RANGE_ENTRY_SIZE) {
+        let start = read_u32(entry, 0, true).ok()?;
+        let length = u64::from(read_u32(entry, 4, true).ok()?);
+        let total = match start & CHPE_RANGE_TYPE_MASK {
+            CHPE_RANGE_ARM64 => &mut code_map.arm64,
+            CHPE_RANGE_ARM64EC => &mut code_map.arm64ec,
+            CHPE_RANGE_AMD64 => &mut code_map.amd64,
+            _ => continue,
+        };
+        *total = total.saturating_add(length);
+    }
+    Some(code_map)
+}
+
+/// Report a hybrid image under its hybrid machine type, with the code map
+/// in a note.
+fn apply_chpe(result: &mut ClassificationResult, machine: u16, chpe: Chpe) {
+    let hybrid = if machine == machine::AMD64 {
+        machine::ARM64EC
+    } else {
+        machine::ARM64X
+    };
+    match chpe {
+        Chpe::Absent => {}
+        Chpe::Unreadable { pointer } => result.metadata.notes.push(format!(
+            "CHPE metadata pointer 0x{pointer:X} does not lead to a code map in the file; \
+             the image is reported by its machine field"
+        )),
+        Chpe::Present(code_map) => {
+            let (isa, bitwidth, endianness, variant) = machine_to_isa(hybrid);
+            result.isa = isa;
+            result.bitwidth = bitwidth;
+            result.endianness = endianness;
+            result.variant = Variant::new(variant.unwrap_or_default());
+            result.metadata.notes.push(format!(
+                "Hybrid {} image: CHPE metadata version {}, PE machine {}; code map: \
+                 {} B ARM64EC, {} B ARM64 and {} B x64 code in {} ranges",
+                machine_description(hybrid),
+                code_map.version,
+                machine_description(machine),
+                code_map.arm64ec,
+                code_map.arm64,
+                code_map.amd64,
+                code_map.ranges
+            ));
+        }
+    }
 }
 
 /// COR20 header flag: the image contains only CIL.
@@ -435,6 +624,125 @@ mod tests {
         let data = pe_with_clr_directory(0xFFFF_F800, [0x2000, 0xFFFF_F000, 0, 0xFFFF_FF00]);
         let result = parse(&data, 0x80).expect("parses");
         assert_eq!(result.isa, Isa::X86_64);
+    }
+
+    const IMAGE_BASE: u64 = 0x1_4000_0000;
+    /// File offsets of the load configuration, the CHPE metadata and the
+    /// code map in [`hybrid_pe`].
+    const LOAD_CONFIG: usize = 0x200;
+    const CHPE: usize = 0x300;
+    const CODE_MAP: usize = 0x380;
+
+    /// A PE32+ image with `machine`, `ImageBase` 0x140000000, 16 data
+    /// directories (load configuration at RVA 0x1000, 0x140 B) and one
+    /// section (RVA 0x1000, 0x400 B, stored at 0x200). The load
+    /// configuration's `Size` is 0x140 and its `CHPEMetadataPointer`
+    /// `chpe_pointer`; the CHPE metadata at RVA 0x1100 has version 1 and a
+    /// code map at RVA 0x1180 with three entries: 0x800 B of ARM64EC code
+    /// at 0x2000, 0x200 B of x64 code at 0x2800 and 0x100 B of ARM64 code
+    /// at 0x3000 (range type in the two low bits of the start).
+    fn hybrid_pe(machine: u16, chpe_pointer: u64) -> Vec<u8> {
+        let mut data = vec![0u8; 0x600];
+        let put16 = |data: &mut Vec<u8>, at: usize, value: u16| {
+            data[at..at + 2].copy_from_slice(&value.to_le_bytes());
+        };
+        let put32 = |data: &mut Vec<u8>, at: usize, value: u32| {
+            data[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        };
+        data[..2].copy_from_slice(b"MZ");
+        put32(&mut data, 0x3C, 0x80);
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        put16(&mut data, 0x84, machine);
+        put16(&mut data, 0x86, 1);
+        put16(&mut data, 0x94, 0xF0);
+        let opt = 0x98;
+        put16(&mut data, opt, optional_magic::PE32PLUS);
+        data[opt + 24..opt + 32].copy_from_slice(&IMAGE_BASE.to_le_bytes());
+        put32(&mut data, opt + 108, 16);
+        put32(&mut data, opt + 112 + 10 * 8, 0x1000);
+        put32(&mut data, opt + 112 + 10 * 8 + 4, 0x140);
+        let section = opt + 0xF0;
+        put32(&mut data, section + 8, 0x400);
+        put32(&mut data, section + 12, 0x1000);
+        put32(&mut data, section + 16, 0x400);
+        put32(&mut data, section + 20, 0x200);
+        put32(&mut data, LOAD_CONFIG, 0x140);
+        data[LOAD_CONFIG + 0xC8..LOAD_CONFIG + 0xD0].copy_from_slice(&chpe_pointer.to_le_bytes());
+        put32(&mut data, CHPE, 1);
+        put32(&mut data, CHPE + 4, 0x1180);
+        put32(&mut data, CHPE + 8, 3);
+        for (i, (start, length)) in [(0x2001, 0x800), (0x2802, 0x200), (0x3000, 0x100)]
+            .into_iter()
+            .enumerate()
+        {
+            put32(&mut data, CODE_MAP + i * 8, start);
+            put32(&mut data, CODE_MAP + i * 8 + 4, length);
+        }
+        data
+    }
+
+    #[test]
+    fn chpe_metadata_marks_an_amd64_image_as_arm64ec() {
+        let data = hybrid_pe(machine::AMD64, IMAGE_BASE + 0x1100);
+        let result = parse(&data, 0x80).expect("parses");
+        assert_eq!(result.isa, Isa::AArch64);
+        assert_eq!(result.bitwidth, 64);
+        assert_eq!(result.variant.name, "ARM64EC");
+        assert_eq!(result.metadata.raw_machine, Some(u32::from(machine::AMD64)));
+        assert!(result.metadata.notes.contains(
+            &"Hybrid ARM64EC (x64 emulation) image: CHPE metadata version 1, PE machine \
+              AMD64 / x86-64; code map: 2048 B ARM64EC, 256 B ARM64 and 512 B x64 code in \
+              3 ranges"
+                .to_string()
+        ));
+    }
+
+    #[test]
+    fn chpe_metadata_marks_an_arm64_image_as_arm64x() {
+        let data = hybrid_pe(machine::ARM64, IMAGE_BASE + 0x1100);
+        let result = parse(&data, 0x80).expect("parses");
+        assert_eq!(result.isa, Isa::AArch64);
+        assert_eq!(result.variant.name, "ARM64X");
+    }
+
+    #[test]
+    fn images_without_usable_chpe_metadata_keep_their_machine() {
+        let plain = hybrid_pe(machine::AMD64, 0);
+        let result = parse(&plain, 0x80).expect("parses");
+        assert_eq!(result.isa, Isa::X86_64);
+        assert!(!result.metadata.notes.iter().any(|n| n.contains("CHPE")));
+
+        let mut short_config = hybrid_pe(machine::AMD64, IMAGE_BASE + 0x1100);
+        short_config[LOAD_CONFIG..LOAD_CONFIG + 4].copy_from_slice(&0xC8u32.to_le_bytes());
+        assert_eq!(parse(&short_config, 0x80).expect("parses").isa, Isa::X86_64);
+
+        for pointer in [IMAGE_BASE + 0x9000, 0x1100, u64::MAX] {
+            let result = parse(&hybrid_pe(machine::AMD64, pointer), 0x80).expect("parses");
+            assert_eq!(result.isa, Isa::X86_64);
+            assert!(result.metadata.notes.contains(&format!(
+                "CHPE metadata pointer 0x{pointer:X} does not lead to a code map in the file; \
+                 the image is reported by its machine field"
+            )));
+        }
+
+        let mut far_map = hybrid_pe(machine::AMD64, IMAGE_BASE + 0x1100);
+        far_map[CHPE + 8..CHPE + 12].copy_from_slice(&0x1000_0000u32.to_le_bytes());
+        assert_eq!(parse(&far_map, 0x80).expect("parses").isa, Isa::X86_64);
+    }
+
+    #[test]
+    fn hybrid_image_prefixes_and_mutations_never_panic() {
+        let data = hybrid_pe(machine::AMD64, IMAGE_BASE + 0x1100);
+        for end in 0..data.len() {
+            let _ = parse(&data[..end], 0x80);
+        }
+        for at in (0x80..0x200).chain(LOAD_CONFIG..CODE_MAP + 24) {
+            for value in [0x00, 0xFF, data[at] ^ 0x01, data[at] ^ 0x80] {
+                let mut mutated = data.clone();
+                mutated[at] = value;
+                let _ = parse(&mutated, 0x80);
+            }
+        }
     }
 
     #[test]
