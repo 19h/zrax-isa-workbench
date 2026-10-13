@@ -124,14 +124,16 @@ from the SoC family) and NXP SB2.0/2.1/3.1 (metadata only; signatures not
 verified); see [SoC boot images](socboot.md). UEFI firmware volumes (FFS files,
 compression and GUID-defined sections, nested volumes, flash device images), TE
 images and the Intel flash descriptor region map are implemented; ME/CSME and
-AMD PSP regions stay opaque; see [UEFI and PC flash images](uefi.md). Chromium
-FMAP (at offset 0, or found by a bounded search) and coreboot CBFS (`LARCHIVE`
-regions and master-header ROMs; LZMA/LZ4 stages, SELF segments, SHA-2 hash
-attributes verified) are implemented; see [coreboot](coreboot.md). Router
-wrappers (Broadcom TRX v1/v2, Netgear CHK, D-Link SEAMA, TP-Link mktplinkfw
-v1/v2/v3 and SafeLoader; TRX CRC and CHK checksums verified, MD5 digests not
-verified; LZMA kernels decoded by the OpenWrt convention) are implemented; see
-[router firmware](router.md).
+AMD PSP regions are parsed for structure only (Intel ME `$FPT` and `$CPD`, AMD
+EFS and PSP directories, Intel and AMD microcode; all opaque); see [UEFI and PC
+flash images](uefi.md) and [PC firmware blobs](pcfw.md). Chromium FMAP (at
+offset 0, or found by a bounded search) and coreboot CBFS (`LARCHIVE` regions
+and master-header ROMs; LZMA/LZ4 stages, SELF segments, SHA-2 hash attributes
+verified) are implemented; see [coreboot](coreboot.md). Router wrappers
+(Broadcom TRX v1/v2, Netgear CHK, D-Link SEAMA, TP-Link mktplinkfw v1/v2/v3 and
+SafeLoader; TRX CRC and CHK checksums verified, MD5 digests not verified; LZMA
+kernels decoded by the OpenWrt convention) are implemented; see [router
+firmware](router.md).
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |
