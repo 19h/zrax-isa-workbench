@@ -1137,6 +1137,9 @@ pub enum FileFormat {
     /// ARM Image Format (AIF) executable image (`.axf`, `.aif`, RISC OS
     /// `!RunImage`)
     ArmAif,
+    // Symbian SIS
+    /// Symbian OS v9 software installation package (`.sis`, `.sisx`)
+    SymbianSis,
 }
 
 impl fmt::Display for FileFormat {
@@ -1409,6 +1412,8 @@ impl fmt::Display for FileFormat {
             FileFormat::PsyqObject => write!(f, "PsyQ object"),
             // ARM AIF
             FileFormat::ArmAif => write!(f, "ARM AIF"),
+            // Symbian SIS
+            FileFormat::SymbianSis => write!(f, "Symbian SIS package"),
         }
     }
 }

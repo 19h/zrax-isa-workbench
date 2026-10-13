@@ -118,6 +118,7 @@ const FORMAT_NAMES = {
   geosgeode: 'PC/GEOS geode',
   psyqobject: 'PsyQ object',
   armaif: 'ARM AIF',
+  symbiansis: 'Symbian SIS package',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

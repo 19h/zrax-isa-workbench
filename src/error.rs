@@ -61,6 +61,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Symbian OS v9 SIS installation package.
+    #[error("Symbian SIS parse error: {message}")]
+    SisParseError {
+        /// What is wrong with the package.
+        message: String,
+    },
+
     /// Error parsing a partition table (MBR, GPT or Apple Partition Map).
     #[error("Partition table parse error: {message}")]
     PartitionParseError {

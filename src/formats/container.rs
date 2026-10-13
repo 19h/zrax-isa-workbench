@@ -133,6 +133,8 @@ pub enum Kind {
     Psyq(super::psyq::Layout),
     /// An ARM Image Format (AIF) executable image.
     Aif(super::aif::Layout),
+    /// A Symbian OS v9 SIS installation package.
+    Sis(super::sis::Layout),
 }
 
 impl Kind {
@@ -178,6 +180,7 @@ impl Kind {
             Self::Geos(layout) => layout.format(),
             Self::Psyq(layout) => layout.format(),
             Self::Aif(layout) => layout.format(),
+            Self::Sis(layout) => layout.format(),
         }
     }
 
@@ -223,6 +226,7 @@ impl Kind {
             Self::Geos(layout) => layout.label(),
             Self::Psyq(layout) => layout.label(),
             Self::Aif(layout) => layout.label(),
+            Self::Sis(layout) => layout.label(),
         }
     }
 
@@ -268,6 +272,7 @@ impl Kind {
             Self::Geos(layout) => layout.is_weak(),
             Self::Psyq(layout) => layout.is_weak(),
             Self::Aif(layout) => layout.is_weak(),
+            Self::Sis(layout) => layout.is_weak(),
         }
     }
 }
@@ -318,6 +323,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Geos(layout) => super::geos::parse_container(data, layout),
         Kind::Psyq(layout) => super::psyq::parse_container(data, layout),
         Kind::Aif(layout) => super::aif::parse_container(data, layout),
+        Kind::Sis(layout) => super::sis::parse_container(data, layout),
     }
 }
 

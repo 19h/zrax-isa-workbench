@@ -161,7 +161,10 @@ geodes](geos.md). Psy-Q LNK objects (PROGRAMTYPE as the target; `.text` as
 code; `LIB` archives and relocation application not implemented) followed;
 see [Psy-Q objects](psyq.md). ARM Image Format files (executable,
 non-executable and extended AIF; compressed payloads opaque, no documented
-codec) followed; see [ARM AIF](aif.md).
+codec) followed; see [ARM AIF](aif.md). Symbian OS v9 SIS packages (UID
+checksum, controller and data CRC-16s and per-file SHA-1 verified; files by
+target path; signatures not verified; pre-v9 EPOC SIS not implemented)
+followed; see [Symbian SIS packages](sis.md).
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

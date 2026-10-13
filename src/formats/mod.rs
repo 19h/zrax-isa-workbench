@@ -86,6 +86,7 @@ pub mod retro2;
 pub mod rofs;
 pub mod router;
 pub mod sgo;
+pub mod sis;
 pub mod socboot2;
 pub mod socboot;
 pub mod som;
@@ -843,6 +844,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = aif::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Aif(layout),
+        };
+    }
+
+    // Symbian OS v9 SIS packages: UID1 0x10201A7A and the SISContents field
+    // type at 0x10. Before the late EPOC check, whose known UID1 list holds
+    // 0x10201A7A; an E32 image carries `EPOC` at 0x10 instead.
+    if let Some(layout) = sis::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Sis(layout),
         };
     }
 
