@@ -1001,11 +1001,18 @@ fn hdiutil_fixture_reports_the_udf_bridge_and_falls_back_to_iso_identifiers() {
         "entries carry no Rock Ridge NM entry; their ISO 9660 identifiers are used"
     ));
     assert!(has_note(&c, "from file /BOOT/BOOT.BIN"));
-    let p = classify(&image);
-    assert_eq!(
-        metadata(&p, "iso9660_udf_descriptors"),
-        "BEA01, NSR02, TEA01"
-    );
+    let descriptors = c
+        .metadata
+        .iter()
+        .find(|m| matches!(&m.key, zrax::MetadataKey::Custom(k) if k == "iso9660_udf_descriptors"))
+        .map(|m| m.value.to_string());
+    assert_eq!(descriptors.as_deref(), Some("BEA01, NSR02, TEA01"));
+    // Its UDF volume opens, so the classifier reports the disc as a UDF
+    // bridge (tests/udf.rs); this reading is the ISO 9660 view.
+    assert!(matches!(
+        detect_format(&image),
+        DetectedFormat::Container { kind: Kind::Udf(_) }
+    ));
 }
 
 #[test]

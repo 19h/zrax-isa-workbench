@@ -115,6 +115,7 @@ pub mod tds;
 pub mod ti_c55x;
 pub mod ti;
 pub mod tmobj;
+pub mod udf;
 pub mod uefi;
 pub mod vbf;
 pub mod vdisk;
@@ -891,6 +892,19 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = discs::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Discs(layout),
+        };
+    }
+
+    // UDF volumes: `NSR02` or `NSR03` in the volume recognition sequence
+    // from 0x8000 and an anchor at sector 256 whose checksum, CRC and
+    // location verify. Before ISO 9660: a UDF bridge disc also carries an
+    // ECMA-119 descriptor set, and its DVD or Blu-ray content lives in the
+    // UDF hierarchy, so UDF reports it when its volume opens through the
+    // root directory (otherwise ISO 9660 does). After the console discs,
+    // whose video partitions may be UDF bridge volumes of their own.
+    if let Some(layout) = udf::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Udf(layout),
         };
     }
 

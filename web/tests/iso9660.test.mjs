@@ -10,8 +10,9 @@ after(teardown);
 // The committed images are gzip-compressed (tests/fixtures/iso9660/README.md).
 const fixture = async name => gunzipSync(await readFile(new URL(`../../tests/fixtures/iso9660/${name}.iso.gz`, import.meta.url)));
 
-// The same synthetic tree written by bsdtar (Rock Ridge and Joliet, Joliet only) and by hdiutil (UDF bridge,
-// Rock Ridge without NM entries): the El Torito boot image first, then the recognized members in walk order.
+// The same synthetic tree written by bsdtar (Rock Ridge and Joliet, Joliet only): the recognized members in walk
+// order, then the El Torito boot image. The hdiutil image of the tree is a UDF bridge disc whose UDF volume opens,
+// so the classifier reports it as UDF (web/tests/udf.test.mjs).
 const BOOT = 'El Torito default entry (80x86, no emulation)';
 const IMAGES = [
   {
@@ -20,11 +21,6 @@ const IMAGES = [
     members: ['/bin/payload-with-a-long-name.elf', '/deep/l1/l2/l3/l4/l5/l6/l7/l8/deep.elf'],
   },
   { name: 'joliet', names: 'Joliet', members: ['/bin/payload-with-a-long-name.elf'] },
-  {
-    name: 'hdiutil',
-    names: 'Rock Ridge',
-    members: ['/BIN/PAYLOAD-WITH-A-LONG-NAME.ELF', '/DEEP/L1/L2/L3/L4/L5/L6/L7/L8/DEEP.ELF'],
-  },
 ];
 
 const slice = (payload, label) => payload.slices.find(s => s.label === label);
@@ -54,7 +50,6 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
       assert.equal(custom(p, 'iso9660_names'), names, name);
       assert.equal(custom(p, 'iso9660_boot_entries'), 1, name);
     });
-    assert.ok(payloads[2].notes.some(n => n.message.startsWith('UDF bridge: ECMA-167 recognition sequence BEA01')));
     assert.ok(Object.hasOwn(FORMAT_NAMES, 'iso9660'), 'iso9660 has a display name');
   });
 }

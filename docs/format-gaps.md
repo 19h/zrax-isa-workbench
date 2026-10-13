@@ -143,7 +143,11 @@ containers cut before their object map (most application DMGs over
 count) and exFAT (strong; boot, entry-set and up-case checksums verified)
 followed; see [FAT](fat.md). ISO 9660 (Rock Ridge, Joliet; El Torito boot
 images as children; UDF bridge and hybrid partition tables noted) followed;
-see [ISO 9660](iso9660.md). Java runtime images followed: jimage (both
+see [ISO 9660](iso9660.md). UDF volumes followed (recognition sequence,
+verified anchor, physical/sparable/metadata/virtual partitions, FE/EFE
+allocation, directory walk; bridge discs reported as UDF when the UDF
+volume opens, otherwise ISO 9660); multisession sessions, multi-volume
+sets and named streams are not read; see [UDF](udf.md). Java runtime images followed: jimage (both
 byte orders; perfect-hash index verified; `zip` and `compact-cp`
 resources decoded) and JMOD (ZIP archive at offset 4 as a child); see
 [Java runtime images](javaimage.md). Every row

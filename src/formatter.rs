@@ -847,6 +847,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::DotnetBundle => ".NET single-file bundle",
         FileFormat::Ntfs => "NTFS volume",
         FileFormat::Wim => "WIM image",
+        FileFormat::Udf => "UDF volume",
     }
 }
 

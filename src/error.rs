@@ -62,6 +62,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a UDF volume (recognition sequence, anchor, volume
+    /// descriptor sequence, partitions, file set or root directory).
+    #[error("UDF volume parse error: {message}")]
+    UdfParseError {
+        /// What is wrong with the volume.
+        message: String,
+    },
+
     /// Error parsing a Windows Imaging Format (WIM) image (header, lookup
     /// table or resources).
     #[error("WIM image parse error: {message}")]

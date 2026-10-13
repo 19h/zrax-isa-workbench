@@ -1252,6 +1252,10 @@ pub enum FileFormat {
     // Windows Imaging Format
     /// Windows Imaging Format (WIM) image or split WIM part (`MSWIM`)
     Wim,
+    // UDF volumes
+    /// UDF volume (OSTA Universal Disk Format on ECMA-167): DVD, Blu-ray,
+    /// packet-written and hard disk UDF, and UDF bridge discs
+    Udf,
 }
 
 impl fmt::Display for FileFormat {
@@ -1589,6 +1593,8 @@ impl fmt::Display for FileFormat {
             // NTFS volumes
             FileFormat::Ntfs => write!(f, "NTFS volume"),
             FileFormat::Wim => write!(f, "WIM image"),
+            // UDF volumes
+            FileFormat::Udf => write!(f, "UDF volume"),
         }
     }
 }
