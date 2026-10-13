@@ -232,7 +232,10 @@ non-DOS floppies, Rigid Disk Block disks and unpartitioned hardfiles; see
 [Amiga disk images](adf.md). Atari 8-bit ATR disk images (DOS 2.x files as
 children; binary load files and boot sectors as 6502) and DOS binary load
 files followed; XFD, DCM, ATX, PRO and CAS images and MyDOS/SpartaDOS file
-systems are not implemented; see [Atari 8-bit](atari8.md).
+systems are not implemented; see [Atari 8-bit](atari8.md). Apple II disk
+images followed: raw DOS 3.3 and ProDOS images (weak) and 2IMG (strong);
+DOS 3.2, nibble images (.nib, .nb2, WOZ), physical and CP/M sector orders
+are not implemented; see [Apple II disk images](apple2.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as

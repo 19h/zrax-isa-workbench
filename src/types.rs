@@ -1184,6 +1184,13 @@ pub enum FileFormat {
     Atr,
     /// Atari 8-bit DOS binary load file (`.xex`, `.com`)
     AtariXex,
+    // Apple II disk images
+    /// Apple II DOS 3.3 disk image (`.dsk`, `.do`, `.po`)
+    Apple2Dos,
+    /// Apple II `ProDOS` volume image (`.po`, `.dsk`, `.hdv`)
+    ProDos,
+    /// Apple II 2IMG disk image (`.2mg`)
+    TwoImg,
 }
 
 impl fmt::Display for FileFormat {
@@ -1482,6 +1489,10 @@ impl fmt::Display for FileFormat {
             // Atari 8-bit
             FileFormat::Atr => write!(f, "Atari ATR disk image"),
             FileFormat::AtariXex => write!(f, "Atari binary load file"),
+            // Apple II disk images
+            FileFormat::Apple2Dos => write!(f, "Apple II DOS 3.3 disk"),
+            FileFormat::ProDos => write!(f, "ProDOS volume"),
+            FileFormat::TwoImg => write!(f, "2IMG disk image"),
         }
     }
 }

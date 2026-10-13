@@ -26,6 +26,7 @@ pub mod android;
 pub mod aof;
 pub mod aout;
 pub mod apple;
+pub mod apple2;
 pub mod ar;
 pub mod archives;
 pub mod atari8;
@@ -946,6 +947,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Apple II 2IMG images: `2IMG` with a header length of 52 or at least 64,
+    // version 1 and an image format of 0-2. No format above starts with
+    // `2IMG`.
+    if let Some(layout) = apple2::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Apple2(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -1260,6 +1270,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = atari8::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Atari8(layout),
+        };
+    }
+
+    // Raw Apple II DOS 3.3 and ProDOS images have no magic: the size must be
+    // exactly 35 or 40 tracks or the volume, and the VTOC and catalog chain
+    // or the volume directory must validate. After the FAT and MBR checks,
+    // which need the `55 AA` boot signature these images do not carry.
+    if let Some(layout) = apple2::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Apple2(layout),
         };
     }
 

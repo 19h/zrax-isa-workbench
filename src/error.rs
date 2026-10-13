@@ -61,6 +61,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an Apple II disk image (DOS 3.3, `ProDOS` or 2IMG).
+    #[error("Apple II disk image parse error: {message}")]
+    Apple2ParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an Atari 8-bit ATR disk image or DOS binary load file.
     #[error("Atari 8-bit image parse error: {message}")]
     Atari8ParseError {

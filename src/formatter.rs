@@ -821,6 +821,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::AmigaHdf => "Amiga hard disk image",
         FileFormat::Atr => "Atari ATR disk image",
         FileFormat::AtariXex => "Atari binary load file",
+        FileFormat::Apple2Dos => "Apple II DOS 3.3 disk",
+        FileFormat::ProDos => "ProDOS volume",
+        FileFormat::TwoImg => "2IMG disk image",
     }
 }
 

@@ -148,6 +148,8 @@ pub enum Kind {
     Adf(super::adf::Layout),
     /// An Atari 8-bit ATR disk image or DOS binary load file.
     Atari8(super::atari8::Layout),
+    /// An Apple II disk image: DOS 3.3, `ProDOS` or 2IMG.
+    Apple2(super::apple2::Layout),
 }
 
 impl Kind {
@@ -200,6 +202,7 @@ impl Kind {
             Self::Cbm(layout) => layout.format(),
             Self::Adf(layout) => layout.format(),
             Self::Atari8(layout) => layout.format(),
+            Self::Apple2(layout) => layout.format(),
         }
     }
 
@@ -252,6 +255,7 @@ impl Kind {
             Self::Cbm(layout) => layout.label(),
             Self::Adf(layout) => layout.label(),
             Self::Atari8(layout) => layout.label(),
+            Self::Apple2(layout) => layout.label(),
         }
     }
 
@@ -304,6 +308,7 @@ impl Kind {
             Self::Cbm(layout) => layout.is_weak(),
             Self::Adf(layout) => layout.is_weak(),
             Self::Atari8(layout) => layout.is_weak(),
+            Self::Apple2(layout) => layout.is_weak(),
         }
     }
 }
@@ -361,6 +366,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Cbm(layout) => super::cbm::parse_container(data, layout),
         Kind::Adf(layout) => super::adf::parse_container(data, layout),
         Kind::Atari8(layout) => super::atari8::parse_container(data, layout),
+        Kind::Apple2(layout) => super::apple2::parse_container(data, layout),
     }
 }
 
