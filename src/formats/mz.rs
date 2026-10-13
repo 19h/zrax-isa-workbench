@@ -535,7 +535,9 @@ fn parse_bare(data: &[u8], layout: Linear) -> Result<ClassificationResult> {
 }
 
 /// Classify a linear executable header at `header` from its CPU type and
-/// describe its OS type, module type, pages and entry in notes.
+/// describe its OS type, module type, pages and entry in notes. A CPU type
+/// without a mapping names no ISA: the result is [`Isa::Unknown`] with the
+/// CPU type as its ID, bit width 0 and confidence 0.
 ///
 /// Fields read: `B-ORD` (`02h`), `W-ORD` (`03h`), format level (`04h`),
 /// module flags (`10h`), module page count (`14h`), EIP object (`18h`) and
@@ -563,7 +565,9 @@ fn linear_result(
         le_cpu::I386 | le_cpu::I486 | le_cpu::PENTIUM => (Isa::X86, 32),
         le_cpu::MIPS1 | le_cpu::MIPS2 | le_cpu::MIPS3 => (Isa::Mips, 32),
         le_cpu::I860 => (Isa::I860, 32),
-        _ => (Isa::X86, 32), // Default to i386
+        // Any other CPU type names no ISA we know; the code model may still
+        // answer from the bytes.
+        _ => (Isa::Unknown(u32::from(cpu)), 0),
     };
 
     let os_name = match os {
@@ -577,16 +581,20 @@ fn linear_result(
     };
 
     let cpu_name = match cpu {
-        le_cpu::I286 => "80286",
-        le_cpu::I386 => "80386",
-        le_cpu::I486 => "80486",
-        le_cpu::PENTIUM => "Pentium",
-        le_cpu::MIPS1 => "MIPS-I",
-        le_cpu::MIPS2 => "MIPS-II",
-        le_cpu::MIPS3 => "MIPS-III",
-        le_cpu::I860 => "i860",
-        _ => "Unknown",
+        le_cpu::I286 => Some("80286"),
+        le_cpu::I386 => Some("80386"),
+        le_cpu::I486 => Some("80486"),
+        le_cpu::PENTIUM => Some("Pentium"),
+        le_cpu::MIPS1 => Some("MIPS-I"),
+        le_cpu::MIPS2 => Some("MIPS-II"),
+        le_cpu::MIPS3 => Some("MIPS-III"),
+        le_cpu::I860 => Some("i860"),
+        _ => None,
     };
+    let cpu_note = cpu_name.map_or_else(
+        || format!("CPU: Unknown (0x{cpu:X})"),
+        |name| format!("CPU: {name}"),
+    );
 
     let module_type = module_type_name(module_flags).map_or_else(
         || format!("Unknown (0x{:X})", module_flags & MODULE_TYPE_MASK),
@@ -595,7 +603,7 @@ fn linear_result(
 
     let mut notes = vec![format!("{} (Linear Executable)", layout.name())];
     notes.push(format!("Target OS: {}", os_name));
-    notes.push(format!("CPU: {}", cpu_name));
+    notes.push(cpu_note);
     notes.push(format!("Type: {module_type}"));
     notes.push(format!("Pages: {}", module_pages));
     notes.push(format!("Entry: object {}:0x{:08X}", eip_object, eip_offset));
@@ -618,7 +626,10 @@ fn linear_result(
 
     let mut result =
         ClassificationResult::from_format(isa, bitwidth, Endianness::Little, layout.format());
-    result.variant = Variant::new(format!("{} {}", os_name, cpu_name));
+    if matches!(isa, Isa::Unknown(_)) {
+        result.confidence = 0.0;
+    }
+    result.variant = Variant::new(format!("{} {}", os_name, cpu_name.unwrap_or("Unknown")));
     result.metadata = metadata;
 
     Ok(result)
@@ -1110,6 +1121,39 @@ mod tests {
         assert_eq!(table(&data, 0, 0, OBJECT_ENTRY_SIZE), Some(&[][..]));
         assert_eq!(table(&data, at, u32::MAX, OBJECT_ENTRY_SIZE), None);
         assert_eq!(table(&data, u32::MAX, 1, OBJECT_ENTRY_SIZE), None);
+    }
+
+    #[test]
+    fn unmapped_cpu_types_behind_a_stub_name_no_isa() {
+        for cpu in [le_cpu::UNKNOWN, le_cpu::N11, 0x99, 0x0200] {
+            let data = make_le_header(cpu, le_os::OS2);
+            let variant = detect(&data).expect("an LE header behind a stub");
+            let result = parse(&data, variant).expect("parses");
+            assert_eq!(result.isa, Isa::Unknown(u32::from(cpu)));
+            assert_eq!(result.bitwidth, 0);
+            assert_eq!(result.confidence, 0.0);
+            assert_eq!(result.variant.name, "OS/2 Unknown");
+            let note = format!("CPU: Unknown (0x{cpu:X})");
+            assert!(result.metadata.notes.contains(&note), "{note}");
+        }
+    }
+
+    #[test]
+    fn mapped_cpu_types_keep_their_isa_and_full_confidence() {
+        let cases = [
+            (le_cpu::I286, Isa::X86, 16),
+            (le_cpu::I486, Isa::X86, 32),
+            (le_cpu::PENTIUM, Isa::X86, 32),
+            (le_cpu::I860, Isa::I860, 32),
+            (le_cpu::MIPS1, Isa::Mips, 32),
+            (le_cpu::MIPS3, Isa::Mips, 32),
+        ];
+        for (cpu, isa, bitwidth) in cases {
+            let data = make_le_header(cpu, le_os::OS2);
+            let result = parse(&data, detect(&data).expect("LE")).expect("parses");
+            assert_eq!((result.isa, result.bitwidth), (isa, bitwidth), "{cpu:#x}");
+            assert_eq!(result.confidence, 1.0);
+        }
     }
 
     #[test]

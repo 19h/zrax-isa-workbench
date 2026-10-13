@@ -8,7 +8,9 @@ extensions and fixes of that family:
 - LE and LX headers at offset 0 with no MZ stub in front of them;
 - PE images whose DOS header starts with the byte-swapped signature `ZM`;
 - the module type that LE and LX headers report, behind a stub or not
-  ([Module type](#module-type)).
+  ([Module type](#module-type));
+- the ISA of an LE or LX header behind a stub whose CPU type has no
+  mapping ([CPU type](#cpu-type)).
 
 None adds a format ID: a header without a stub reports the existing
 `le` and `lx` IDs, a `ZM` image the existing `pe` ID.
@@ -95,6 +97,24 @@ for a Windows 3.x VxD (`exeflat.h`, `VXD_DEVICE_DRIVER_3x`), whose type
 field is the library type: such a file (IDA's `pc_drv.le`) reports
 `Type: DLL`, which is what its header says.
 
+## CPU type
+
+The CPU type (`08h`) is the ISA evidence of an LE or LX header. The LX
+specification defines `01h` (80286), `02h` (80386) and `03h` (80486); the
+stubbed parser also maps `04h` (Pentium, 32-bit x86), `20h` (i860) and
+`40h` to `42h` (MIPS), values without a primary source here (A5). A header
+without a stub must carry `01h` to `03h`.
+
+Behind a stub, any other value (`00h`, `21h`, or a value no source lists)
+names no ISA: the parser's result is `Isa::Unknown` with the CPU type as
+its ID, bit width 0 and confidence 0, the variant keeps its form (`OS/2
+Unknown`), and the note is `CPU: Unknown (0x21)`. The DOS header still
+makes the detection strong (`mz`, variant `Lx { cpu: 33, os: 1 }`). As for
+any format result with an unknown ISA, the classifier then runs the code model
+over the file; if that identifies an ISA, the payload takes it with source
+`combined` and the note `ISA identified from the code, not the container`,
+otherwise the ISA stays unknown.
+
 ## Wire units and byte order
 
 - All offsets are in bytes. In the header, the object table, object page
@@ -169,7 +189,7 @@ in `mz::detect`.
 | A2 | The entry address is not bounded by the EIP object's virtual size | `pc_tomb.le` (DOS/4GW) has EIP `0x3A584` in object 1 of virtual size `0x20710`; only the object number is checked |
 | A3 | The object table's reserved word need not be zero | `pc_vxd.le` stores object names (`LCOD`, `ICOD`, ...) there; it is not checked |
 | A4 | LX page flags need not be in the 1992 list (0 to 4) | IDA's bare samples carry flag 5 (OS/2 Warp compressed pages, not in the pinned specification, UNCONFIRMED); flags are not checked, only data extents |
-| A5 | Only CPU types 1 to 3 are documented | The Pentium (`04h`), i860 (`20h`, `21h`) and MIPS (`40h`-`42h`) values the stubbed parser maps have no primary source here; a header without a stub carrying them is not recognized (`header_and_table_corruptions_are_not_recognized_and_name_the_field`). A sample with such a value and a primary source would extend the list |
+| A5 | Only CPU types 1 to 3 are documented | The Pentium (`04h`), i860 (`20h`) and MIPS (`40h`-`42h`) values the stubbed parser maps have no primary source here (`21h` has a constant but no mapping); a header without a stub carrying them is not recognized (`header_and_table_corruptions_are_not_recognized_and_name_the_field`). A sample with such a value and a primary source would extend the list |
 | A6 | Text starting with `LE` or `LX` is not recognized | `ascii_text_starting_with_le_or_lx_is_not_an_executable`: the order bytes rule out ASCII text |
 | A7 | A `ZM` header alone is not evidence of an executable | Without `PE\0\0` at `e_lfanew` a `ZM` file is not reported as MZ, NE, LE or LX (`zm_without_a_pe_signature_is_not_a_dos_executable`); only the PE signature makes it strong |
 | A8 | The module type is the masked value, not a set of bits | `module_types_are_the_whole_type_field_behind_and_without_a_stub`; with `IDA_INPUT_DIR`, `ida_stubbed_samples_report_the_module_type_of_their_type_field`: `pc_vxd.le` (`28000h`) is a virtual device driver. A file of a documented type whose masked value differs would falsify it |
@@ -186,7 +206,7 @@ in `mz::detect`.
 | LE/LX headers at an offset other than 0 without an MZ stub (bound DOS extenders that append the header after their own image) | Not recognized: nothing points at the header |
 | Module types the specification does not define (`10000h`, `30000h`, `38000h`) | Reported as `Type: Unknown (0x…)`; the header still classifies by its CPU type |
 | Windows 3.x VxDs with the library type (`8020h`) | `Type: DLL`: the type field names a library, and nothing else in the header is checked to tell a VxD apart |
-| Unknown CPU types behind a stub | The existing parser reports 32-bit x86 for any unmapped CPU type; kept. Without a stub such headers are not recognized |
+| Unmapped CPU types behind a stub | Unknown ISA from the header (`unknown_cpu_types_behind_a_stub_name_no_isa`); any ISA comes from the code model. Without a stub such headers are not recognized |
 
 ## Verification
 

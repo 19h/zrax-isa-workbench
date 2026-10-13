@@ -518,6 +518,95 @@ fn module_types_are_the_whole_type_field_behind_and_without_a_stub() {
 }
 
 #[test]
+fn unknown_cpu_types_behind_a_stub_name_no_isa() {
+    // `00h` and `21h` have constants but no mapping; `99h` and `200h` (80386
+    // read in the wrong byte order) are not defined anywhere.
+    for signature in [Signature::Le, Signature::Lx] {
+        for cpu in [0, 0x21, 0x99, 0x0200] {
+            let mut image = program(signature);
+            image.cpu = cpu;
+            let data = stubbed(&image);
+            let variant = mz::detect(&data).expect("a linear header behind a stub");
+            let result = mz::parse(&data, variant).expect("parses");
+            assert_eq!(result.isa, Isa::Unknown(u32::from(cpu)), "{signature:?}");
+            assert_eq!(result.bitwidth, 0);
+            assert_eq!(result.confidence, 0.0);
+            assert_eq!(result.format, signature.format());
+
+            let p = classify(&data);
+            assert_eq!(p.format.format, FileFormat::Mz);
+            assert_eq!(
+                p.primary.variant.as_ref().map(|v| v.name.as_str()),
+                Some("OS/2 Unknown")
+            );
+            assert!(has_note(&p, &format!("CPU: Unknown (0x{cpu:X})")));
+            // The header names no ISA, so any ISA comes from the code model.
+            if !matches!(p.primary.isa, Isa::Unknown(_)) {
+                assert_eq!(p.primary.source, ClassificationSource::Combined);
+            }
+        }
+    }
+}
+
+#[test]
+fn mapped_cpu_types_behind_a_stub_keep_their_isa() {
+    // CPU type, ISA, bit width, the `CPU:` note.
+    let cases = [
+        (1, Isa::X86, 16, "CPU: 80286"),
+        (CPU_80386, Isa::X86, 32, "CPU: 80386"),
+        (CPU_80486, Isa::X86, 32, "CPU: 80486"),
+        (4, Isa::X86, 32, "CPU: Pentium"),
+        (0x20, Isa::I860, 32, "CPU: i860"),
+        (0x40, Isa::Mips, 32, "CPU: MIPS-I"),
+        (0x42, Isa::Mips, 32, "CPU: MIPS-III"),
+    ];
+    for (cpu, isa, bitwidth, note) in cases {
+        let mut image = program(Signature::Lx);
+        image.cpu = cpu;
+        let p = classify(&stubbed(&image));
+        assert_eq!(
+            (p.primary.isa, p.primary.bitwidth),
+            (isa, bitwidth),
+            "{cpu:#x}"
+        );
+        assert_eq!(p.primary.source, ClassificationSource::FileFormat);
+        assert!(has_note(&p, note), "{cpu:#x}: {:?}", notes(&p));
+    }
+}
+
+/// The CPU types the stubbed parser maps to an ISA.
+fn is_mapped_cpu(cpu: u16) -> bool {
+    matches!(cpu, 1..=4 | 0x20 | 0x40..=0x42)
+}
+
+#[test]
+fn stubbed_header_sweeps_never_panic_and_name_an_isa_only_for_mapped_cpus() {
+    for signature in [Signature::Le, Signature::Lx] {
+        let data = stubbed(&program(signature));
+        for end in 0..data.len() {
+            let _ = detect_payload(&data[..end], &ClassifierOptions::new());
+        }
+        for at in 0..data.len() {
+            for value in [0x00, 0xFF, data[at] ^ (1 << (at % 8))] {
+                let mut mutated = data.clone();
+                mutated[at] = value;
+                let _ = detect_payload(&mutated, &ClassifierOptions::new());
+                let Some(variant) = mz::detect(&mutated) else {
+                    continue;
+                };
+                let (ExtendedType::Le { cpu, .. } | ExtendedType::Lx { cpu, .. }) = variant else {
+                    continue;
+                };
+                if let Ok(result) = mz::parse(&mutated, variant) {
+                    let named = !matches!(result.isa, Isa::Unknown(_));
+                    assert_eq!(named, is_mapped_cpu(cpu), "{signature:?} {at} {value:#x}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn big_endian_headers_are_read_in_their_declared_order() {
     for signature in [Signature::Le, Signature::Lx] {
         let mut image = program(signature);
