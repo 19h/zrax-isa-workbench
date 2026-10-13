@@ -61,6 +61,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a virtual disk image (QCOW2, VMDK, VHD, VHDX or VDI).
+    #[error("Virtual disk parse error: {message}")]
+    VirtualDiskParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a Symbian OS v9 SIS installation package.
     #[error("Symbian SIS parse error: {message}")]
     SisParseError {

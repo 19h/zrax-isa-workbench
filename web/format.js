@@ -120,6 +120,7 @@ const FORMAT_NAMES = {
   armaif: 'ARM AIF',
   symbiansis: 'Symbian SIS package',
   ueficapsule: 'UEFI capsule',
+  qcow2: 'QCOW2 disk image', vmdk: 'VMDK disk image', vhd: 'VHD disk image', vhdx: 'VHDX disk image', vdi: 'VDI disk image',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

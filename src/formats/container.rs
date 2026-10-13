@@ -138,6 +138,8 @@ pub enum Kind {
     /// A UEFI capsule: FMP, nested FMP, JSON, Windows UX, `EFI_CAPSULE_GUID`
     /// or a vendor capsule header.
     Capsule(super::capsule::Layout),
+    /// A virtual disk image: QCOW2, VMDK, VHD, VHDX or VDI.
+    VirtualDisk(super::vdisk::Layout),
 }
 
 impl Kind {
@@ -185,6 +187,7 @@ impl Kind {
             Self::Aif(layout) => layout.format(),
             Self::Sis(layout) => layout.format(),
             Self::Capsule(layout) => layout.format(),
+            Self::VirtualDisk(layout) => layout.format(),
         }
     }
 
@@ -232,6 +235,7 @@ impl Kind {
             Self::Aif(layout) => layout.label(),
             Self::Sis(layout) => layout.label(),
             Self::Capsule(layout) => layout.label(),
+            Self::VirtualDisk(layout) => layout.label(),
         }
     }
 
@@ -279,6 +283,7 @@ impl Kind {
             Self::Aif(layout) => layout.is_weak(),
             Self::Sis(layout) => layout.is_weak(),
             Self::Capsule(layout) => layout.is_weak(),
+            Self::VirtualDisk(layout) => layout.is_weak(),
         }
     }
 }
@@ -331,6 +336,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Aif(layout) => super::aif::parse_container(data, layout),
         Kind::Sis(layout) => super::sis::parse_container(data, layout),
         Kind::Capsule(layout) => super::capsule::parse_container(data, layout),
+        Kind::VirtualDisk(layout) => super::vdisk::parse_container(data, layout),
     }
 }
 

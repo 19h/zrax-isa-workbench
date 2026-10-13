@@ -1144,6 +1144,18 @@ pub enum FileFormat {
     /// UEFI capsule (`EFI_CAPSULE_HEADER`: FMP, JSON, Windows UX or vendor
     /// capsule)
     UefiCapsule,
+    // Virtual disks
+    /// QEMU QCOW2 disk image (version 2 or 3)
+    Qcow2,
+    /// VMware VMDK hosted sparse extent (monolithic sparse or
+    /// stream-optimized)
+    Vmdk,
+    /// Microsoft VHD disk image (fixed, dynamic or differencing)
+    Vhd,
+    /// Microsoft VHDX disk image
+    Vhdx,
+    /// VirtualBox VDI disk image
+    Vdi,
 }
 
 impl fmt::Display for FileFormat {
@@ -1420,6 +1432,12 @@ impl fmt::Display for FileFormat {
             FileFormat::SymbianSis => write!(f, "Symbian SIS package"),
             // UEFI capsules
             FileFormat::UefiCapsule => write!(f, "UEFI capsule"),
+            // Virtual disks
+            FileFormat::Qcow2 => write!(f, "QCOW2 disk image"),
+            FileFormat::Vmdk => write!(f, "VMDK disk image"),
+            FileFormat::Vhd => write!(f, "VHD disk image"),
+            FileFormat::Vhdx => write!(f, "VHDX disk image"),
+            FileFormat::Vdi => write!(f, "VDI disk image"),
         }
     }
 }

@@ -93,7 +93,10 @@ and encrypted files not read) is implemented; see [ext](ext.md). EROFS
 (compact and extended inodes; LZ4, MicroLZMA and DEFLATE clusters; Zstandard
 extents not decoded) followed; see [EROFS](erofs.md). Partition tables (MBR
 with EBR chains, GPT, Apple Partition Map) followed too; see
-[partition tables](partitions.md). FAT12/16/32 (weak; FAT type by cluster
+[partition tables](partitions.md). Virtual disk images (QCOW2, VMDK sparse
+extents, VHD, VHDX and VDI; the guest disk classified on its own) followed;
+QCOW1, QED, VMware COWD/SESparse, VMDK descriptor files, VHDX log replay
+and VDI header v0 remain unsupported; see [virtual disk images](vdisk.md). FAT12/16/32 (weak; FAT type by cluster
 count) and exFAT (strong; boot, entry-set and up-case checksums verified)
 followed; see [FAT](fat.md). ISO 9660 (Rock Ridge, Joliet; El Torito boot
 images as children; UDF bridge and hybrid partition tables noted) followed;

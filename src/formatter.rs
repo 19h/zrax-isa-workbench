@@ -804,6 +804,11 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::ArmAif => "ARM AIF",
         FileFormat::SymbianSis => "Symbian SIS package",
         FileFormat::UefiCapsule => "UEFI capsule",
+        FileFormat::Qcow2 => "QCOW2 disk image",
+        FileFormat::Vmdk => "VMDK disk image",
+        FileFormat::Vhd => "VHD disk image",
+        FileFormat::Vhdx => "VHDX disk image",
+        FileFormat::Vdi => "VDI disk image",
     }
 }
 

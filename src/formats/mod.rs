@@ -99,6 +99,7 @@ pub mod ti;
 pub mod tmobj;
 pub mod uefi;
 pub mod vbf;
+pub mod vdisk;
 pub mod wasm;
 pub mod wince;
 pub mod xcoff;
@@ -630,6 +631,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = nintendo::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Nintendo(layout),
+        };
+    }
+
+    // Virtual disk images: a checksummed VHD footer at the end (or its copy
+    // at 0), `QFI\xfb`, `KDMV`, `vhdxfile` or the VDI signature at 0x40.
+    // Before the archive, filesystem, disc, ISO 9660, partition-table and
+    // FAT checks: a fixed VHD starts with the guest disk's first sector,
+    // which those formats would otherwise claim.
+    if let Some(layout) = vdisk::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::VirtualDisk(layout),
         };
     }
 
