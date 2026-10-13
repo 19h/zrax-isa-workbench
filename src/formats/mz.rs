@@ -85,14 +85,19 @@ const LINEAR_FORMAT_LEVEL: u32 = 0;
 /// The page size of the linear EXE format: "the page size is 4Kbytes".
 const LINEAR_PAGE_SIZE: u32 = 4096;
 
-/// Module type mask of the module flags.
+/// Module type mask of the module flags. The module type is the masked
+/// value, not a set of bits: the virtual device driver type contains the
+/// library type's bit.
 const MODULE_TYPE_MASK: u32 = 0x0003_8000;
 
 /// Module type of a program module (not a library or device driver).
 const MODULE_TYPE_PROGRAM: u32 = 0;
 
-/// Module flag: library module (part of the module type).
+/// Module type: library module.
 const MODULE_LIBRARY: u32 = 0x0000_8000;
+
+/// Module type: protected memory library module.
+const MODULE_PROTECTED_LIBRARY: u32 = 0x0001_8000;
 
 /// Module type: physical device driver.
 const MODULE_PHYSICAL_DRIVER: u32 = 0x0002_0000;
@@ -583,22 +588,15 @@ fn linear_result(
         _ => "Unknown",
     };
 
-    // The library bit is tested before the module type mask is applied, so
-    // a virtual device driver (28000h includes 8000h) is reported as a DLL.
-    let module_type = if module_flags & MODULE_LIBRARY != 0 {
-        "DLL"
-    } else if module_flags & MODULE_PHYSICAL_DRIVER != 0 {
-        "Physical device driver"
-    } else if module_flags & MODULE_VIRTUAL_DRIVER != 0 {
-        "Virtual device driver"
-    } else {
-        "Executable"
-    };
+    let module_type = module_type_name(module_flags).map_or_else(
+        || format!("Unknown (0x{:X})", module_flags & MODULE_TYPE_MASK),
+        str::to_string,
+    );
 
     let mut notes = vec![format!("{} (Linear Executable)", layout.name())];
     notes.push(format!("Target OS: {}", os_name));
     notes.push(format!("CPU: {}", cpu_name));
-    notes.push(format!("Type: {}", module_type));
+    notes.push(format!("Type: {module_type}"));
     notes.push(format!("Pages: {}", module_pages));
     notes.push(format!("Entry: object {}:0x{:08X}", eip_object, eip_offset));
 
@@ -624,6 +622,23 @@ fn linear_result(
     result.metadata = metadata;
 
     Ok(result)
+}
+
+/// The module type that the module flags (`10h`) name, from the value under
+/// [`MODULE_TYPE_MASK`] compared whole, as the LX specification lists the
+/// types (Open Watcom's `wdump` compares the masked value the same way).
+/// Testing single bits would read a virtual device driver (`28000h`) as a
+/// library (`8000h`). `None` for the masked values `10000h`, `30000h` and
+/// `38000h`, which no source defines. A protected memory library is a
+/// library module, reported as a DLL like the others.
+fn module_type_name(module_flags: u32) -> Option<&'static str> {
+    match module_flags & MODULE_TYPE_MASK {
+        MODULE_TYPE_PROGRAM => Some("Executable"),
+        MODULE_LIBRARY | MODULE_PROTECTED_LIBRARY => Some("DLL"),
+        MODULE_PHYSICAL_DRIVER => Some("Physical device driver"),
+        MODULE_VIRTUAL_DRIVER => Some("Virtual device driver"),
+        _ => None,
+    }
 }
 
 /// Whether `size` bytes at `offset` lie inside `data`.
@@ -1095,6 +1110,27 @@ mod tests {
         assert_eq!(table(&data, 0, 0, OBJECT_ENTRY_SIZE), Some(&[][..]));
         assert_eq!(table(&data, at, u32::MAX, OBJECT_ENTRY_SIZE), None);
         assert_eq!(table(&data, u32::MAX, 1, OBJECT_ENTRY_SIZE), None);
+    }
+
+    #[test]
+    fn module_types_are_the_whole_masked_value() {
+        let cases = [
+            (0x0000_0000, Some("Executable")),
+            (0x0000_0300, Some("Executable")),
+            (0x0000_8000, Some("DLL")),
+            // Open Watcom's `VXD_DEVICE_DRIVER_3x`: library type.
+            (0x0000_8020, Some("DLL")),
+            (0x0001_8000, Some("DLL")),
+            (0x0002_0000, Some("Physical device driver")),
+            (0x0002_8000, Some("Virtual device driver")),
+            (0x4002_8214, Some("Virtual device driver")),
+            (0x0001_0000, None),
+            (0x0003_0000, None),
+            (0x0003_8000, None),
+        ];
+        for (flags, expected) in cases {
+            assert_eq!(module_type_name(flags), expected, "0x{flags:X}");
+        }
     }
 
     #[test]

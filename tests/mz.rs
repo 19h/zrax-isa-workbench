@@ -3,8 +3,9 @@
 //! (validated completely, weak detection, CPU type as the ISA evidence, the
 //! same classification as behind a stub), and PE images whose DOS header
 //! starts with the byte-swapped `ZM` signature; corrupted fields,
-//! truncation and mutation sweeps. `IDA_INPUT_DIR=/path/to/ida/tests/input`
-//! also runs the parser over IDA's bare LE/LX and `ZM` samples.
+//! truncation and mutation sweeps; the module type of LE/LX headers behind
+//! and without a stub. `IDA_INPUT_DIR=/path/to/ida/tests/input` also runs
+//! the parser over IDA's LE/LX and `ZM` samples.
 
 use zrax::formats::mz::{self, ExtendedType};
 use zrax::formats::{detect_format, DetectedFormat};
@@ -33,6 +34,12 @@ const OBJECT_ENTRY_SIZE: usize = 24;
 
 /// Module flags: library module (`00008000h`).
 const MODULE_LIBRARY: u32 = 0x8000;
+
+/// Module types under the module type mask `00038000h`: protected memory
+/// library, physical device driver and virtual device driver modules.
+const MODULE_PROTECTED_LIBRARY: u32 = 0x1_8000;
+const MODULE_PHYSICAL_DRIVER: u32 = 0x2_0000;
+const MODULE_VIRTUAL_DRIVER: u32 = 0x2_8000;
 
 /// Object flags: readable, executable, big/default (`2005h`), and readable,
 /// writable, big/default (`2003h`).
@@ -448,6 +455,65 @@ fn multi_page_images_and_libraries_without_an_entry_object_are_recognized() {
         let p = classify(&bare(&library));
         assert_eq!(p.format.format, signature.format());
         assert!(has_note(&p, "Type: DLL"));
+    }
+}
+
+#[test]
+fn a_stubbed_virtual_device_driver_is_not_reported_as_a_dll() {
+    let mut image = program(Signature::Le);
+    image.os = OS_WINDOWS_386;
+    image.module_flags = MODULE_VIRTUAL_DRIVER;
+    let p = classify(&stubbed(&image));
+    assert_eq!(p.format.format, FileFormat::Mz);
+    assert_eq!(p.primary.isa, Isa::X86);
+    assert_eq!(
+        notes(&p),
+        [
+            "LE (Linear Executable)",
+            "Target OS: Windows 386",
+            "CPU: 80386",
+            "Type: Virtual device driver",
+            "Pages: 1",
+            "Entry: object 1:0x00000000",
+        ]
+    );
+}
+
+#[test]
+fn module_types_are_the_whole_type_field_behind_and_without_a_stub() {
+    // Module flags and the note they give; the type mask is `38000h`, and
+    // `10000h`, `30000h` and `38000h` are not defined.
+    let cases = [
+        (0, "Type: Executable"),
+        (MODULE_LIBRARY, "Type: DLL"),
+        (MODULE_PROTECTED_LIBRARY, "Type: DLL"),
+        (MODULE_PHYSICAL_DRIVER, "Type: Physical device driver"),
+        (MODULE_VIRTUAL_DRIVER, "Type: Virtual device driver"),
+        // Other flags do not change the type.
+        (
+            MODULE_VIRTUAL_DRIVER | 0x4000_0214,
+            "Type: Virtual device driver",
+        ),
+        (0x1_0000, "Type: Unknown (0x10000)"),
+        (0x3_0000, "Type: Unknown (0x30000)"),
+        (0x3_8000, "Type: Unknown (0x38000)"),
+    ];
+    for signature in [Signature::Le, Signature::Lx] {
+        for (flags, note) in cases {
+            let mut image = program(signature);
+            image.os = OS_WINDOWS_386;
+            image.module_flags = flags;
+            for data in [stubbed(&image), bare(&image)] {
+                let p = classify(&data);
+                assert!(is_linear(p.format.format), "{signature:?} 0x{flags:X}");
+                assert_eq!(p.primary.isa, Isa::X86, "{signature:?} 0x{flags:X}");
+                assert!(
+                    has_note(&p, note),
+                    "{signature:?} 0x{flags:X}: {:?}",
+                    notes(&p)
+                );
+            }
+        }
     }
 }
 
@@ -898,6 +964,34 @@ fn ida_stubbed_samples_validate_once_unbound_and_keep_their_classification() {
         assert_eq!(bare.format.format, expected.detected_format(), "{name}");
         assert_eq!(bare.primary.isa, stubbed.primary.isa, "{name}");
         assert_eq!(bare.primary.variant, stubbed.primary.variant, "{name}");
+    }
+}
+
+/// IDA's stubbed LE/LX samples and the module type note of each:
+/// `pc_vxd.le` has the virtual device driver type `28000h`; `pc_drv.le` has
+/// the flags `8020h` that Open Watcom writes for a Windows 3.x VxD
+/// (`VXD_DEVICE_DRIVER_3x`), whose type field is the library type.
+const IDA_STUBBED_MODULE_TYPES: &[(&str, &str)] = &[
+    ("pc_drv.le", "Type: DLL"),
+    ("pc_popple_unchecked.le", "Type: Executable"),
+    ("pc_tomb.le", "Type: Executable"),
+    ("pc_vxd.le", "Type: Virtual device driver"),
+    ("pc_os2_exe.lx", "Type: Executable"),
+];
+
+#[test]
+fn ida_stubbed_samples_report_the_module_type_of_their_type_field() {
+    let Some(dir) = ida_dir() else {
+        return;
+    };
+    for (name, note) in IDA_STUBBED_MODULE_TYPES {
+        let Ok(data) = std::fs::read(dir.join(name)) else {
+            eprintln!("{name} is not in IDA_INPUT_DIR; skipped");
+            continue;
+        };
+        let p = classify(&data);
+        assert_eq!(p.format.format, FileFormat::Mz, "{name}");
+        assert!(has_note(&p, note), "{name}: {:?}", notes(&p));
     }
 }
 

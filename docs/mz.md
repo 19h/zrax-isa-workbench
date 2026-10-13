@@ -2,13 +2,15 @@
 
 `src/formats/mz.rs` parses DOS MZ executables and the NE, LE and LX headers
 an MZ stub points at; the PE detection in `src/formats/mod.rs` finds a PE
-signature through the same DOS header. This document covers two extensions
-of that family:
+signature through the same DOS header. This document covers these
+extensions and fixes of that family:
 
 - LE and LX headers at offset 0 with no MZ stub in front of them;
-- PE images whose DOS header starts with the byte-swapped signature `ZM`.
+- PE images whose DOS header starts with the byte-swapped signature `ZM`;
+- the module type that LE and LX headers report, behind a stub or not
+  ([Module type](#module-type)).
 
-Neither adds a format ID: a header without a stub reports the existing
+None adds a format ID: a header without a stub reports the existing
 `le` and `lx` IDs, a `ZM` image the existing `pe` ID.
 
 ## Implemented layouts
@@ -66,6 +68,32 @@ What each source establishes:
   Windows, `03h` DOS 4.x, `04h` Windows 386; format level 0; page size
   4096 ("For the initial version of this linear EXE format the page size is
   4Kbytes", `exeflat.h` `OSF_DEF_PAGE_SIZE 4096`).
+- Module type: the LX specification's `MODULE FLAGS` list `00038000h =
+  Module type mask` and the values of the masked field; `exe386.h` has the
+  same values (`E32MODEXE` to `E32MODVDEV`, `E32MODMASK 0x38000L`), and
+  `wdump` (`os2exe.c`, `dmp_mod_flags_lelx`) compares the masked value with
+  each type.
+
+## Module type
+
+The module type is the value of the module flags (`10h`) under the mask
+`38000h`, compared whole: the virtual device driver type `28000h` contains
+the library type's bit `8000h`, so testing single bits reads a VxD as a
+library. The `Type:` note, behind a stub and without one:
+
+| Masked value | LX specification | `Type:` note |
+| --- | --- | --- |
+| `00000h` | Program module | `Executable` |
+| `08000h` | Library module | `DLL` |
+| `18000h` | Protected Memory Library module | `DLL` |
+| `20000h` | Physical Device Driver module | `Physical device driver` |
+| `28000h` | Virtual Device Driver module | `Virtual device driver` |
+| `10000h`, `30000h`, `38000h` | not defined | `Unknown (0x10000)` and so on |
+
+The other module flags do not change the type. Open Watcom writes `8020h`
+for a Windows 3.x VxD (`exeflat.h`, `VXD_DEVICE_DRIVER_3x`), whose type
+field is the library type: such a file (IDA's `pc_drv.le`) reports
+`Type: DLL`, which is what its header says.
 
 ## Wire units and byte order
 
@@ -144,6 +172,7 @@ in `mz::detect`.
 | A5 | Only CPU types 1 to 3 are documented | The Pentium (`04h`), i860 (`20h`, `21h`) and MIPS (`40h`-`42h`) values the stubbed parser maps have no primary source here; a header without a stub carrying them is not recognized (`header_and_table_corruptions_are_not_recognized_and_name_the_field`). A sample with such a value and a primary source would extend the list |
 | A6 | Text starting with `LE` or `LX` is not recognized | `ascii_text_starting_with_le_or_lx_is_not_an_executable`: the order bytes rule out ASCII text |
 | A7 | A `ZM` header alone is not evidence of an executable | Without `PE\0\0` at `e_lfanew` a `ZM` file is not reported as MZ, NE, LE or LX (`zm_without_a_pe_signature_is_not_a_dos_executable`); only the PE signature makes it strong |
+| A8 | The module type is the masked value, not a set of bits | `module_types_are_the_whole_type_field_behind_and_without_a_stub`; with `IDA_INPUT_DIR`, `ida_stubbed_samples_report_the_module_type_of_their_type_field`: `pc_vxd.le` (`28000h`) is a virtual device driver. A file of a documented type whose masked value differs would falsify it |
 
 ## Known boundaries
 
@@ -155,7 +184,8 @@ in `mz::detect`.
 | LE/LX members of archives and filesystems | Recognized only when the prefix the container checks holds every page (weak detection needs the whole input) |
 | Fixups, imports, entry tables, resources, iterated and compressed page data | Not parsed or decoded; the ISA comes from the CPU type field |
 | LE/LX headers at an offset other than 0 without an MZ stub (bound DOS extenders that append the header after their own image) | Not recognized: nothing points at the header |
-| Module type of a virtual device driver | The existing parser tests the library bit first, so a VxD (`28000h`) behind or without a stub reports `Type: DLL`; kept as existing behaviour (AGENTS.md section 6, step 6) |
+| Module types the specification does not define (`10000h`, `30000h`, `38000h`) | Reported as `Type: Unknown (0x…)`; the header still classifies by its CPU type |
+| Windows 3.x VxDs with the library type (`8020h`) | `Type: DLL`: the type field names a library, and nothing else in the header is checked to tell a VxD apart |
 | Unknown CPU types behind a stub | The existing parser reports 32-bit x86 for any unmapped CPU type; kept. Without a stub such headers are not recognized |
 
 ## Verification
