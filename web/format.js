@@ -103,6 +103,7 @@ const FORMAT_NAMES = {
   qnxifs: 'QNX IFS',
   winceimage: 'Windows CE image',
   psf: 'PSF', hes: 'HES', kss: 'KSS', sap: 'SAP', aytune: 'AY tune', sndh: 'SNDH', packice: 'Pack-Ice',
+  intelmicrocode: 'Intel microcode', amdmicrocode: 'AMD microcode', intelme: 'Intel ME firmware', amdpsp: 'AMD PSP firmware',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

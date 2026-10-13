@@ -15,6 +15,7 @@
 //! is used for every generation.
 
 use super::*;
+use crate::formats::pcfw;
 
 /// `FLVALSIG` and where it may sit.
 const FLVALSIG: u32 = 0x0FF0_A55A;
@@ -363,6 +364,19 @@ fn list_region<'a>(
                 c.notes
                     .push(format!("{name} region holds no firmware volume"));
             }
+        }
+        // An ME region that holds a flash partition table is that table's
+        // container: its partitions are listed, each still opaque, so no
+        // ME byte reaches the code model either way.
+        Content::Opaque(_) if region.index == REGION_ME && pcfw::is_me_partition_table(bytes) => {
+            c.notes.push(format!(
+                "{name} region: Intel ME flash partition table; classified as {}, every partition opaque",
+                FileFormat::IntelMe
+            ));
+            budget.push(
+                c,
+                Child::stored(format!("{name} region"), region.base, bytes),
+            );
         }
         Content::Opaque(reason) => {
             c.notes.push(format!("{name} region: {reason}; opaque"));

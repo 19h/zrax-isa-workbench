@@ -65,6 +65,7 @@ pub mod omf;
 pub mod optionrom;
 pub mod os9;
 pub mod palm;
+pub mod pcfw;
 pub mod pe;
 pub mod pef;
 pub mod qnx;
@@ -691,6 +692,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // PC firmware blobs with a magic: the AMD microcode container magic,
+    // `$FPT` at 0x10 or 0, `$CPD` at 0, or a PSP or BIOS directory cookie at
+    // 0. Intel flash descriptors are claimed above, so an ME region inside
+    // one is reached only as a descriptor child.
+    if let Some(layout) = pcfw::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::PcFw(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -936,6 +947,19 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = wince::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::WinCe(layout),
+        };
+    }
+
+    // Intel microcode (no magic: every update must validate, checksums
+    // included) and AMD flash images (an EFS signature at a documented
+    // offset leading to valid directories). After the UEFI and coreboot weak
+    // checks, so the EFS never takes an Intel flash descriptor image (its
+    // signature is claimed above), an FMAP image (AMD coreboot builds carry
+    // one that maps the EFS area too) or a UEFI flash device image: those
+    // describe the whole flash, the EFS only its PSP part.
+    if let Some(layout) = pcfw::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::PcFw(layout),
         };
     }
 

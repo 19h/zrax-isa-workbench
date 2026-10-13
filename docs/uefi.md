@@ -71,7 +71,8 @@ from the 100-series PCHs on. Regions must not overlap or start inside the
 | Region | Handling |
 | --- | --- |
 | BIOS (1), secondary BIOS (6) | Scanned for volumes; each volume is a child classified on its own; other non-padding data is listed when recognized |
-| ME (2), IE (10) | Opaque, with a note: firmware of a separate engine whose layout is not established here |
+| ME (2) with a `$FPT` table at 0x10 or 0 | Classified as an `intelme` container whose partitions are each opaque ([PC firmware blobs](pcfw.md)) |
+| ME (2) otherwise, IE (10) | Opaque, with a note: firmware of a separate engine whose layout is not established here |
 | GbE (3), 10GbE (11, 12) | Opaque network controller configuration |
 | Others (platform data, EC, device expansion, PTT, reserved) | Listed only when recognized |
 

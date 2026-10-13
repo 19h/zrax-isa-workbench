@@ -1022,6 +1022,18 @@ pub enum FileFormat {
     Sndh,
     /// Pack-Ice (`ICE!`) packed file
     PackIce,
+
+    // PC firmware blobs
+    /// Intel microcode update file (one or more updates)
+    IntelMicrocode,
+    /// AMD microcode container file
+    AmdMicrocode,
+    /// Intel ME/CSME flash partition table (`$FPT`) or code partition
+    /// directory (`$CPD`)
+    IntelMe,
+    /// AMD flash image with an Embedded Firmware Structure, or a PSP or
+    /// BIOS directory table
+    AmdPsp,
 }
 
 impl fmt::Display for FileFormat {
@@ -1231,6 +1243,11 @@ impl fmt::Display for FileFormat {
             FileFormat::AyTune => write!(f, "AY tune"),
             FileFormat::Sndh => write!(f, "SNDH"),
             FileFormat::PackIce => write!(f, "Pack-Ice"),
+            // PC firmware blobs
+            FileFormat::IntelMicrocode => write!(f, "Intel microcode"),
+            FileFormat::AmdMicrocode => write!(f, "AMD microcode"),
+            FileFormat::IntelMe => write!(f, "Intel ME firmware"),
+            FileFormat::AmdPsp => write!(f, "AMD PSP firmware"),
         }
     }
 }

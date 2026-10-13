@@ -756,6 +756,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::AyTune => "AY tune",
         FileFormat::Sndh => "SNDH",
         FileFormat::PackIce => "Pack-Ice",
+        FileFormat::IntelMicrocode => "Intel microcode",
+        FileFormat::AmdMicrocode => "AMD microcode",
+        FileFormat::IntelMe => "Intel ME firmware",
+        FileFormat::AmdPsp => "AMD PSP firmware",
     }
 }
 

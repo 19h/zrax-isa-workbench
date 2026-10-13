@@ -14,8 +14,8 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
-    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, coreboot, ext, huawei,
-    mcu, mtd, nintendo, optionrom, rofs, router, socboot, socboot2, uefi, wince, zxtape,
+    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, coreboot, ext, huawei, mcu,
+    mtd, nintendo, optionrom, pcfw, rofs, router, socboot, socboot2, uefi, wince, zxtape,
     MAX_PAYLOAD,
 };
 use crate::types::{
@@ -99,6 +99,9 @@ pub enum Kind {
     Qnx(super::qnx::Layout),
     /// A Windows CE BIN file or raw ROM image.
     WinCe(wince::Layout),
+    /// A PC firmware blob: microcode, Intel ME partition tables, AMD PSP
+    /// directories.
+    PcFw(pcfw::Layout),
 }
 
 impl Kind {
@@ -130,6 +133,7 @@ impl Kind {
             Self::Esp(layout) => layout.format(),
             Self::Qnx(layout) => layout.format(),
             Self::WinCe(layout) => layout.format(),
+            Self::PcFw(layout) => layout.format(),
         }
     }
 
@@ -161,6 +165,7 @@ impl Kind {
             Self::Esp(layout) => layout.label(),
             Self::Qnx(layout) => layout.label(),
             Self::WinCe(layout) => layout.label(),
+            Self::PcFw(layout) => layout.label(),
         }
     }
 
@@ -192,6 +197,7 @@ impl Kind {
             Self::Esp(layout) => layout.is_weak(),
             Self::Qnx(layout) => layout.is_weak(),
             Self::WinCe(layout) => layout.is_weak(),
+            Self::PcFw(layout) => layout.is_weak(),
         }
     }
 }
@@ -228,6 +234,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Esp(layout) => super::esp::parse_container(data, layout),
         Kind::Qnx(layout) => super::qnx::parse_container(data, layout),
         Kind::WinCe(layout) => wince::parse_container(data, layout),
+        Kind::PcFw(layout) => pcfw::parse_container(data, layout),
     }
 }
 

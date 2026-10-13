@@ -77,6 +77,16 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a PC firmware blob: Intel microcode updates, AMD
+    /// microcode containers, Intel ME flash partition tables and code
+    /// partition directories, AMD Embedded Firmware Structures and PSP or
+    /// BIOS directories.
+    #[error("PC firmware parse error: {message}")]
+    PcFirmwareParseError {
+        /// What is wrong with the blob.
+        message: String,
+    },
+
     /// Error parsing an FPGA configuration bitstream (Xilinx, Lattice,
     /// Intel).
     #[error("FPGA bitstream parse error: {message}")]
