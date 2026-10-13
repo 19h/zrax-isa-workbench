@@ -231,6 +231,41 @@ pub fn parse(data: &[u8], pe_offset: u32) -> Result<ClassificationResult> {
 /// COR20 header flag: the image contains only CIL.
 const COMIMAGE_FLAGS_ILONLY: u32 = 0x1;
 
+/// Size of a section table entry.
+const SECTION_HEADER_SIZE: usize = 40;
+
+/// The Windows loader's section limit ("PE Format", "COFF File Header").
+const MAX_SECTIONS: u16 = 96;
+
+/// The section table: `count` headers at file offset `offset`.
+struct SectionTable {
+    offset: usize,
+    count: u16,
+}
+
+impl SectionTable {
+    /// The file offset that holds `rva`: the first section whose
+    /// `VirtualAddress` to `VirtualAddress + max(VirtualSize,
+    /// SizeOfRawData)` contains it, mapped through its `PointerToRawData`.
+    /// Section header fields come from the file, so the sums are computed
+    /// in `u64` and never wrap.
+    fn file_offset(&self, data: &[u8], rva: u32) -> Option<usize> {
+        (0..usize::from(self.count.min(MAX_SECTIONS))).find_map(|index| {
+            let header = self.offset.checked_add(index * SECTION_HEADER_SIZE)?;
+            let virtual_size = read_u32(data, header + 8, true).ok()?;
+            let virtual_address = read_u32(data, header + 12, true).ok()?;
+            let raw_size = read_u32(data, header + 16, true).ok()?;
+            let raw_offset = read_u32(data, header + 20, true).ok()?;
+            let end = u64::from(virtual_address) + u64::from(virtual_size.max(raw_size));
+            if rva < virtual_address || u64::from(rva) >= end {
+                return None;
+            }
+            let offset = u64::from(rva - virtual_address) + u64::from(raw_offset);
+            usize::try_from(offset).ok()
+        })
+    }
+}
+
 /// Flags of the CLR (COR20) header, if the image has one.
 fn clr_flags(data: &[u8], opt_off: usize, opt_size: u16, num_sections: u16, pe32plus: bool) -> Option<u32> {
     // Data directory 14 = COM descriptor.
@@ -244,16 +279,12 @@ fn clr_flags(data: &[u8], opt_off: usize, opt_size: u16, num_sections: u16, pe32
     if rva == 0 || size < 72 {
         return None;
     }
-    let sections = opt_off + opt_size as usize;
-    let file_off = (0..usize::from(num_sections.min(96))).find_map(|i| {
-        let sh = sections + i * 40;
-        let vsize = read_u32(data, sh + 8, true).ok()?;
-        let va = read_u32(data, sh + 12, true).ok()?;
-        let raw_size = read_u32(data, sh + 16, true).ok()?;
-        let raw_ptr = read_u32(data, sh + 20, true).ok()?;
-        (rva >= va && rva < va + vsize.max(raw_size)).then(|| (rva - va + raw_ptr) as usize)
-    })?;
-    read_u32(data, file_off + 16, true).ok()
+    let sections = SectionTable {
+        offset: opt_off + opt_size as usize,
+        count: num_sections,
+    };
+    let file_off = sections.file_offset(data, rva)?;
+    read_u32(data, file_off.checked_add(16)?, true).ok()
 }
 
 /// Get a human-readable description of a PE machine type.
@@ -364,6 +395,46 @@ mod tests {
         let data = make_pe_header(machine::RISCV64);
         let result = parse(&data, 0x80).unwrap();
         assert_eq!(result.isa, Isa::RiscV64);
+    }
+
+    /// A PE32+ image whose data directory 14 (COM descriptor) points at
+    /// `clr_rva`, with one section header (`VirtualSize`, `VirtualAddress`,
+    /// `SizeOfRawData`, `PointerToRawData`) after the 0xF0-byte optional
+    /// header.
+    fn pe_with_clr_directory(clr_rva: u32, section: [u32; 4]) -> Vec<u8> {
+        let mut data = make_pe_header(machine::AMD64);
+        data.resize(0x400, 0);
+        let opt_off = 0x80 + 4 + 20;
+        data[0x80 + 4 + 2] = 1;
+        data[opt_off + 108..opt_off + 112].copy_from_slice(&16u32.to_le_bytes());
+        let com = opt_off + 112 + 14 * 8;
+        data[com..com + 4].copy_from_slice(&clr_rva.to_le_bytes());
+        data[com + 4..com + 8].copy_from_slice(&72u32.to_le_bytes());
+        let header = opt_off + 0xF0;
+        for (i, value) in section.iter().enumerate() {
+            let at = header + 8 + i * 4;
+            data[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        data
+    }
+
+    #[test]
+    fn il_only_flags_are_read_through_the_section_table() {
+        // `.text` at RVA 0x1000, stored at 0x200; the COR20 header at RVA
+        // 0x1010 holds `Flags` (ILONLY) 16 bytes in.
+        let mut data = pe_with_clr_directory(0x1010, [0x100, 0x1000, 0x100, 0x200]);
+        data[0x210 + 16] = 1;
+        let result = parse(&data, 0x80).expect("parses");
+        assert_eq!(result.isa, Isa::Clr);
+    }
+
+    #[test]
+    fn section_headers_that_overflow_do_not_map_an_rva() {
+        // `VirtualAddress + VirtualSize` and `RVA - VirtualAddress +
+        // PointerToRawData` exceed 32 bits.
+        let data = pe_with_clr_directory(0xFFFF_F800, [0x2000, 0xFFFF_F000, 0, 0xFFFF_FF00]);
+        let result = parse(&data, 0x80).expect("parses");
+        assert_eq!(result.isa, Isa::X86_64);
     }
 
     #[test]
