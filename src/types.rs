@@ -1210,6 +1210,11 @@ pub enum FileFormat {
     // Apple disk images
     /// Apple disk image: UDIF (`.dmg`) or an encrypted disk image
     AppleDmg,
+    // HFS+ and HFSX volumes
+    /// HFS Plus volume (`H+`), plain or in an HFS wrapper
+    HfsPlus,
+    /// HFSX volume (`HX`), HFS Plus with optional case-sensitive names
+    Hfsx,
 }
 
 impl fmt::Display for FileFormat {
@@ -1523,6 +1528,9 @@ impl fmt::Display for FileFormat {
             FileFormat::Xci => write!(f, "Switch XCI"),
             // Apple disk images
             FileFormat::AppleDmg => write!(f, "Apple disk image"),
+            // HFS+ and HFSX volumes
+            FileFormat::HfsPlus => write!(f, "HFS+ volume"),
+            FileFormat::Hfsx => write!(f, "HFSX volume"),
         }
     }
 }

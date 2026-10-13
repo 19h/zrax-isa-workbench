@@ -39,6 +39,10 @@
 //!   and is decoded only where a container names it.
 //! - Apple Data Compression (UDIF chunk type `0x80000004`): see [`adc`]. It
 //!   has no magic and is decoded only where a container names it.
+//! - Raw LZVN opcode streams without a block header (decmpfs chunks in HFS
+//!   Plus files): framed as one `bvxn` block for the LZFSE decoder, as
+//!   `complzvn` payloads are (see [`lzss`]). No magic; decoded only where a
+//!   container names them.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -169,6 +173,10 @@ pub enum Codec {
     MicroLzma,
     /// Apple Data Compression (UDIF chunk type `0x80000004`); no magic.
     Adc,
+    /// Raw LZVN opcode stream without a block header; no magic.
+    /// [`decode_limited`] decodes exactly `limit` bytes, the size its
+    /// container states.
+    Lzvn,
 }
 
 impl Codec {
@@ -198,6 +206,7 @@ impl Codec {
         Self::LzmaX86,
         Self::MicroLzma,
         Self::Adc,
+        Self::Lzvn,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -227,6 +236,7 @@ impl Codec {
             Self::LzmaX86 => "LZMA x86",
             Self::MicroLzma => "MicroLZMA",
             Self::Adc => "ADC",
+            Self::Lzvn => "LZVN",
         }
     }
 
@@ -258,6 +268,8 @@ impl Codec {
             Self::MicroLzma => FileFormat::Raw,
             // ADC has no magic; only UDIF block tables name it.
             Self::Adc => FileFormat::Raw,
+            // Raw LZVN has no magic; only HFS Plus decmpfs names it.
+            Self::Lzvn => FileFormat::Raw,
         }
     }
 
@@ -288,6 +300,7 @@ impl Codec {
             Self::LzmaX86 => "LZMA-alone stream with x86 BCJ",
             Self::MicroLzma => "MicroLZMA stream",
             Self::Adc => "ADC stream",
+            Self::Lzvn => "raw LZVN stream",
         }
     }
 
@@ -487,6 +500,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::LzmaX86 => xz::lzma_x86(data, limit),
         Codec::MicroLzma => microlzma::decode(data, limit),
         Codec::Adc => adc::decode(data, limit),
+        Codec::Lzvn => lzss::lzvn_raw(data, limit),
     }
 }
 

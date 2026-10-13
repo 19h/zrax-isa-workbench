@@ -64,6 +64,7 @@ pub mod frf;
 pub mod geos;
 pub mod goff;
 pub mod hex;
+pub mod hfsplus;
 pub mod huawei;
 pub mod iso9660;
 pub mod java;
@@ -986,6 +987,18 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = nintendo2::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Nintendo2(layout),
+        };
+    }
+
+    // HFS+ and HFSX volumes: `H+` version 4 or `HX` version 5 at 1024 with a
+    // power-of-two block size and catalog and extents forks inside the
+    // volume, or an HFS wrapper (`BD` at 1024) whose embedded volume header
+    // validates. After the partition-table, ISO 9660 and disc checks, which
+    // describe a whole disk that may hold HFS+ partitions; the first 1024
+    // bytes are boot blocks, and EROFS uses 1024 with another magic.
+    if let Some(layout) = hfsplus::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::HfsPlus(layout),
         };
     }
 

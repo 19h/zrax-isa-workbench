@@ -100,7 +100,12 @@ and VDI header v0 remain unsupported; see [virtual disk images](vdisk.md).
 Apple UDIF disk images followed (every hdiutil chunk codec including ADC;
 data fork, master and table CRC-32 verified; volume partitions classified
 on their own; encrypted images opaque); sparse images, sparse bundles,
-NDIF and decryption are not implemented; see [Apple disk images](dmg.md). FAT12/16/32 (weak; FAT type by cluster
+NDIF and decryption are not implemented; see [Apple disk images](dmg.md).
+HFS+ and HFSX volumes followed (catalog, extents overflow and attributes
+B-trees; decmpfs zlib/LZVN/LZFSE decoded); classic HFS without an embedded
+volume, journal replay and volumes cut short (for example at the 64 MiB
+extraction limit) are not handled; APFS is not implemented; see [HFS+
+volumes](hfsplus.md). FAT12/16/32 (weak; FAT type by cluster
 count) and exFAT (strong; boot, entry-set and up-case checksums verified)
 followed; see [FAT](fat.md). ISO 9660 (Rock Ridge, Joliet; El Torito boot
 images as children; UDF bridge and hybrid partition tables noted) followed;

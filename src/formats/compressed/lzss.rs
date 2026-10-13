@@ -113,6 +113,16 @@ pub(super) fn lzss(input: &[u8], limit: usize) -> Vec<u8> {
     out
 }
 
+/// Decode a raw LZVN opcode stream that decodes to exactly `decoded_size`
+/// bytes ([`Codec::Lzvn`]).
+pub(super) fn lzvn_raw(data: &[u8], decoded_size: usize) -> Result<Decoded> {
+    Ok(Decoded {
+        data: lzvn_payload(data, decoded_size)?,
+        consumed: Some(data.len()),
+        check: None,
+    })
+}
+
 /// Frame a raw LZVN payload as one `bvxn` block and decode it with the
 /// LZFSE decoder, which validates the LZVN opcode stream.
 fn lzvn_payload(stored: &[u8], decoded_size: usize) -> Result<Vec<u8>> {
@@ -164,5 +174,20 @@ mod tests {
         for end in 0..image.len() {
             assert!(decode(&image[..end], MAX_PAYLOAD).is_err(), "prefix {end}");
         }
+    }
+
+    #[test]
+    fn raw_lzvn_streams_decode_to_exactly_the_stated_size() {
+        // A small-literal opcode (0xE0 + 3) with "abc", then the 8-byte
+        // end-of-stream opcode (0x06 and seven zero bytes).
+        let stream = [0xe3, b'a', b'b', b'c', 0x06, 0, 0, 0, 0, 0, 0, 0];
+        let decoded = lzvn_raw(&stream, 3).unwrap();
+        assert_eq!(decoded.data, b"abc");
+        assert_eq!(decoded.consumed, Some(stream.len()));
+        assert!(lzvn_raw(&stream, 4).is_err(), "a larger stated size");
+        assert!(
+            lzvn_raw(&stream[..4], 3).is_err(),
+            "no end-of-stream opcode"
+        );
     }
 }

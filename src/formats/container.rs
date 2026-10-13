@@ -158,6 +158,8 @@ pub enum Kind {
     Nintendo2(super::nintendo2::Layout),
     /// An Apple disk image: UDIF or encrypted.
     Dmg(super::dmg::Layout),
+    /// An HFS Plus or HFSX volume, plain or in an HFS wrapper.
+    HfsPlus(super::hfsplus::Layout),
 }
 
 impl Kind {
@@ -214,6 +216,7 @@ impl Kind {
             Self::CpcDsk(layout) => layout.format(),
             Self::Nintendo2(layout) => layout.format(),
             Self::Dmg(layout) => layout.format(),
+            Self::HfsPlus(layout) => layout.format(),
         }
     }
 
@@ -270,6 +273,7 @@ impl Kind {
             Self::CpcDsk(layout) => layout.label(),
             Self::Nintendo2(layout) => layout.label(),
             Self::Dmg(layout) => layout.label(),
+            Self::HfsPlus(layout) => layout.label(),
         }
     }
 
@@ -326,6 +330,7 @@ impl Kind {
             Self::CpcDsk(layout) => layout.is_weak(),
             Self::Nintendo2(layout) => layout.is_weak(),
             Self::Dmg(layout) => layout.is_weak(),
+            Self::HfsPlus(layout) => layout.is_weak(),
         }
     }
 }
@@ -387,6 +392,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::CpcDsk(layout) => super::cpcdsk::parse_container(data, layout),
         Kind::Nintendo2(layout) => super::nintendo2::parse_container(data, layout),
         Kind::Dmg(layout) => super::dmg::parse_container(data, layout),
+        Kind::HfsPlus(layout) => super::hfsplus::parse_container(data, layout),
     }
 }
 

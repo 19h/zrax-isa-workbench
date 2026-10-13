@@ -69,6 +69,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an HFS Plus or HFSX volume (volume header, HFS
+    /// wrapper, B-trees or catalog).
+    #[error("HFS+ volume parse error: {message}")]
+    HfsPlusParseError {
+        /// What is wrong with the volume.
+        message: String,
+    },
+
     /// Error parsing an ARM Image Format (AIF) executable image.
     #[error("ARM AIF parse error: {message}")]
     AifParseError {
