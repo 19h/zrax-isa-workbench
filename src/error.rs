@@ -62,6 +62,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a miscellaneous boot image (OP-TEE header, Amlogic
+    /// burning image, Allwinner `IMAGEWTY`, barebox).
+    #[error("Boot image parse error: {message}")]
+    BootImageParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a QNX Neutrino image filesystem (bootable IFS or bare
     /// `imagefs`).
     #[error("QNX image parse error: {message}")]

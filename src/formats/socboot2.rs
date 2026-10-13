@@ -46,6 +46,8 @@ mod mediatek;
 mod qualcomm;
 mod rockchip;
 
+pub(crate) use egon::{decode_jump, sign_extend, Jump, JumpKind};
+
 /// Storage sector size: the unit of Rockchip sizes and of the search for an
 /// image after the one parsed.
 const SECTOR: usize = 512;

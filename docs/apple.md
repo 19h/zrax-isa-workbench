@@ -1,8 +1,9 @@
 # Apple images
 
-`src/formats/apple.rs` and its submodules `img4.rs` and `dyld.rs` parse
-Image4 files (`IMG4`, `IM4P`, and the `IM4M` manifest and `IM4R` restore
-info) and dyld shared caches into the shared container model
+`src/formats/apple.rs` and its submodules `img4.rs`, `dyld.rs`, `img3.rs`
+and `s5l8900.rs` parse Image4 files (`IMG4`, `IM4P`, and the `IM4M`
+manifest and `IM4R` restore info), dyld shared caches, and the legacy Img3
+and 8900 firmware containers into the shared container model
 ([compressed streams and the container model](compressed-streams.md)). An
 IM4P payload is decoded and classified from its own bytes, so a kernelcache
 gets its ISA from its Mach-O header. A dyld cache names its architecture in
@@ -17,6 +18,8 @@ paths.
 | `img4` | `SEQUENCE { IA5String "IMG4", IM4P, [0] IM4M OPTIONAL, [1] IM4R OPTIONAL }`; the IM4P is parsed as above, the manifest and restore info become metadata | As for `im4p` | img4lib `DERImg4ItemSpecs`; PyIMG4 `IMG4._parse` |
 | `img4` (variant `IM4M manifest`) | Standalone `SEQUENCE { "IM4M", INTEGER version, SET { [MANB] }, OCTET STRING signature OPTIONAL, SEQUENCE certificates OPTIONAL }` | None; metadata only, never analyzed as code | img4lib `DERImg4ManifestItemSpecs`; PyIMG4 `IM4M._parse` |
 | `img4` (variant `IM4R restore info`) | Standalone `SEQUENCE { "IM4R", SET { [BNCN] ... } }` | None; metadata only | img4lib `DERImg4RestoreInfoItemSpecs`; PyIMG4 `IM4R` |
+| `img3` | 20-byte little-endian root header (magic `Img3` stored `3gmI`, full size, tag-area size, `SHSH` offset from the end of the header, type four-character code), then tags (code, total length including the 12-byte header and padding, data length, data); the `DATA` tag becomes the child, labelled with the type. `KBAG` tags (crypt state, AES key bits, IV and key) make it opaque | None; the ISA comes from the `DATA` payload (Mach-O, `complzss` kernelcache, or raw code through the code model) | The Apple Wiki "IMG3 File Format" revision 312068, "KBAG" revision 190028; xpwn `20c32e5c` `includes/xpwn/img3.h`, `ipsw-patch/img3.c` (`readImg3Root`, `readImg3Element`, `writeImg3Root`) |
+| `apple8900` | 0x800-byte header: `8900`, version `1.0`, format (4 plaintext, 3 encrypted with key 0x837, 2 boot plaintext, 1 boot encrypted with the UID key), payload size, footer signature and certificate offsets (from the end of the header), certificate length, salt, security epoch, header signature; payload at 0x800, 0x80-byte footer signature, certificate | None; a plaintext payload is classified on its own bytes (usually an IMG2, which is not parsed), an encrypted one is opaque | The Apple Wiki "S5L File Formats" revision 312559 (8900); xpwn `includes/xpwn/8900.h`, `ipsw-patch/8900.c` (`flipApple8900Header`, `createAbstractFileFrom8900`), `includes/xpwn/img2.h` |
 | `dyldcache` | `dyld_cache_header`: 16-byte magic `dyld_v1`, spaces, right-aligned architecture token, NUL; `mappingOffset` as header size and version gate; `dyld_cache_mapping_info` table; image table at `imagesOffset`/`imagesCount` (0x1C0) or `imagesOffsetOld`/`imagesCountOld` (0x18); subcache entries (24 or 56 B); code signature, local symbols, `symbolFileUUID`, UUID and platform where the header version has them | The architecture token is an explicit target field (table below). Images keep their own Mach-O `cputype`; a disagreement is a warning, not an override | dyld `dyld-1378` (`fd8d0c4d`) `include/mach-o/dyld_cache_format.h`, `common/DyldSharedCache.cpp`, `cache_builder/SubCache.cpp`, `other-tools/dsc_extractor.cpp`; `dyld-97.1`, `dyld-210.2.3`, `dyld-360.22`, `dyld-519.2.2` `launch-cache/dyld_cache_format.h`, `launch-cache/Architectures.hpp` |
 
 xnu `f6217f89` `EXTERNAL_HEADERS/img4/firmware.h` says the four-character
@@ -66,6 +69,28 @@ certificate-chain sizes, each marked "not verified". Other property values,
 such as `ECID`, are not reported. The IM4R `BNCN` nonce is shown as stored
 (img4tool stores its generator little-endian; PyIMG4 reverses it on parse).
 
+## Img3 and 8900
+
+Img3 tags are walked from offset 0x14 to the end of the tag area; each tag
+must hold its 12-byte header, a total length that covers its data and fits
+the area, and at most one `DATA` tag may exist. The integer tags `CHIP`,
+`BORD`, `SEPO`, `SDOM` and `PROD` are reported in metadata as hex; `ECID`
+(the device-unique chip ID) is not reported. `VERS` is shown as its bytes in
+printable form (its length prefix is not interpreted). A `TYPE` tag that
+names another code than the header, or an `SHSH` tag at another offset than
+the header's signed-area size, is noted. `SHSH` and `CERT` sizes are
+reported; neither is verified. A `KBAG` tag means the `DATA` payload is
+encrypted with a key wrapped by the device GID key: the payload is opaque
+and nothing is decrypted.
+
+An 8900 container's payload, footer signature and certificate must lie in
+the file, and only erased flash may follow the last of them. Formats 1 and
+3 are encrypted (xpwn decrypts format 3 with AES-128-CBC and the published
+key 0x837; this parser does not decrypt), so the payload is opaque. The
+header signature is an AES encryption of a SHA-1 and is not verified. The
+magic and the version text `1.0` are both required for detection, so text
+starting with the digits 8900 is not claimed.
+
 ## dyld images
 
 An image's Mach-O header lies at its unslid address. The parser finds the
@@ -83,6 +108,9 @@ requires.
 
 ## Wire units and byte order
 
+- Img3 numbers, magics and tag codes are little-endian 32-bit values (the
+  four characters read big-endian, stored little-endian). 8900 fields are
+  little-endian after the text magic and version.
 - DER lengths and INTEGERs are big-endian; INTEGER contents are read as
   unsigned. All Image4 offsets and sizes are bytes in file coordinates.
 - `complzss` header fields are big-endian; LZFSE block fields are
@@ -133,6 +161,8 @@ requires.
 | A6 | `mappingOffset` is the header size and gates fields by offset, as dyld's readers do | Four header sizes (0x28, 0x98, 0x1C8, 0x228) in the tests; intermediate real versions are not verified |
 | A7 | `mappingCount` 0 is a valid (if empty) file, unlike dsc_extractor's refusal | Reported with a note "Header declares no mappings" (`image_paths_need_a_first_mapping_at_file_offset_zero`); a parse error would be the stricter reading |
 | A8 | The architecture token names the ISA of every image | `an_image_cputype_mismatch_is_a_note_not_an_override` |
+| A9 | Any Img3 `KBAG` tag means `DATA` is encrypted | The Apple Wiki "IMG3 File Format" (Encryption); a plaintext Img3 that carries a `KBAG` would be reported opaque (`img3_with_a_kbag_keeps_data_opaque`) |
+| A10 | The 8900 version text is always `1.0` | The Apple Wiki and xpwn show no other value; an 8900 file with another version is not recognized |
 
 ## Known boundaries
 
@@ -146,6 +176,9 @@ requires.
 | dyld slide info, code-signature blobs, local-symbol tables, image-text and trie tables | Not parsed; code signature and local symbols located in notes only |
 | dyld images in subcache files | Counted and partly listed in metadata; a subcache file is classified on its own when given |
 | dyld `dyld_v0` caches | Not recognized (no writer is known) |
+| Img3 and 8900 encryption | `KBAG` keys are wrapped with the device GID key; 8900 key 0x837 payloads are not decrypted; both opaque |
+| IMG2 inside 8900 | Noted when the payload starts with `2gmI`; not parsed |
+| Img3 `SHSH`, `CERT` and 8900 signatures and certificates | Sizes reported; not verified |
 | macOS `prelinkedkernel` fat wrappers | Not implemented here. They start with the fat Mach-O magic and take the existing fat Mach-O path, which does not decode the `comp` slices (not tested) |
 
 ## Verification
@@ -162,3 +195,12 @@ header and a synthetic, unsigned manifest
 keybag payloads and malformed DER are built in the tests. No real Apple
 firmware, kernelcache or dyld cache was tested; behavior on real files is
 not verified.
+
+On 2026-10-13 (macOS AArch64, rustc 1.100.0-nightly 2026-09-05),
+`tests/apple.rs` (36 tests, 9 of them for Img3 and 8900) and 17 unit tests
+in `src/formats/apple*` passed, including every-prefix and byte-mutation
+sweeps over an encrypted, signed Img3 and a plaintext 8900 container. The
+Img3 and 8900 inputs are built in the tests from the documented layouts
+with synthetic Mach-O and ELF headers as payloads; Img3 and 8900 also go
+through `web/tests/bootmisc.test.mjs` (`/pkg/` and `/dist/`). No real Img3
+or 8900 firmware was tested: not verified.

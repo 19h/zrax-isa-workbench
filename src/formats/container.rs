@@ -102,6 +102,9 @@ pub enum Kind {
     /// A PC firmware blob: microcode, Intel ME partition tables, AMD PSP
     /// directories.
     PcFw(pcfw::Layout),
+    /// A miscellaneous boot image: OP-TEE header, Amlogic burning image,
+    /// Allwinner `IMAGEWTY` or barebox.
+    BootMisc(super::bootmisc::Layout),
 }
 
 impl Kind {
@@ -134,6 +137,7 @@ impl Kind {
             Self::Qnx(layout) => layout.format(),
             Self::WinCe(layout) => layout.format(),
             Self::PcFw(layout) => layout.format(),
+            Self::BootMisc(layout) => layout.format(),
         }
     }
 
@@ -166,6 +170,7 @@ impl Kind {
             Self::Qnx(layout) => layout.label(),
             Self::WinCe(layout) => layout.label(),
             Self::PcFw(layout) => layout.label(),
+            Self::BootMisc(layout) => layout.label(),
         }
     }
 
@@ -198,6 +203,7 @@ impl Kind {
             Self::Qnx(layout) => layout.is_weak(),
             Self::WinCe(layout) => layout.is_weak(),
             Self::PcFw(layout) => layout.is_weak(),
+            Self::BootMisc(layout) => layout.is_weak(),
         }
     }
 }
@@ -235,6 +241,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Qnx(layout) => super::qnx::parse_container(data, layout),
         Kind::WinCe(layout) => wince::parse_container(data, layout),
         Kind::PcFw(layout) => pcfw::parse_container(data, layout),
+        Kind::BootMisc(layout) => super::bootmisc::parse_container(data, layout),
     }
 }
 

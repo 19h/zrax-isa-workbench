@@ -1,5 +1,6 @@
 //! Apple images: Image4 containers (`IMG4`, `IM4P`, and the `IM4M` manifest
-//! and `IM4R` restore-info parts) and dyld shared caches.
+//! and `IM4R` restore-info parts), dyld shared caches, and the legacy Img3
+//! and 8900 firmware containers.
 //!
 //! Sources, pinned:
 //! - Image4 has no published wire specification. Three independent
@@ -18,11 +19,17 @@
 //!   `dyld-97.1`, `dyld-210.2.3`, `dyld-360.22` and `dyld-519.2.2`
 //!   (`launch-cache/dyld_cache_format.h`, `launch-cache/Architectures.hpp`)
 //!   for older header versions and big-endian PowerPC caches. See [`dyld`].
+//! - Img3 and 8900: The Apple Wiki (successor of The iPhone Wiki) "IMG3
+//!   File Format" revision 312068, "KBAG" revision 190028 and "S5L File
+//!   Formats" revision 312559; planetbeing/xpwn commit
+//!   `20c32e5c12d1b22a9d55a59a0ff6267f539b77f4` (`includes/xpwn/img3.h`,
+//!   `ipsw-patch/img3.c`, `includes/xpwn/8900.h`, `ipsw-patch/8900.c`,
+//!   `includes/xpwn/img2.h`). See [`img3`] and [`s5l8900`].
 //!
 //! No Image4 field names an ISA: the four-character type is a firmware role,
 //! so the ISA comes from the payload (a kernelcache's Mach-O header or the
 //! code model). The dyld cache magic carries an architecture token, which is
-//! an explicit target field.
+//! an explicit target field. Img3 and 8900 headers name no ISA either.
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::container::{Child, Container, Target};
@@ -30,7 +37,9 @@ use crate::types::{Endianness, FileFormat, Isa};
 use std::fmt::Write;
 
 mod dyld;
+mod img3;
 mod img4;
+mod s5l8900;
 
 /// Prefix of the family's metadata keys (`apple_im4p_type`,
 /// `apple_dyld_uuid`, `apple_component_0`).
@@ -51,6 +60,12 @@ pub enum Layout {
     Im4r,
     /// dyld shared cache file (a main cache or one of its subcaches).
     DyldCache,
+    /// Img3 firmware image: a tagged container whose `DATA` tag is the
+    /// payload, encrypted when a `KBAG` tag is present.
+    Img3,
+    /// S5L8900 `8900` container: a 2 KiB header, the payload (plaintext or
+    /// encrypted) and a footer signature and certificate.
+    Apple8900,
 }
 
 impl Layout {
@@ -61,6 +76,8 @@ impl Layout {
             Self::Img4 | Self::Im4m | Self::Im4r => FileFormat::Img4,
             Self::Im4p => FileFormat::Im4p,
             Self::DyldCache => FileFormat::DyldCache,
+            Self::Img3 => FileFormat::Img3,
+            Self::Apple8900 => FileFormat::Apple8900,
         }
     }
 
@@ -72,25 +89,40 @@ impl Layout {
             Self::Im4m => "IM4M manifest",
             Self::Im4r => "IM4R restore info",
             Self::DyldCache => "dyld shared cache",
+            Self::Img3 => "Img3 image",
+            Self::Apple8900 => "8900 container",
         }
     }
 
     /// Every Apple layout starts with a magic, so none is weak.
     pub fn is_weak(self) -> bool {
         match self {
-            Self::Img4 | Self::Im4p | Self::Im4m | Self::Im4r | Self::DyldCache => false,
+            Self::Img4
+            | Self::Im4p
+            | Self::Im4m
+            | Self::Im4r
+            | Self::DyldCache
+            | Self::Img3
+            | Self::Apple8900 => false,
         }
     }
 }
 
 /// Strong recognition: an Image4 DER header (`SEQUENCE`, then the
-/// `IA5String` magic) or the `dyld_v1` cache magic. The rest of the file
-/// is not checked, so a damaged image becomes a parse error.
+/// `IA5String` magic), the `dyld_v1` cache magic, the Img3 magic (`3gmI`
+/// as stored) or the 8900 magic and version text. The rest of the file is
+/// not checked, so a damaged image becomes a parse error.
 pub fn detect(data: &[u8]) -> Option<Layout> {
     if let Some(layout) = img4::detect(data) {
         return Some(layout);
     }
-    dyld::detect(data).then_some(Layout::DyldCache)
+    if dyld::detect(data) {
+        return Some(Layout::DyldCache);
+    }
+    if img3::detect(data) {
+        return Some(Layout::Img3);
+    }
+    s5l8900::detect(data).then_some(Layout::Apple8900)
 }
 
 /// Parse `data` as the given layout.
@@ -98,8 +130,9 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 /// # Errors
 ///
 /// [`ClassifierError::AppleParseError`] for malformed DER, a missing or
-/// misplaced Image4 element, or a dyld cache header or table that does not
-/// fit the file.
+/// misplaced Image4 element, a dyld cache header or table that does not
+/// fit the file, or an Img3 tag or 8900 header range that does not fit
+/// the image.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     match layout {
         Layout::Img4 => img4::parse_img4(data),
@@ -107,6 +140,8 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
         Layout::Im4m => img4::parse_im4m(data),
         Layout::Im4r => img4::parse_im4r(data),
         Layout::DyldCache => dyld::parse(data),
+        Layout::Img3 => img3::parse(data),
+        Layout::Apple8900 => s5l8900::parse(data),
     }
 }
 
@@ -123,6 +158,20 @@ fn slice(data: &[u8], start: usize, len: usize) -> Result<&[u8]> {
         .ok_or_else(|| error("File range overflow"))?;
     data.get(start..end)
         .ok_or_else(|| error(format!("Truncated file range 0x{start:X} + {len} B")))
+}
+
+fn le_u16(data: &[u8], at: usize) -> Result<u16> {
+    let bytes: [u8; 2] = slice(data, at, 2)?
+        .try_into()
+        .expect("slice has exactly 2 bytes");
+    Ok(u16::from_le_bytes(bytes))
+}
+
+fn le_u32(data: &[u8], at: usize) -> Result<u32> {
+    let bytes: [u8; 4] = slice(data, at, 4)?
+        .try_into()
+        .expect("slice has exactly 4 bytes");
+    Ok(u32::from_le_bytes(bytes))
 }
 
 /// Erased flash or zero fill.

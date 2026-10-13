@@ -1,8 +1,10 @@
 //! Apple images: Image4 files (`IMG4`, `IM4P`, `IM4M`, `IM4R`) written by
 //! img4tool and built by hand in DER, with stored, LZFSE, LZSS, encrypted
-//! and malformed payloads; and dyld shared cache headers of several
+//! and malformed payloads; dyld shared cache headers of several
 //! versions and architectures, with image listing, split-cache notes,
-//! truncation and mutation sweeps.
+//! truncation and mutation sweeps; and hand-built Img3 files (tags, KBAG
+//! encryption, signatures) and 8900 containers (plaintext and encrypted
+//! formats, footer ranges).
 
 use zrax::formats::apple::{self, Layout};
 use zrax::formats::checksum::adler32;
@@ -1327,5 +1329,301 @@ fn apple_images_survive_byte_mutations() {
                 let _ = detect_payload(&mutated, &ClassifierOptions::new());
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Img3 and 8900
+// ---------------------------------------------------------------------------
+
+/// A tag code as Img3 stores it: the four characters read as a big-endian
+/// value, written little-endian (`DATA` is stored `ATAD`).
+fn img3_code(code: &[u8; 4]) -> [u8; 4] {
+    u32::from_be_bytes(*code).to_le_bytes()
+}
+
+/// An Img3 tag: code, total length (12-byte header plus data padded to four
+/// bytes), data length, data, zero padding.
+fn img3_tag(code: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let padded = (data.len() + 3) / 4 * 4;
+    let mut tag = img3_code(code).to_vec();
+    tag.extend_from_slice(&((12 + padded) as u32).to_le_bytes());
+    tag.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    tag.extend_from_slice(data);
+    tag.resize(12 + padded, 0);
+    tag
+}
+
+/// An Img3 file: magic `Img3` (stored `3gmI`), full size, tag area size,
+/// offset of the `SHSH` tag from the end of the 20-byte header (0 when
+/// there is none), image type; then the tags.
+fn img3(ident: &[u8; 4], tags: &[Vec<u8>]) -> Vec<u8> {
+    let area: Vec<u8> = tags.concat();
+    let shsh_code = img3_code(b"SHSH");
+    let mut shsh_offset = 0usize;
+    let mut pos = 0;
+    for tag in tags {
+        if tag[..4] == shsh_code {
+            shsh_offset = pos;
+        }
+        pos += tag.len();
+    }
+    let mut file = img3_code(b"Img3").to_vec();
+    file.extend_from_slice(&((20 + area.len()) as u32).to_le_bytes());
+    file.extend_from_slice(&(area.len() as u32).to_le_bytes());
+    file.extend_from_slice(&(shsh_offset as u32).to_le_bytes());
+    file.extend_from_slice(&img3_code(ident));
+    file.extend_from_slice(&area);
+    file
+}
+
+/// `KBAG` contents: crypt state, AES key bits, then the IV and key.
+fn img3_kbag(crypt_state: u32, key_bits: u32) -> Vec<u8> {
+    let mut data = crypt_state.to_le_bytes().to_vec();
+    data.extend_from_slice(&key_bits.to_le_bytes());
+    data.extend_from_slice(&[0x11; 16]);
+    data.extend(std::iter::repeat(0x22).take(key_bits as usize / 8));
+    data
+}
+
+/// A signed iBoot-like Img3: TYPE, DATA, VERS, SEPO, BORD, optional KBAGs,
+/// SHSH and CERT.
+fn signed_img3(payload: &[u8], encrypted: bool) -> Vec<u8> {
+    let mut tags = vec![
+        img3_tag(b"TYPE", &img3_code(b"ibot")),
+        img3_tag(b"DATA", payload),
+        img3_tag(b"VERS", b"\x13\0\0\0iBoot-636.66.33.0.1"),
+        img3_tag(b"SEPO", &4u32.to_le_bytes()),
+        img3_tag(b"BORD", &0x0eu32.to_le_bytes()),
+    ];
+    if encrypted {
+        tags.push(img3_tag(b"KBAG", &img3_kbag(1, 256)));
+        tags.push(img3_tag(b"KBAG", &img3_kbag(2, 256)));
+    }
+    tags.push(img3_tag(b"SHSH", &[0x5a; 128]));
+    tags.push(img3_tag(b"CERT", &[0x30; 64]));
+    img3(b"ibot", &tags)
+}
+
+#[test]
+fn img3_data_tag_is_the_payload_and_signatures_are_not_verified() {
+    let kernel = macho64(CPU_TYPE_ARM64);
+    let file = signed_img3(&kernel, false);
+    assert_eq!(apple::detect(&file), Some(Layout::Img3));
+    let p = classify(&file);
+    assert_eq!(p.format.format, FileFormat::Img3);
+    assert_eq!(p.format.variant_name.as_deref(), Some("Img3 image"));
+    assert_eq!((p.primary.isa, p.primary.bitwidth), (Isa::AArch64, 64));
+    let data = p
+        .slices
+        .iter()
+        .find(|s| s.label.as_deref() == Some("ibot"))
+        .expect("DATA slice");
+    assert_eq!(
+        data.offset as usize,
+        position(&file, &[0xcf, 0xfa, 0xed, 0xfe])
+    );
+    assert_eq!(data.size as usize, kernel.len());
+    assert_note(&p, "Img3 tags: TYPE, DATA, VERS, SEPO, BORD, SHSH, CERT");
+    assert_note(
+        &p,
+        "SHSH signature (128 B) and CERT certificate chain (64 B) present; not verified",
+    );
+    assert_eq!(metadata_text(&p, "apple_img3_board"), "0xE");
+    assert_eq!(metadata_text(&p, "apple_img3_security_epoch"), "0x4");
+    assert_eq!(
+        metadata_text(&p, "apple_img3_version"),
+        "....iBoot-636.66.33.0.1"
+    );
+}
+
+#[test]
+fn img3_with_a_kbag_keeps_data_opaque() {
+    let file = signed_img3(&complzss(&macho64(CPU_TYPE_ARM64)), true);
+    let p = classify(&file);
+    assert_eq!(p.format.format, FileFormat::Img3);
+    assert!(matches!(p.primary.isa, Isa::Unknown(_)));
+    assert!(p.slices.iter().all(|s| matches!(s.isa, Isa::Unknown(_))));
+    assert_note(
+        &p,
+        "DATA is encrypted (2 KBAGs: production AES-256, development AES-256)",
+    );
+    let c = parse(&file, Layout::Img3);
+    assert!(c.children.iter().all(|child| child.opaque));
+}
+
+#[test]
+fn img3_kernelcache_data_decodes_through_the_lzss_container() {
+    let file = img3(
+        b"krnl",
+        &[
+            img3_tag(b"TYPE", &img3_code(b"krnl")),
+            img3_tag(b"DATA", &complzss(&macho64(CPU_TYPE_ARM64))),
+        ],
+    );
+    let p = classify(&file);
+    assert_eq!(p.primary.isa, Isa::AArch64);
+    assert_note(&p, "Unsigned: no SHSH or CERT tag");
+}
+
+#[test]
+fn img3_structure_errors_name_the_tag() {
+    let good = signed_img3(&macho64(CPU_TYPE_ARM64), false);
+    let mut short_tag = good.clone();
+    short_tag[24..28].copy_from_slice(&4u32.to_le_bytes());
+    assert!(parse_error(&short_tag, Layout::Img3)
+        .contains("Invalid Img3 tag TYPE at 0x14: total length 4 B"));
+    let mut long_data = good.clone();
+    long_data[28..32].copy_from_slice(&100u32.to_le_bytes());
+    assert!(
+        parse_error(&long_data, Layout::Img3).contains("data length 100 B exceeds the 16 B tag")
+    );
+    let mut full = good.clone();
+    full[4..8].copy_from_slice(&(good.len() as u32 + 1).to_le_bytes());
+    assert!(parse_error(&full, Layout::Img3).contains("Truncated file range"));
+    let mut area = good.clone();
+    area[8..12].copy_from_slice(&(good.len() as u32).to_le_bytes());
+    assert!(parse_error(&area, Layout::Img3).contains("Invalid Img3 tag area size"));
+    let mut trailing = good;
+    trailing.extend_from_slice(b"tail");
+    assert!(parse_error(&trailing, Layout::Img3).contains("Unexpected 4 B after the Img3 image"));
+    let twice = img3(
+        b"ibot",
+        &[img3_tag(b"DATA", b"one"), img3_tag(b"DATA", b"two")],
+    );
+    assert!(parse_error(&twice, Layout::Img3).contains("Duplicate Img3 DATA tag at 0x24"));
+    let bad_kbag = img3(b"ibot", &[img3_tag(b"KBAG", &img3_kbag(1, 100))]);
+    assert!(parse_error(&bad_kbag, Layout::Img3)
+        .contains("Invalid Img3 KBAG at 0x14: key size 100 bits"));
+    let mismatch = img3(b"ibot", &[img3_tag(b"TYPE", &img3_code(b"illb"))]);
+    let c = parse(&mismatch, Layout::Img3);
+    assert!(c
+        .notes
+        .iter()
+        .any(|n| n == "TYPE tag names illb, the header names ibot"));
+}
+
+/// An 8900 container: magic `8900`, version `1.0`, format, unknown word,
+/// payload size, footer signature offset and certificate offset (both from
+/// the end of the 0x800-byte header), certificate length, salt, epoch 3;
+/// then the payload, the 0x80-byte signature and the certificate.
+fn apple_8900(format: u8, payload: &[u8], certificate: &[u8]) -> Vec<u8> {
+    let mut file = vec![0u8; 0x800];
+    file[..4].copy_from_slice(b"8900");
+    file[4..7].copy_from_slice(b"1.0");
+    file[7] = format;
+    let size = payload.len() as u32;
+    file[0x0c..0x10].copy_from_slice(&size.to_le_bytes());
+    file[0x10..0x14].copy_from_slice(&size.to_le_bytes());
+    file[0x14..0x18].copy_from_slice(&(size + 0x80).to_le_bytes());
+    file[0x18..0x1c].copy_from_slice(&(certificate.len() as u32).to_le_bytes());
+    file[0x1c..0x3c].copy_from_slice(&[0x77; 32]);
+    file[0x3e..0x40].copy_from_slice(&3u16.to_le_bytes());
+    file.extend_from_slice(payload);
+    file.extend_from_slice(&[0x5a; 0x80]);
+    file.extend_from_slice(certificate);
+    file
+}
+
+#[test]
+fn apple_8900_plaintext_payload_is_classified() {
+    let payload = macho32(CPU_TYPE_ARM, 9, false);
+    let file = apple_8900(4, &payload, &[0x30; 0x40]);
+    assert_eq!(apple::detect(&file), Some(Layout::Apple8900));
+    let p = classify(&file);
+    assert_eq!(p.format.format, FileFormat::Apple8900);
+    assert_eq!(p.format.variant_name.as_deref(), Some("8900 container"));
+    assert_eq!(p.primary.isa, Isa::Arm);
+    let slice = &p.slices[0];
+    assert_eq!((slice.offset, slice.size), (0x800, payload.len() as u64));
+    assert_note(
+        &p,
+        "format 4 (plaintext); payload 52 B at 0x800; security epoch 3",
+    );
+    assert_note(&p, "certificate (64 B at 0x8B4) present; not verified");
+    assert_eq!(metadata_text(&p, "apple_8900_format"), "4");
+}
+
+#[test]
+fn apple_8900_encrypted_payloads_are_opaque() {
+    for (format, text) in [
+        (3, "Payload encrypted with key 0x837; not decrypted"),
+        (
+            1,
+            "Payload boot, encrypted with the device UID key; not decrypted",
+        ),
+    ] {
+        let file = apple_8900(format, &macho32(CPU_TYPE_ARM, 9, false), &[]);
+        let p = classify(&file);
+        assert_eq!(p.format.format, FileFormat::Apple8900);
+        assert!(matches!(p.primary.isa, Isa::Unknown(_)), "format {format}");
+        assert_note(&p, text);
+    }
+    let img2 = apple_8900(2, b"2gmIllbz\0\0\0\0", &[]);
+    let c = parse(&img2, Layout::Apple8900);
+    assert!(c
+        .notes
+        .iter()
+        .any(|n| n.starts_with("Payload starts with an IMG2 header")));
+}
+
+#[test]
+fn apple_8900_ranges_and_format_are_checked() {
+    let file = apple_8900(4, &[1; 64], &[2; 32]);
+    let mut format = file.clone();
+    format[7] = 5;
+    assert!(parse_error(&format, Layout::Apple8900).contains("Unknown 8900 format 5"));
+    let mut payload = file.clone();
+    payload[0x0c..0x10].copy_from_slice(&0x10_0000u32.to_le_bytes());
+    assert!(parse_error(&payload, Layout::Apple8900).contains("Truncated 8900 payload"));
+    let mut certificate = file.clone();
+    certificate[0x18..0x1c].copy_from_slice(&0x1000u32.to_le_bytes());
+    assert!(
+        parse_error(&certificate, Layout::Apple8900).contains("Truncated 8900 footer certificate")
+    );
+    let mut trailing = file;
+    trailing.extend_from_slice(b"tail");
+    assert!(
+        parse_error(&trailing, Layout::Apple8900).contains("Unexpected 4 B after the 8900 image")
+    );
+    // The version text is part of the magic.
+    let mut text = b"8900,8901,8902\n".to_vec();
+    text.resize(0x900, b' ');
+    assert_eq!(apple::detect(&text), None);
+}
+
+#[test]
+fn img3_and_8900_prefixes_and_mutations() {
+    let files = [
+        signed_img3(&macho64(CPU_TYPE_ARM64), true),
+        apple_8900(4, &macho32(CPU_TYPE_ARM, 9, false), &[0x30; 16]),
+    ];
+    for file in &files {
+        let layout = apple::detect(file).expect("detected");
+        for end in 0..file.len() {
+            let only_padding = file[end..].iter().all(|&b| b == 0 || b == 0xff);
+            assert!(
+                apple::parse_container(&file[..end], layout).is_err() || only_padding,
+                "{layout:?} prefix {end}"
+            );
+        }
+        for i in 0..file.len() {
+            for value in [0x00, 0xff, file[i] ^ 0x01] {
+                let mut mutated = file.clone();
+                mutated[i] = value;
+                let _ = detect_payload(&mutated, &ClassifierOptions::new());
+            }
+        }
+    }
+}
+
+#[test]
+fn legacy_json_ids_are_stable() {
+    let ids = [
+        (FileFormat::Img3, "\"img3\""),
+        (FileFormat::Apple8900, "\"apple8900\""),
+    ];
+    for (format, id) in ids {
+        assert_eq!(serde_json::to_string(&format).expect("serializes"), id);
     }
 }

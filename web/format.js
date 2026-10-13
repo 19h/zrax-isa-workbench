@@ -104,6 +104,7 @@ const FORMAT_NAMES = {
   winceimage: 'Windows CE image',
   psf: 'PSF', hes: 'HES', kss: 'KSS', sap: 'SAP', aytune: 'AY tune', sndh: 'SNDH', packice: 'Pack-Ice',
   intelmicrocode: 'Intel microcode', amdmicrocode: 'AMD microcode', intelme: 'Intel ME firmware', amdpsp: 'AMD PSP firmware',
+  opteeimage: 'OP-TEE image', amlogicupgrade: 'Amlogic burning image', allwinnerimage: 'Allwinner IMAGEWTY', bareboximage: 'barebox image', img3: 'Apple Img3', apple8900: 'Apple 8900',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

@@ -1034,6 +1034,20 @@ pub enum FileFormat {
     /// AMD flash image with an Embedded Firmware Structure, or a PSP or
     /// BIOS directory table
     AmdPsp,
+    // Miscellaneous boot images
+    /// OP-TEE OS image with an `OPTE` header (`tee.bin`, `tee-header_v2.bin`)
+    OpteeImage,
+    /// Amlogic USB burning image (`aml_upgrade_package.img`)
+    AmlogicUpgrade,
+    /// Allwinner PhoenixSuit/LiveSuit image (`IMAGEWTY`)
+    AllwinnerImage,
+    /// barebox ARM or `AArch64` boot loader image
+    BareboxImage,
+    // Apple legacy firmware
+    /// Apple Img3 firmware image (`Img3`)
+    Img3,
+    /// Apple S5L8900 `8900` container
+    Apple8900,
 }
 
 impl fmt::Display for FileFormat {
@@ -1248,6 +1262,14 @@ impl fmt::Display for FileFormat {
             FileFormat::AmdMicrocode => write!(f, "AMD microcode"),
             FileFormat::IntelMe => write!(f, "Intel ME firmware"),
             FileFormat::AmdPsp => write!(f, "AMD PSP firmware"),
+            // Miscellaneous boot images
+            FileFormat::OpteeImage => write!(f, "OP-TEE image"),
+            FileFormat::AmlogicUpgrade => write!(f, "Amlogic burning image"),
+            FileFormat::AllwinnerImage => write!(f, "Allwinner IMAGEWTY"),
+            FileFormat::BareboxImage => write!(f, "barebox image"),
+            // Apple legacy firmware
+            FileFormat::Img3 => write!(f, "Apple Img3"),
+            FileFormat::Apple8900 => write!(f, "Apple 8900"),
         }
     }
 }

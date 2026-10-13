@@ -144,7 +144,7 @@ fn verify_checksum(image: &[u8], checksum_at: usize, stored: u32, what: &str) ->
 
 /// The instruction set of the boot ROM's first instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum JumpKind {
+pub(crate) enum JumpKind {
     /// A32 `B`.
     Arm,
     /// RISC-V `JAL x0`.
@@ -154,13 +154,13 @@ enum JumpKind {
 /// A decoded jump instruction and its target, as a byte offset from the
 /// start of the image (negative for a backward branch).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Jump {
-    kind: JumpKind,
-    target: i64,
+pub(crate) struct Jump {
+    pub(crate) kind: JumpKind,
+    pub(crate) target: i64,
 }
 
 /// Sign-extend the low `bits` bits of `value`.
-fn sign_extend(value: u32, bits: u32) -> i64 {
+pub(crate) fn sign_extend(value: u32, bits: u32) -> i64 {
     let shift = 64 - bits;
     (i64::from(value) << shift) >> shift
 }
@@ -177,8 +177,9 @@ fn jal_offset(word: u32) -> i64 {
 }
 
 /// Decode the jump instruction at offset 0 the way `egon_verify_header`
-/// classifies it: an A32 `B` or a RISC-V `JAL x0`.
-fn decode_jump(word: u32) -> Option<Jump> {
+/// classifies it: an A32 `B` or a RISC-V `JAL x0`. The barebox parser
+/// (`bootmisc::barebox`) shares the A32 decoding.
+pub(crate) fn decode_jump(word: u32) -> Option<Jump> {
     if word & ARM_B_MASK == ARM_B {
         let words = sign_extend(word & ARM_B_OFFSET_MASK, ARM_B_OFFSET_BITS);
         return Some(Jump {

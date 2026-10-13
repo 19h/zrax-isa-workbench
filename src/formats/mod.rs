@@ -31,6 +31,7 @@ pub mod bcf;
 pub mod bflt;
 pub mod blackfin_ldr;
 pub mod bitstream;
+pub mod bootmisc;
 pub mod checksum;
 pub mod chiptune;
 pub mod coff;
@@ -699,6 +700,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = pcfw::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::PcFw(layout),
+        };
+    }
+
+    // Miscellaneous boot images: the OP-TEE `OPTE` magic with header
+    // version 1 or 2, the Amlogic magic at offset 8, `IMAGEWTY` (also after
+    // RC6-decrypting the first block with the published header key) and the
+    // barebox magic after the exception-vector words.
+    if let Some(layout) = bootmisc::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::BootMisc(layout),
         };
     }
 

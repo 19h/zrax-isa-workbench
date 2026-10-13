@@ -760,6 +760,12 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::AmdMicrocode => "AMD microcode",
         FileFormat::IntelMe => "Intel ME firmware",
         FileFormat::AmdPsp => "AMD PSP firmware",
+        FileFormat::OpteeImage => "OP-TEE image",
+        FileFormat::AmlogicUpgrade => "Amlogic burning image",
+        FileFormat::AllwinnerImage => "Allwinner IMAGEWTY",
+        FileFormat::BareboxImage => "barebox image",
+        FileFormat::Img3 => "Apple Img3",
+        FileFormat::Apple8900 => "Apple 8900",
     }
 }
 
