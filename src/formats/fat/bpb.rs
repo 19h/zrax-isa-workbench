@@ -356,8 +356,9 @@ impl Geometry {
     /// `BPB_SecPerClus`, `BPB_RsvdSecCnt`, `BPB_NumFATs` and `BPB_Media`;
     /// the total sectors and FAT size; the regions that precede the data
     /// region; the FAT type by cluster count against the BPB layout; the
-    /// FAT size; the metadata region and the volume against the input; and
-    /// FAT[0].
+    /// FAT size; the metadata region against the input; and FAT[0]. How
+    /// the volume relates to the input is recorded, not checked; weak
+    /// detection checks it.
     ///
     /// # Errors
     ///
@@ -389,7 +390,7 @@ impl Geometry {
                 data.len()
             )));
         }
-        let coverage = check_volume_size(u64::from(bpb.total_sectors) * bytes, data.len())?;
+        let coverage = Coverage::of(u64::from(bpb.total_sectors) * bytes, data.len());
         let fat0 = check_fat0(data, &bpb, kind, cluster_count)?;
 
         let extended_offset = if layout == Layout::Fat32 {

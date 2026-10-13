@@ -267,7 +267,10 @@ impl Chain {
     }
 }
 
-/// The cluster heap: cluster 2 starts at `offset` in the input.
+/// The cluster heap: cluster 2 starts at `offset` in the input. The heap
+/// lies inside the volume (the cluster count is derived from, or checked
+/// against, the volume size), so a cluster past the end of the input lies
+/// past the end of a truncated volume's input.
 pub(super) struct Heap<'a> {
     pub(super) data: &'a [u8],
     pub(super) offset: u64,
@@ -281,8 +284,8 @@ impl<'a> Heap<'a> {
     }
 
     /// The first `len` stored bytes of `run` (at most the whole run), with
-    /// their file offset.
-    pub(super) fn read(&self, run: Run, len: u64) -> Walk<(usize, &'a [u8])> {
+    /// their file offset; absent when they pass the end of the input.
+    pub(super) fn read(&self, run: Run, len: u64) -> ReadResult<(usize, &'a [u8])> {
         let run_size = u64::from(run.clusters) * self.cluster_size;
         let start = self.cluster_offset(run.first);
         let end = start + len.min(run_size);
@@ -292,10 +295,18 @@ impl<'a> Heap<'a> {
             .filter(|&(_, end)| end <= self.data.len());
         match range {
             Some((start, end)) => Ok((start, &self.data[start..end])),
-            None => Err(format!(
-                "cluster {} at 0x{start:X} lies beyond the end of the input",
-                run.first
-            )),
+            None => Err(Fault::Absent),
+        }
+    }
+
+    /// The first clusters of `run` that lie wholly in the input.
+    pub(super) fn present_part(&self, run: Run) -> Run {
+        let available = (self.data.len() as u64).saturating_sub(self.cluster_offset(run.first));
+        let clusters = u32::try_from(available / self.cluster_size)
+            .map_or(run.clusters, |clusters| clusters.min(run.clusters));
+        Run {
+            first: run.first,
+            clusters,
         }
     }
 

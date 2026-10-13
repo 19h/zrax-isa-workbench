@@ -5,8 +5,13 @@
 //! zlib, LZFSE and stored decmpfs files, unsupported types, damaged B-trees,
 //! depth limits), corrupted fields, and truncation and mutation sweeps.
 
+#[path = "support/truncated_volume.rs"]
+mod truncated_volume;
+
 use std::borrow::Cow;
+use truncated_volume::{assert_members_inside, prefix_ends};
 use zrax::formats::container::{self, Child, Container};
+use zrax::formats::dmg;
 use zrax::formats::hfsplus::{self, Layout};
 use zrax::{detect_payload, ClassifierOptions, DetectionPayload, FileFormat, Isa};
 
@@ -519,12 +524,21 @@ fn an_unknown_hfsx_version_is_refused() {
 }
 
 #[test]
-fn truncated_volumes_are_errors_and_trailing_data_must_be_padding() {
+fn volumes_cut_at_their_end_are_truncated_and_trailing_data_must_be_padding() {
     let image = hfsplus_img();
-    assert_eq!(
-        parse_error(&image[..image.len() - 1]),
-        "HFS+ volume parse error: Truncated volume: 256 blocks of 4 KiB need 1048576 B, \
-         1048575 B present"
+    // The last byte belongs to the alternate volume header, which is not
+    // read; every member is present.
+    let cut = parse(&image[..image.len() - 1]);
+    assert_eq!(labels(&cut), MEMBERS);
+    assert_eq!(cut.consumed, image.len() - 1);
+    assert!(
+        has_note(
+            &cut,
+            "Volume truncated: 1048575 B of 1 MiB present; files are listed only when all of \
+             their data is present"
+        ),
+        "{:?}",
+        cut.notes
     );
     let mut padded = image.clone();
     padded.extend(vec![0u8; 1 << 20]);
@@ -543,6 +557,80 @@ fn truncated_volumes_are_errors_and_trailing_data_must_be_padding() {
         "HFS+ volume parse error: Invalid trailing data: 4096 B after the volume at 0x100000 \
          are not padding"
     );
+}
+
+/// The members of `hfsplus.img` whose data lies before 0xC0000: the
+/// attribute-compressed `Zrax` (in the attributes B-tree at 0x8B000) and
+/// `/bin/fragmented.elf` (from 0xAC000). `/payload.elf` (0xF3000) and the
+/// resource fork of `/Library/large.macho` (0xF5000) lie after it.
+const MEMBERS_BEFORE_0XC0000: [&str; 2] = [
+    "/Applications/Zrax.app/Contents/MacOS/Zrax",
+    "/bin/fragmented.elf",
+];
+
+#[test]
+fn truncated_volumes_list_only_the_files_whose_data_is_present() {
+    let image = hfsplus_img();
+    let whole = parse(&image);
+    let end = 0xc0000;
+    let prefix = &image[..end];
+    let c = parse(prefix);
+    assert_eq!(labels(&c), MEMBERS_BEFORE_0XC0000);
+    assert_members_inside("hfsplus.img", &whole, &c, end);
+    assert_eq!(c.consumed, end);
+    for note in [
+        "Volume truncated: 768 KiB of 1 MiB present; files are listed only when all of their \
+         data is present",
+        // /payload.elf, /Library/large.macho and a text file.
+        "3 regular files were not listed: file data, or B-tree records that locate it, lie \
+         partly or wholly past the 768 KiB present",
+        "Catalog walk: 8 folders, 7 regular files; members in a recognized format: 2",
+    ] {
+        assert!(has_note(&c, note), "{note}: {:?}", c.notes);
+    }
+    // The classifier lists the members of the prefix.
+    let p = classify(prefix);
+    assert_eq!(p.format.format, FileFormat::HfsPlus);
+    assert_eq!(p.slices.len(), 2);
+    for slice in &p.slices {
+        assert!(slice.offset + slice.size <= end as u64, "{:?}", slice.label);
+    }
+
+    // HFSX: the resource fork of /case/large.macho and both payloads lie
+    // past 128 KiB; the compressed file is not counted as decoded.
+    let hfsx = hfsx_img();
+    let c = parse(&hfsx[..128 << 10]);
+    assert_eq!(c.children.len(), 0, "{:?}", labels(&c));
+    assert!(has_note(
+        &c,
+        "3 regular files were not listed: file data, or B-tree records that locate it, lie \
+         partly or wholly past the 128 KiB present"
+    ));
+    assert!(!has_note(&c, "decoded for examination"), "{:?}", c.notes);
+}
+
+#[test]
+fn a_journal_past_the_end_of_the_input_is_noted() {
+    let mut image = hfsplus_img();
+    // The journal info block is allocation block 2 (`journalInfoBlock`);
+    // its journal offset at 36 moves the journal header to 0xF0000.
+    let info = 2 * 4096;
+    put64(&mut image, info + 36, 0xf_0000);
+    let c = parse(&image[..0xc0000]);
+    assert!(
+        has_note(
+            &c,
+            "Journaled volume; the journal lies past the 768 KiB present and was not read"
+        ),
+        "{:?}",
+        c.notes
+    );
+    // Past the end of the volume it is invalid, truncated or not.
+    put64(&mut image, info + 36, 1 << 20);
+    assert!(has_note(
+        &parse(&image[..0xc0000]),
+        "Journaled volume; the journal could not be read: Invalid journal offset 0x100000"
+    ));
 }
 
 #[test]
@@ -698,10 +786,30 @@ fn an_hfs_wrapper_is_unwrapped_to_its_embedded_volume() {
     let mut too_long = image.clone();
     put16(&mut too_long, 1024 + 0x12, 10);
     assert_eq!(hfsplus::detect(&too_long), None);
-    // A wrapper truncated inside the embedded volume.
+    // A wrapper truncated inside the embedded volume, before the catalog
+    // (at volume offset 0x9B000), lists nothing.
     let truncated = &image[..0x3000 + (1 << 19)];
     assert_eq!(hfsplus::detect(truncated), Some(Layout::HfsWrapper));
-    assert!(parse_error(truncated).contains("Truncated HFS wrapper"));
+    assert_eq!(
+        parse_error(truncated),
+        "HFS+ volume parse error: Truncated HFS wrapper: the embedded volume at 0x3000 needs \
+         1048576 B, 524288 B present"
+    );
+    // Truncated after the members, the embedded volume is read up to the
+    // end of the input.
+    let end = 0x3000 + (1 << 20) - 1;
+    let c = parse(&image[..end]);
+    assert_eq!(labels(&c), MEMBERS);
+    assert_members_inside("wrapped hfsplus.img", &parse(&image), &c, end);
+    assert!(has_note(&c, "Volume truncated: 1048575 B of 1 MiB present"));
+    // A cut before the embedded volume header is not detected, and its
+    // parse is the wrapper's error.
+    let headless = &image[..0x3000 + 1024];
+    assert_eq!(hfsplus::detect(headless), None);
+    let message = hfsplus::parse_container(headless, Layout::HfsWrapper)
+        .expect_err("no volume header")
+        .to_string();
+    assert!(message.contains("Truncated HFS wrapper"), "{message}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,6 +1407,60 @@ fn catalogs_with_index_nodes_are_searched_and_damage_is_noted() {
 }
 
 #[test]
+fn catalog_nodes_past_the_end_of_the_input_are_skipped_and_counted() {
+    // Six folders of one ELF each, three records per leaf: leaf 5 holds
+    // the thread and file of dir2 (CNID 18) and the thread of dir3, and
+    // the index root (node 10) leads both searches to it.
+    let mut s = Synthetic::new(65);
+    s.records_per_leaf = 3;
+    let folders: Vec<u32> = (0..6).map(|i| s.folder(2, &format!("dir{i}"))).collect();
+    for (i, &folder) in folders.iter().enumerate() {
+        s.file(folder, &format!("payload{i}.elf"), &payload_elf());
+    }
+    let mut image = s.build();
+    // Move node 5 to the last block, 64: the catalog fork becomes the
+    // extents (2, 5), (64, 1) and (8, 10), 16 blocks in all.
+    let last = 64 * BLOCK;
+    let node = catalog_node(5);
+    image.copy_within(node..node + NODE, last);
+    image[node..node + NODE].fill(0);
+    let fork = VOLUME_HEADER + 272;
+    for (i, (start, count)) in [(2u32, 5u32), (64, 1), (8, 10)].into_iter().enumerate() {
+        put32(&mut image, fork + 16 + 8 * i, start);
+        put32(&mut image, fork + 20 + 8 * i, count);
+    }
+    let whole = parse(&image);
+    assert_eq!(whole.children.len(), 6, "the moved node is read");
+
+    let c = parse(&image[..last]);
+    assert_eq!(
+        labels(&c),
+        [
+            "/dir0/payload0.elf",
+            "/dir1/payload1.elf",
+            "/dir4/payload4.elf",
+            "/dir5/payload5.elf"
+        ]
+    );
+    assert_members_inside("relocated catalog", &whole, &c, last);
+    assert!(
+        has_note(
+            &c,
+            "1 node of the catalog B-tree that the walk needed lies past the 256 KiB present; \
+             its records were not read"
+        ),
+        "{:?}",
+        c.notes
+    );
+    // Missing nodes are not damage: no problem is noted.
+    assert!(
+        !c.notes.iter().any(|n| n.starts_with("Skipped")),
+        "{:?}",
+        c.notes
+    );
+}
+
+#[test]
 fn folders_deeper_than_the_walk_limit_are_counted() {
     let mut s = Synthetic::new(64);
     let mut parent = 2;
@@ -1344,26 +1506,69 @@ fn volume_attribute_bits_are_noted() {
 // Truncation and mutation sweeps
 // ---------------------------------------------------------------------------
 
+/// The error of a prefix of `end` bytes of a volume of `blocks` blocks of
+/// `block_size` that lacks the structures a truncated volume is read from:
+/// the volume header, or the B-tree header nodes and the root folder.
+fn prefix_error(end: usize, blocks: usize, block_size: &str, size: usize) -> String {
+    if end < VOLUME_HEADER + 512 {
+        "HFS+ volume parse error: Truncated volume at 0x400 + 512 B".to_string()
+    } else {
+        format!(
+            "HFS+ volume parse error: Truncated volume: {blocks} blocks of {block_size} need \
+             {size} B, {end} B present"
+        )
+    }
+}
+
 #[test]
-fn every_prefix_of_the_fixtures_is_rejected() {
-    for image in [hfsx_img(), hfsplus_img()] {
-        for end in 0..image.len() {
+fn prefixes_are_truncated_volumes_that_list_only_members_inside_them() {
+    for (name, image, blocks, block_size) in [
+        ("hfsx.img", hfsx_img(), 1024, "512 B"),
+        ("hfsplus.img", hfsplus_img(), 256, "4 KiB"),
+    ] {
+        let whole = parse(&image);
+        let layout = hfsplus::detect(&image).expect("detected");
+        // Every prefix up to the end of the catalog file, then a sample.
+        let catalog = special_file(&image, CATALOG_FILE);
+        let catalog_end = catalog.offset + catalog.size;
+        let mut first_volume = None;
+        for end in prefix_ends(image.len(), catalog_end, 61, 512) {
             let prefix = &image[..end];
-            if let Some(layout) = hfsplus::detect(prefix) {
-                assert!(
-                    hfsplus::parse_container(prefix, layout).is_err(),
-                    "prefix {end} parses"
-                );
+            match hfsplus::parse_container(prefix, layout) {
+                Ok(c) => {
+                    first_volume.get_or_insert(end);
+                    assert_members_inside(name, &whole, &c, end);
+                    assert!(has_note(&c, "Volume truncated: "), "{name}: prefix {end}");
+                }
+                Err(e) => {
+                    assert!(
+                        first_volume.is_none(),
+                        "{name}: prefix {end} after a volume"
+                    );
+                    assert_eq!(
+                        e.to_string(),
+                        prefix_error(end, blocks, block_size, image.len()),
+                        "{name}"
+                    );
+                }
             }
         }
+        // The first prefix read holds the catalog's header node and the
+        // nodes of the root folder.
+        let first = first_volume.expect("some prefix is read");
+        assert!(
+            first > catalog.offset + NODE && first <= catalog_end,
+            "{name}: first {first:X}"
+        );
         for end in (0..image.len()).step_by(65_537) {
             let prefix = &image[..end];
             if let Ok(p) = detect_payload(prefix, &ClassifierOptions::new()) {
-                assert!(
-                    !matches!(p.format.format, FileFormat::HfsPlus | FileFormat::Hfsx)
-                        || p.slices.is_empty(),
-                    "prefix {end} claims members"
-                );
+                for slice in &p.slices {
+                    assert!(
+                        slice.offset + slice.size <= end as u64,
+                        "{name}: prefix {end}"
+                    );
+                }
             }
         }
     }
@@ -1432,4 +1637,55 @@ fn byte_mutations_of_the_whole_image_never_panic_the_classifier() {
             mutate(&image, at);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// A local disk image (not committed)
+// ---------------------------------------------------------------------------
+
+/// `MAX_PAYLOAD`: the DMG family decodes at most 64 MiB of a partition.
+const EXTRACTION_LIMIT: usize = 64 << 20;
+
+#[test]
+fn a_local_dmg_lists_the_files_in_the_first_64_mib_of_its_cut_volume() {
+    // Real disk images cannot be committed; point ZRAX_LOCAL_DMG at one
+    // whose HFS+ partition is larger than 64 MiB (for example a downloaded
+    // "Additional Tools for Xcode" image) to run this test.
+    let Some(path) = std::env::var_os("ZRAX_LOCAL_DMG") else {
+        eprintln!("ZRAX_LOCAL_DMG is not set; skipped");
+        return;
+    };
+    let data = std::fs::read(&path).expect("ZRAX_LOCAL_DMG is readable");
+    let layout = dmg::detect(&data).expect("an Apple disk image");
+    let image = dmg::parse_container(&data, layout).expect("the disk image parses");
+    let partition = image
+        .children
+        .iter()
+        .find(|child| child.label == "Apple_HFS")
+        .expect("an Apple_HFS partition");
+    let volume = &partition.data[..];
+    assert_eq!(volume.len(), EXTRACTION_LIMIT, "the partition is cut");
+    let c = parse(volume);
+    assert!(
+        has_note(&c, "Volume truncated: 64 MiB of "),
+        "{:?}",
+        c.notes
+    );
+    let mut mach_o = 0;
+    for member in &c.children {
+        assert!(
+            member.offset + member.stored_size <= volume.len(),
+            "{}",
+            member.label
+        );
+        let format = classify(&member.data).format.format;
+        mach_o += usize::from(matches!(format, FileFormat::MachO | FileFormat::MachOFat));
+        eprintln!("{} ({} B): {format:?}", member.label, member.data.len());
+    }
+    assert!(mach_o > 0, "no Mach-O file is listed: {:?}", c.notes);
+    // The disk image takes its primary ISA from the volume's files.
+    let p = classify(&data);
+    assert_eq!(p.format.format, FileFormat::AppleDmg);
+    assert!(!matches!(p.primary.isa, Isa::Unknown(_)), "{:?}", p.primary);
+    eprintln!("{} members; notes: {:#?}", c.children.len(), c.notes);
 }

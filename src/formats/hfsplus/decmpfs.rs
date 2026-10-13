@@ -194,7 +194,7 @@ impl Filesystem<'_> {
     /// The `com.apple.decmpfs` attribute of `file_id`. Attribute keys sort
     /// by `fileID` first, so a file's attributes are consecutive from the
     /// first key with its `fileID`.
-    pub(super) fn decmpfs_attribute(&self, file_id: u32) -> Result<Option<Attribute>> {
+    pub(super) fn decmpfs_attribute(&self, file_id: u32) -> ReadResult<Option<Attribute>> {
         let Some(tree) = &self.attributes else {
             return Ok(None);
         };
@@ -219,14 +219,14 @@ impl Filesystem<'_> {
             }
             let record_type = be_u32(record.data, 0)?;
             if record_type == ATTR_FORK_DATA {
-                return Err(error(format!(
+                return invalid(format!(
                     "Unsupported {DECMPFS_XATTR_NAME} attribute stored in extents"
-                )));
+                ));
             }
             if record_type != ATTR_INLINE_DATA {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid {DECMPFS_XATTR_NAME} attribute record type 0x{record_type:X}"
-                )));
+                ));
             }
             let size = be_u32(record.data, ATTR_DATA_SIZE_FIELD)? as usize;
             let bytes = slice(record.data, ATTR_DATA_OFFSET, size).map_err(|_| {

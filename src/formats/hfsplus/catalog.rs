@@ -221,7 +221,7 @@ pub(super) struct Children<'f, 'a> {
 impl<'f, 'a> Children<'f, 'a> {
     /// Start at the first record of folder `parent`: its thread record,
     /// keyed (`parent`, empty name).
-    pub(super) fn new(fs: &'f Filesystem<'a>, parent: u32) -> Result<Self> {
+    pub(super) fn new(fs: &'f Filesystem<'a>, parent: u32) -> ReadResult<Self> {
         let order = |key: &[u8]| order_by_parent(key, parent);
         let cursor = fs.catalog.lower_bound(&fs.vol, &order)?;
         Ok(Self { fs, parent, cursor })
@@ -229,7 +229,7 @@ impl<'f, 'a> Children<'f, 'a> {
 
     /// The next file or folder of the folder, skipping its thread record.
     /// `None` at the first record of another folder or at the end.
-    pub(super) fn next(&mut self) -> Result<Option<Member>> {
+    pub(super) fn next(&mut self) -> ReadResult<Option<Member>> {
         let Some(cursor) = self.cursor.as_mut() else {
             return Ok(None);
         };
@@ -254,7 +254,7 @@ impl<'f, 'a> Children<'f, 'a> {
 
 /// The thread record of `id`, keyed (`id`, empty name), if the catalog
 /// holds one.
-pub(super) fn thread(fs: &Filesystem<'_>, id: u32) -> Result<Option<Thread>> {
+pub(super) fn thread(fs: &Filesystem<'_>, id: u32) -> ReadResult<Option<Thread>> {
     let order = |key: &[u8]| order_by_parent(key, id);
     let Some(mut cursor) = fs.catalog.lower_bound(&fs.vol, &order)? else {
         return Ok(None);
@@ -268,9 +268,7 @@ pub(super) fn thread(fs: &Filesystem<'_>, id: u32) -> Result<Option<Thread>> {
     }
     match parse_entry(record.data)? {
         Entry::Thread(thread) => Ok(Some(thread)),
-        _ => Err(error(format!(
-            "Invalid catalog: CNID {id} has no thread record"
-        ))),
+        _ => invalid(format!("Invalid catalog: CNID {id} has no thread record")),
     }
 }
 

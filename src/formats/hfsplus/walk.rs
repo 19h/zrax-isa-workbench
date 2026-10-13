@@ -87,6 +87,11 @@ struct Private {
     inodes: Option<HashMap<String, File>>,
     /// Indirect node folders by name.
     directory_inodes: Option<HashMap<String, u32>>,
+    /// The index of indirect node files stopped at catalog nodes past the
+    /// end of a truncated volume's input, so a name it lacks may exist.
+    inodes_cut: bool,
+    /// The same for the index of indirect node folders.
+    directory_inodes_cut: bool,
 }
 
 /// What the walk found and left out, for the notes.
@@ -109,6 +114,9 @@ struct Census {
     too_large: usize,
     over_budget: usize,
     unwalked: usize,
+    /// Regular files not listed because their data, or the B-tree records
+    /// that locate it, lie past the end of a truncated volume's input.
+    absent_files: usize,
     problems: Vec<String>,
     unlisted_problems: usize,
 }
@@ -131,18 +139,33 @@ pub(super) fn message(e: ClassifierError) -> String {
     }
 }
 
-/// Walk the catalog from the root folder and append the members to `c`.
+/// The root folder: its thread record, which names the volume, and its
+/// folder record.
+pub(super) struct Root {
+    thread: catalog::Thread,
+    folder: Folder,
+}
+
+/// Find the root folder's thread and folder records.
 ///
 /// # Errors
 ///
-/// A missing root folder thread or folder record. Damage below the root is
-/// reported in notes.
-pub(super) fn walk<'a>(fs: &Filesystem<'a>, c: &mut Container<'a>) -> Result<()> {
+/// A missing root folder thread or folder record, or catalog nodes past the
+/// end of a truncated volume's input on the way to them.
+pub(super) fn root(fs: &Filesystem<'_>) -> ReadResult<Root> {
     let thread = catalog::thread(fs, ROOT_FOLDER_ID)?
         .filter(|thread| thread.parent_id == ROOT_PARENT_ID)
         .ok_or_else(|| error("Missing root folder thread record"))?;
-    let root = root_folder(fs)?;
-    c.push_metadata("hfsplus_volume_name", "Volume name", thread.name);
+    let folder = root_folder(fs)?;
+    Ok(Root { thread, folder })
+}
+
+/// Walk the catalog from the root folder and append the members to `c`.
+/// Damage below the root is reported in notes, and what lies past the end
+/// of a truncated volume's input is counted.
+pub(super) fn walk<'a>(fs: &Filesystem<'a>, root: Root, c: &mut Container<'a>) {
+    c.push_metadata("hfsplus_volume_name", "Volume name", root.thread.name);
+    let root = root.folder;
     let mut walker = Walker {
         fs,
         nodes: vec![PathNode {
@@ -170,12 +193,11 @@ pub(super) fn walk<'a>(fs: &Filesystem<'a>, c: &mut Container<'a>) -> Result<()>
         // Reversed, so that subfolders are walked in key order.
         pending.extend(subdirectories.into_iter().rev());
     }
-    walker.census.report(c);
-    Ok(())
+    walker.census.report(fs, c);
 }
 
 /// The root folder record, keyed (1, volume name).
-fn root_folder(fs: &Filesystem<'_>) -> Result<Folder> {
+fn root_folder(fs: &Filesystem<'_>) -> ReadResult<Folder> {
     let mut children = Children::new(fs, ROOT_PARENT_ID)?;
     while let Some(member) = children.next()? {
         if let Entry::Folder(folder) = member.entry {
@@ -184,7 +206,7 @@ fn root_folder(fs: &Filesystem<'_>) -> Result<Folder> {
             }
         }
     }
-    Err(error("Missing root folder record"))
+    invalid("Missing root folder record")
 }
 
 /// `count` with the singular or plural form of the words after it.
@@ -230,19 +252,37 @@ impl<'a> Walker<'_, 'a> {
         }
     }
 
+    /// A folder, or the metadata of one, that could not be read: a problem,
+    /// or catalog nodes past the end of a truncated volume's input, which
+    /// the B-tree counts.
+    fn folder_fault(&mut self, path: &str, fault: Fault) {
+        if let Fault::Invalid(e) = fault {
+            self.problem(path, e);
+        }
+    }
+
+    /// A regular file that could not be read: a problem, or data or records
+    /// past the end of a truncated volume's input, which are counted.
+    fn file_fault(&mut self, path: &str, fault: Fault) {
+        match fault {
+            Fault::Invalid(e) => self.problem(path, e),
+            Fault::Absent => self.census.absent_files += 1,
+        }
+    }
+
     /// Find the metadata folders among the root's children and the dates a
     /// link must carry.
     fn find_metadata_folders(&mut self, root: Folder) {
         self.private.link_dates.push(root.create_date);
         let mut children = match Children::new(self.fs, ROOT_FOLDER_ID) {
             Ok(children) => children,
-            Err(e) => return self.problem("/", e),
+            Err(fault) => return self.folder_fault("/", fault),
         };
         loop {
             let member = match children.next() {
                 Ok(Some(member)) => member,
                 Ok(None) => break,
-                Err(e) => return self.problem("/", e),
+                Err(fault) => return self.folder_fault("/", fault),
             };
             let Entry::Folder(folder) = member.entry else {
                 continue;
@@ -264,8 +304,8 @@ impl<'a> Walker<'_, 'a> {
         self.census.directories += 1;
         let mut children = match Children::new(self.fs, directory.id) {
             Ok(children) => children,
-            Err(e) => {
-                self.problem(&self.path(directory.node, ""), e);
+            Err(fault) => {
+                self.folder_fault(&self.path(directory.node, ""), fault);
                 return subdirectories;
             }
         };
@@ -273,8 +313,8 @@ impl<'a> Walker<'_, 'a> {
             let member = match children.next() {
                 Ok(Some(member)) => member,
                 Ok(None) => break,
-                Err(e) => {
-                    self.problem(&self.path(directory.node, ""), e);
+                Err(fault) => {
+                    self.folder_fault(&self.path(directory.node, ""), fault);
                     break;
                 }
             };
@@ -373,9 +413,13 @@ impl<'a> Walker<'_, 'a> {
         let inode_name = format!("{INODE_PREFIX}{}", link.special);
         let inode = match self.inodes() {
             Ok(inodes) => inodes.get(&inode_name).cloned(),
-            Err(e) => return self.problem(&path, e),
+            Err(fault) => return self.file_fault(&path, fault),
         };
         let Some(inode) = inode else {
+            if self.private.inodes_cut {
+                self.census.absent_files += 1;
+                return;
+            }
             self.census.broken_links += 1;
             return self.problem_text(format!(
                 "Skipped {path}: hard link to the missing indirect node {inode_name}"
@@ -400,11 +444,11 @@ impl<'a> Walker<'_, 'a> {
         let folder_name = format!("{DIRECTORY_INODE_PREFIX}{}", link.special);
         let folder = match self.directory_inodes() {
             Ok(folders) => folders.get(&folder_name).copied(),
-            Err(e) => return self.problem(&self.path(directory.node, name), e),
+            Err(fault) => return self.folder_fault(&self.path(directory.node, name), fault),
         };
         if let Some(id) = folder {
             self.subdirectory(directory, name.to_string(), id, subdirectories);
-        } else {
+        } else if !self.private.directory_inodes_cut {
             self.census.broken_links += 1;
             let path = self.path(directory.node, name);
             self.problem_text(format!(
@@ -416,7 +460,7 @@ impl<'a> Walker<'_, 'a> {
     /// The indirect node files of the file metadata folder, by name,
     /// indexed on first use. An error is returned once; later links use
     /// what was indexed before it.
-    fn inodes(&mut self) -> Result<&HashMap<String, File>> {
+    fn inodes(&mut self) -> ReadResult<&HashMap<String, File>> {
         if self.private.inodes.is_none() {
             let mut inodes = HashMap::new();
             let indexed =
@@ -430,6 +474,7 @@ impl<'a> Walker<'_, 'a> {
                     },
                 );
             self.private.inodes = Some(inodes);
+            self.private.inodes_cut = matches!(indexed, Err(Fault::Absent));
             indexed?;
         }
         Ok(self.private.inodes.as_ref().expect("indexed above"))
@@ -437,7 +482,7 @@ impl<'a> Walker<'_, 'a> {
 
     /// The indirect node folders of the directory metadata folder, by name,
     /// indexed on first use as [`Self::inodes`] is.
-    fn directory_inodes(&mut self) -> Result<&HashMap<String, u32>> {
+    fn directory_inodes(&mut self) -> ReadResult<&HashMap<String, u32>> {
         if self.private.directory_inodes.is_none() {
             let mut folders = HashMap::new();
             let folder = self.private.directory_folder;
@@ -446,6 +491,7 @@ impl<'a> Walker<'_, 'a> {
                 _ => None,
             });
             self.private.directory_inodes = Some(folders);
+            self.private.directory_inodes_cut = matches!(indexed, Err(Fault::Absent));
             indexed?;
         }
         Ok(self
@@ -475,7 +521,7 @@ impl<'a> Walker<'_, 'a> {
                 c.children.push(child.if_recognized());
             }
             Ok(None) => {}
-            Err(e) => self.problem(path, e),
+            Err(fault) => self.file_fault(path, fault),
         }
     }
 
@@ -494,7 +540,7 @@ impl<'a> Walker<'_, 'a> {
     }
 
     /// A file whose data fork holds its bytes.
-    fn plain_file(&mut self, file: &File, path: &str) -> Result<Option<Child<'a>>> {
+    fn plain_file(&mut self, file: &File, path: &str) -> ReadResult<Option<Child<'a>>> {
         let fs = self.fs;
         let size = file.data_fork.logical_size;
         if size == 0 {
@@ -533,7 +579,7 @@ impl<'a> Walker<'_, 'a> {
 
     /// A decmpfs file: its header in the `com.apple.decmpfs` attribute, its
     /// data after the header or in the resource fork.
-    fn compressed_file(&mut self, file: &File, path: &str) -> Result<Option<Child<'a>>> {
+    fn compressed_file(&mut self, file: &File, path: &str) -> ReadResult<Option<Child<'a>>> {
         let fs = self.fs;
         let attribute = fs.decmpfs_attribute(file.id)?.ok_or_else(|| {
             error("Missing com.apple.decmpfs attribute of a compressed file (UF_COMPRESSED)")
@@ -547,11 +593,30 @@ impl<'a> Walker<'_, 'a> {
                 .or_default() += 1;
             return Ok(None);
         };
-        *self
-            .census
-            .compressed
-            .entry(method.compression.name())
-            .or_default() += 1;
+        let member = self.decmpfs_member(file, path, &attribute, header, method);
+        // A resource fork past the end of a truncated volume's input was
+        // not decoded; the file is counted with the absent files.
+        if !matches!(member, Err(Fault::Absent)) {
+            *self
+                .census
+                .compressed
+                .entry(method.compression.name())
+                .or_default() += 1;
+        }
+        member
+    }
+
+    /// The member for a decmpfs file whose attribute and header were read:
+    /// decoded from the attribute or from the resource fork.
+    fn decmpfs_member(
+        &mut self,
+        file: &File,
+        path: &str,
+        attribute: &decmpfs::Attribute,
+        header: Header,
+        method: decmpfs::Method,
+    ) -> ReadResult<Option<Child<'a>>> {
+        let fs = self.fs;
         let size = usize::try_from(header.size).unwrap_or(usize::MAX);
         if size == 0 {
             return Ok(None);
@@ -635,7 +700,7 @@ fn index_folder<T>(
     folder: Option<u32>,
     entries: &mut HashMap<String, T>,
     select: impl Fn(Entry) -> Option<T>,
-) -> Result<()> {
+) -> ReadResult<()> {
     let Some(folder) = folder else {
         return Ok(());
     };
@@ -652,7 +717,7 @@ fn index_folder<T>(
 }
 
 /// The first `len` bytes of a file's data fork.
-fn read_data_fork<'a>(fs: &Filesystem<'a>, file: &File, len: usize) -> Result<ForkBytes<'a>> {
+fn read_data_fork<'a>(fs: &Filesystem<'a>, file: &File, len: usize) -> ReadResult<ForkBytes<'a>> {
     let fork = fork::resolve(
         &fs.vol,
         fs.extents.as_ref(),
@@ -685,13 +750,18 @@ pub(super) fn startup_file<'a>(fs: &Filesystem<'a>, c: &mut Container<'a>) {
              not listed",
             data.logical_size
         )),
-        Err(e) => c
+        Err(Fault::Invalid(e)) => c
             .notes
             .push(format!("Startup file not read: {}", message(e))),
+        Err(Fault::Absent) => c.notes.push(format!(
+            "Startup file of {} B not read: it lies partly or wholly past the {} present",
+            data.logical_size,
+            fs.vol.present_text()
+        )),
     }
 }
 
-fn startup_member<'a>(fs: &Filesystem<'a>, data: &ForkData) -> Result<Option<Child<'a>>> {
+fn startup_member<'a>(fs: &Filesystem<'a>, data: &ForkData) -> ReadResult<Option<Child<'a>>> {
     let Some(size) = usize::try_from(data.logical_size)
         .ok()
         .filter(|&size| size <= MAX_PAYLOAD)
@@ -727,13 +797,14 @@ fn startup_member<'a>(fs: &Filesystem<'a>, data: &ForkData) -> Result<Option<Chi
 
 impl Census {
     /// Notes and metadata: what was walked, then what was left out and why.
-    fn report(self, c: &mut Container<'_>) {
+    fn report(self, fs: &Filesystem<'_>, c: &mut Container<'_>) {
         c.notes.push(format!(
             "Catalog walk: {}, {}; members in a recognized format: {}",
             counted(self.directories, "folder", "folders"),
             counted(self.files, "regular file", "regular files"),
             self.members
         ));
+        absent_notes(fs, self.absent_files, c);
         if self.hard_links > 0 {
             c.notes.push(format!(
                 "{} resolved to indirect node files; each file is examined once, under its first \
@@ -854,8 +925,9 @@ impl Census {
         }
         if self.unwalked > 0 {
             c.notes.push(format!(
-                "The walk stopped at the metadata read limit ({METADATA_READ_FACTOR} times the \
-                 volume size); {} not walked",
+                "The walk stopped at the metadata read limit ({METADATA_READ_FACTOR} times {}); {} \
+                 not walked",
+                fs.vol.budget_basis(),
                 counted(self.unwalked, "folder was", "folders were")
             ));
         }
@@ -881,6 +953,44 @@ impl Census {
             self.files as u64,
         );
         c.push_metadata("hfsplus_member_count", "Members", self.members as u64);
+    }
+}
+
+/// Notes on what the walk skipped because it lies past the end of a
+/// truncated volume's input: B-tree nodes, by tree, and regular files.
+fn absent_notes(fs: &Filesystem<'_>, absent_files: usize, c: &mut Container<'_>) {
+    let present = fs.vol.present_text();
+    let trees = [
+        Some(&fs.catalog),
+        fs.extents.as_ref(),
+        fs.attributes.as_ref(),
+    ];
+    for tree in trees.into_iter().flatten() {
+        let count = tree.absent_node_count();
+        if count == 0 {
+            continue;
+        }
+        let (verb, pronoun) = if count == 1 {
+            ("lies", "its")
+        } else {
+            ("lie", "their")
+        };
+        let nodes = counted(
+            count,
+            &format!("node of the {}", tree.name()),
+            &format!("nodes of the {}", tree.name()),
+        );
+        c.notes.push(format!(
+            "{nodes} B-tree that the walk needed {verb} past the {present} present; {pronoun} \
+             records were not read"
+        ));
+    }
+    if absent_files > 0 {
+        c.notes.push(format!(
+            "{} not listed: file data, or B-tree records that locate it, lie partly or wholly \
+             past the {present} present",
+            counted(absent_files, "regular file was", "regular files were")
+        ));
     }
 }
 

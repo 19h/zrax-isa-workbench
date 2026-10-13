@@ -6,7 +6,11 @@
 //! descriptor, directory and catalog damage; and truncation and mutation
 //! sweeps.
 
+#[path = "support/truncated_volume.rs"]
+mod truncated_volume;
+
 use std::borrow::Cow;
+use truncated_volume::{assert_members_inside, prefix_ends};
 use zrax::formats::compressed::{self, Codec};
 use zrax::formats::container::{self, Child, Classify, Container, Kind, Target};
 use zrax::formats::iso9660::{self, Layout};
@@ -709,20 +713,7 @@ fn record_offset(image: &[u8], sector: u32, identifier: &[u8]) -> usize {
 /// reports a prefix as ISO 9660; every byte mutation of `positions`
 /// classifies or fails without panicking.
 fn sweep(image: &[u8], positions: &[usize]) {
-    for cut in 0..image.len() {
-        let prefix = &image[..cut];
-        if iso9660::detect(prefix).is_some() {
-            assert!(
-                iso9660::parse_container(prefix, Layout::Iso9660).is_err(),
-                "prefix {cut} parses"
-            );
-        }
-    }
-    for cut in (0..image.len()).step_by(997) {
-        if let Ok(p) = detect_payload(&image[..cut], &ClassifierOptions::new()) {
-            assert_ne!(p.format.format, FileFormat::Iso9660, "prefix {cut}");
-        }
-    }
+    prefix_sweep("synthetic", image);
     for (n, &position) in positions.iter().enumerate() {
         for value in [0x00, 0xff, image[position] ^ 0x01] {
             let mut mutated = image.to_vec();
@@ -734,6 +725,178 @@ fn sweep(image: &[u8], positions: &[usize]) {
                 let _ = detect_payload(&mutated, &ClassifierOptions::new());
             }
         }
+    }
+}
+
+/// Every detected prefix of `image` is a truncated volume whose members lie
+/// inside it, or lacks the descriptor set or the start of the root
+/// directory that names the files and is the error it always was; once a
+/// prefix is read, every longer prefix is read.
+fn prefix_sweep(name: &str, image: &[u8]) {
+    let whole = parse(image);
+    let mut first_read = None;
+    for cut in prefix_ends(image.len(), 0x8000 + 4 * SECTOR, 61, SECTOR) {
+        let prefix = &image[..cut];
+        if iso9660::detect(prefix).is_none() {
+            assert_eq!(first_read, None, "{name}: prefix {cut} is not detected");
+            continue;
+        }
+        match iso9660::parse_container(prefix, Layout::Iso9660) {
+            Ok(c) => {
+                first_read.get_or_insert(cut);
+                assert!(has_note(&c, "Volume truncated: "), "{name}: prefix {cut}");
+                assert_members_inside(name, &whole, &c, cut);
+            }
+            Err(e) => {
+                let message = e.to_string();
+                assert_eq!(first_read, None, "{name}: prefix {cut}: {message}");
+                assert!(
+                    message.contains("Truncated ISO 9660 volume: ")
+                        || message.contains("Truncated volume descriptor set: "),
+                    "{name}: prefix {cut}: {message}"
+                );
+            }
+        }
+    }
+    assert!(first_read.is_some(), "{name}: no prefix is read");
+    for cut in (0..image.len()).step_by(997) {
+        if let Ok(p) = detect_payload(&image[..cut], &ClassifierOptions::new()) {
+            for slice in &p.slices {
+                assert!(
+                    slice.offset + slice.size <= cut as u64,
+                    "{name}: prefix {cut}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn truncated_volumes_count_and_note_what_lies_past_the_input() {
+    let image = build(all_options());
+    let whole = parse(&image);
+    let notes_of = |end: usize| {
+        let c = parse(&image[..end]);
+        assert_members_inside("synthetic", &whole, &c, end);
+        notes(&c)
+    };
+    // The PlayStation executable (sectors 37-38) and DEEP.ELF (39).
+    let text = notes_of(at(PSX));
+    assert!(
+        text.contains(
+            "2 regular files were not listed: file data lies partly or wholly past the 74 KiB \
+             present"
+        ),
+        "{text}"
+    );
+    // The boot images (32, 33) and then the boot catalog (31).
+    let text = notes_of(at(BOOT_X86));
+    assert!(
+        text.contains("lies partly or wholly past the 64 KiB present"),
+        "{text}"
+    );
+    let text = notes_of(at(CATALOG));
+    assert!(
+        text.contains(
+            "the boot catalog sector 0x1F lies past the 62 KiB present; boot images are not \
+             listed"
+        ),
+        "{text}"
+    );
+    // The directory that Rock Ridge relocated to sector 30.
+    let text = notes_of(at(DEEP));
+    assert!(
+        text.contains(
+            "1 directories lie partly or wholly past the 60 KiB present; their records past it \
+             were not read"
+        ),
+        "{text}"
+    );
+    // The root's ER entry continues in sector 28: without it, whether the
+    // names come from Rock Ridge is unknown.
+    let end = at(CONTINUATION);
+    assert_eq!(
+        parse_error(&image[..end]),
+        format!(
+            "ISO 9660 parse error: Truncated ISO 9660 volume: 40 blocks of 2048 B need 81920 B, \
+             {end} B present"
+        )
+    );
+    // Joliet names need the Joliet root (sector 26).
+    let joliet = build(Options {
+        joliet: true,
+        ..Options::default()
+    });
+    assert!(parse_error(&joliet[..at(JOLIET_ROOT)]).contains("Truncated ISO 9660 volume"));
+    assert!(has_note(
+        &parse(&joliet[..at(JOLIET_ROOT + 1)]),
+        "names from the Joliet hierarchy"
+    ));
+
+    // A type L path table moved to sector 39 is not checked.
+    let mut moved = image.clone();
+    put(&mut moved, at(16) + 140, &39u32.to_le_bytes());
+    let c = parse(&moved[..at(39)]);
+    assert!(
+        has_note(&c, "Type L path table: the table at block 39 ("),
+        "{}",
+        notes(&c)
+    );
+    assert!(has_note(
+        &c,
+        "lies past the 78 KiB present; it is not checked"
+    ));
+}
+
+#[test]
+fn rock_ridge_entries_continued_past_the_input_skip_their_record() {
+    let options = Options {
+        rock_ridge: true,
+        ..Options::default()
+    };
+    // One more sector (40) for the volume, which holds the continuation
+    // of LONG.ELF's entries: its NM entry.
+    let mut image = build(options);
+    image.extend_from_slice(&[0; SECTOR]);
+    put(&mut image, at(16) + 80, &both32(VOLUME_SECTORS + 1));
+    let name = nm(b"long-name.elf");
+    put(&mut image, at(VOLUME_SECTORS), &name);
+    let continued = [
+        px(MODE_REGULAR),
+        ce(VOLUME_SECTORS, 0, u32::try_from(name.len()).unwrap()),
+    ]
+    .concat();
+    rewrite_directory(
+        &mut image,
+        BIN,
+        ROOT,
+        &[
+            record(b"PAYLOAD.ELF;1", PAYLOAD, 256, 0, &nm(b"payload.elf")),
+            record(b"LONG.ELF;1", PAYLOAD, 256, 0, &continued),
+        ],
+    );
+    let whole = parse(&image);
+    assert!(labels(&whole).contains(&"/bin/long-name.elf".to_string()));
+    let end = at(VOLUME_SECTORS);
+    let c = parse(&image[..end]);
+    assert_members_inside("continued", &whole, &c, end);
+    assert!(labels(&c).contains(&"/bin/payload.elf".to_string()));
+    assert!(!labels(&c).contains(&"/bin/long-name.elf".to_string()));
+    assert!(
+        has_note(
+            &c,
+            "1 directory records carry Rock Ridge entries continued past the 80 KiB present; \
+             they were not read"
+        ),
+        "{}",
+        notes(&c)
+    );
+}
+
+#[test]
+fn fixture_prefixes_are_truncated_volumes_that_list_only_members_inside_them() {
+    for name in ["rockridge", "joliet", "hdiutil"] {
+        prefix_sweep(name, &iso_fixture(name));
     }
 }
 
@@ -1723,8 +1886,23 @@ fn primary_descriptor_damage_prevents_detection_or_is_a_parse_error() {
 #[test]
 fn volume_and_root_damage_is_a_parse_error() {
     let image = build(Options::default());
-    assert!(parse_error(&image[..image.len() - 1])
-        .contains("Truncated ISO 9660 volume: 40 blocks of 2048 B need 81920 B, 81919 B present"));
+    // One byte short, the volume is truncated with every member present;
+    // without its root directory it is not listed.
+    let cut = parse(&image[..image.len() - 1]);
+    assert_eq!(labels(&cut), labels(&parse(&image)));
+    assert!(has_note(
+        &cut,
+        "Volume truncated: 81919 B of 80 KiB present; files are listed only when all of their \
+         data is present"
+    ));
+    assert_eq!(
+        parse_error(&image[..at(ROOT)]),
+        format!(
+            "ISO 9660 parse error: Truncated ISO 9660 volume: 40 blocks of 2048 B need 81920 B, \
+             {} B present",
+            at(ROOT)
+        )
+    );
     let mut no_terminator = image.clone();
     no_terminator[17 * SECTOR + 1] = b'X';
     assert_eq!(

@@ -465,7 +465,10 @@ fn extended_boot_code<'a>(data: &'a [u8], boot: &BootSector, c: &mut Container<'
 pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let boot = BootSector::parse(data)?;
     check_main_region(data, &boot)?;
-    let coverage = check_volume_size(boot.volume_size(), data.len())?;
+    let coverage = Coverage::of(boot.volume_size(), data.len());
+    // The FAT lies before the cluster heap, inside the volume, so a FAT
+    // past the end of the input is part of a truncated volume.
+    let truncation = || truncated_volume(boot.volume_size(), data.len());
     let fat_start = boot.sector_offset(
         u64::from(boot.fat_offset) + u64::from(boot.active_fat()) * u64::from(boot.fat_length),
     );
@@ -474,11 +477,12 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         .ok()
         .zip(usize::try_from(fat_size).ok())
         .and_then(|(start, size)| slice(data, start, size).ok())
-        .ok_or_else(|| {
-            error(format!(
+        .ok_or_else(|| match coverage {
+            Coverage::Truncated(_) => truncation(),
+            Coverage::Exact | Coverage::Trailing(_) => error(format!(
                 "Truncated FAT at 0x{fat_start:X} + {fat_size} B: {} B present",
                 data.len()
-            ))
+            )),
         })?;
     let table = Table::new(fat, EntryKind::ExFat, boot.cluster_count);
     let heap = Heap {
@@ -503,6 +507,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
             },
         )
         .map_err(|defect| error(format!("Invalid root directory: {defect}")))?;
+    let root_absent_clusters = root.absent_clusters;
     let mut walk = ExFatWalk {
         walker: &mut walker,
         root: RootEntries::default(),
@@ -528,9 +533,15 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         }
     }
     let root = std::mem::take(&mut walk.root);
-    root.check(&boot)?;
+    // The allocation bitmap and up-case table entries may be in root
+    // directory clusters past the end of a truncated volume's input.
+    let checked = root.check(&boot);
+    if checked.is_err() && root_absent_clusters > 0 {
+        return Err(truncation());
+    }
+    checked?;
     root.report(&mut c);
-    walker.census.report(&mut c);
+    walker.census.report(data.len() as u64, &mut c);
     // The volume's files come first; see the FAT parser.
     c.children.extend(boot_code.child);
     extended_boot_code(data, &boot, &mut c);
@@ -892,7 +903,11 @@ impl<'a> ExFatWalk<'_, '_, 'a> {
                 "Up-case table checksum 0x{stored:08X} does not match (computed 0x{:08X})",
                 table_checksum(&bytes)
             ),
-            Err(defect) => format!("Up-case table checksum not verified: {defect}"),
+            Err(Fault::Defect(defect)) => format!("Up-case table checksum not verified: {defect}"),
+            Err(Fault::Absent) => format!(
+                "Up-case table checksum not verified: the table lies past the {} present",
+                size_text(self.walker.input_size())
+            ),
         }
     }
 

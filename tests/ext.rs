@@ -5,6 +5,10 @@
 //! extents, encrypted and inline files, limits), corrupted fields and
 //! checksums, and truncation and mutation sweeps.
 
+#[path = "support/truncated_volume.rs"]
+mod truncated_volume;
+
+use truncated_volume::{assert_members_inside, prefix_ends};
 use zrax::formats::checksum::crc16_modbus_update;
 use zrax::formats::container::{Child, Container};
 use zrax::formats::ext::{self, Layout};
@@ -358,20 +362,112 @@ fn damaged_block_maps_and_records_are_skipped_with_notes() {
     );
 }
 
+/// The members of `ext2.img` whose data blocks all lie before 32 KiB, and
+/// those of `ext4.img` before 0x23000.
+const EXT2_MEMBERS_BEFORE_32_KIB: [&str; 1] = ["/bin/sparse.elf"];
+const EXT4_MEMBERS_BEFORE_0X23000: [&str; 2] = ["/bin/sparse.elf", "/boot/payload.elf.gz"];
+
 #[test]
-fn every_prefix_of_a_fixture_is_an_error() {
-    for name in ["ext/ext2.img", "ext/ext4.img"] {
+fn truncated_images_list_only_the_files_whose_data_is_present() {
+    let image = fixture("ext/ext2.img");
+    let whole = parse(&image);
+    let end = 32 << 10;
+    let c = parse(&image[..end]);
+    assert_eq!(labels(&c), EXT2_MEMBERS_BEFORE_32_KIB);
+    assert_members_inside("ext2.img", &whole, &c, end);
+    assert_eq!(c.consumed, end);
+    for note in [
+        "Volume truncated: 32 KiB of 256 KiB present; files are listed only when all of their \
+         data is present",
+        "8 directory blocks lie past the 32 KiB present; their entries were not read",
+        "2 regular files were not listed: file data, or blocks that map it, lie partly or wholly \
+         past the 32 KiB present",
+    ] {
+        assert!(has_note(&c, note), "{note}: {:?}", c.notes);
+    }
+    // At 24 KiB, the indirect block that maps a directory's later blocks
+    // is past the end as well.
+    let c = parse(&image[..24 << 10]);
+    assert!(
+        has_note(
+            &c,
+            "1 metadata block that the walk needed (group descriptors, inode tables, extent or \
+             indirect blocks) lies past the 24 KiB present; it was not read"
+        ),
+        "{:?}",
+        c.notes
+    );
+    // An image without the root inode's record lists nothing.
+    let root_end = inode_offset(&image, 1024, 128, 2) + 128;
+    assert_eq!(
+        parse_error(&image[..root_end - 1]),
+        format!(
+            "ext filesystem parse error: Truncated filesystem: 256 blocks of 1 KiB need 262144 \
+             B, {} B present",
+            root_end - 1
+        )
+    );
+    assert!(ext::parse_container(&image[..root_end], Layout::Ext2).is_ok());
+
+    // ext4 with extent trees and metadata_csum.
+    let image = fixture("ext/ext4.img");
+    let end = 0x23000;
+    let c = parse(&image[..end]);
+    assert_eq!(labels(&c), EXT4_MEMBERS_BEFORE_0X23000);
+    assert_members_inside("ext4.img", &parse(&image), &c, end);
+    let p = classify(&image[..end]);
+    assert_eq!(p.format.format, FileFormat::Ext);
+    for slice in &p.slices {
+        assert!(slice.offset + slice.size <= end as u64, "{:?}", slice.label);
+    }
+}
+
+#[test]
+fn prefixes_are_truncated_filesystems_that_list_only_members_inside_them() {
+    for (name, block_size, inode_size, blocks, layout) in [
+        ("ext/ext2.img", 1024, 128, 256, Layout::Ext2),
+        ("ext/ext4.img", 4096, 256, 64, Layout::Ext4),
+    ] {
         let image = fixture(name);
-        let layout = ext::detect(&image).expect("detected");
-        for end in 0..image.len() {
-            assert!(
-                ext::parse_container(&image[..end], layout).is_err(),
-                "{name}: prefix {end}"
-            );
+        let whole = parse(&image);
+        // The first prefix read ends with the root inode's record.
+        let root_end = inode_offset(&image, block_size, inode_size, 2) + inode_size;
+        for end in prefix_ends(image.len(), root_end + block_size, 61, block_size) {
+            let prefix = &image[..end];
+            match ext::parse_container(prefix, layout) {
+                Ok(c) => {
+                    assert!(end >= root_end, "{name}: prefix {end} lacks the root inode");
+                    assert_members_inside(name, &whole, &c, end);
+                    assert!(has_note(&c, "Volume truncated: "), "{name}: prefix {end}");
+                }
+                Err(e) if end < 2048 => assert_eq!(
+                    e.to_string(),
+                    "ext filesystem parse error: Truncated filesystem at 0x400 + 1024 B",
+                    "{name}"
+                ),
+                Err(e) => {
+                    assert!(end < root_end, "{name}: prefix {end}: {e}");
+                    assert_eq!(
+                        e.to_string(),
+                        format!(
+                            "ext filesystem parse error: Truncated filesystem: {blocks} blocks \
+                             of {} need {} B, {end} B present",
+                            if block_size == 1024 { "1 KiB" } else { "4 KiB" },
+                            image.len()
+                        ),
+                        "{name}"
+                    );
+                }
+            }
         }
         for end in (0..image.len()).step_by(4093) {
             if let Ok(p) = detect_payload(&image[..end], &ClassifierOptions::new()) {
-                assert!(p.slices.is_empty(), "{name}: prefix {end} claims members");
+                for slice in &p.slices {
+                    assert!(
+                        slice.offset + slice.size <= end as u64,
+                        "{name}: prefix {end}"
+                    );
+                }
             }
         }
     }
@@ -881,8 +977,15 @@ fn unsupported_features_truncation_and_trailing_data_are_parse_errors() {
     );
 
     let image = synthetic_ext2();
-    assert!(parse_error(&image[..image.len() - 1])
-        .contains("Truncated filesystem: 256 blocks of 1 KiB need 262144 B, 262143 B present"));
+    // One byte short, the image is a truncated filesystem with every
+    // member present.
+    let cut = parse(&image[..image.len() - 1]);
+    assert_eq!(labels(&cut), labels(&parse(&image)));
+    assert!(
+        has_note(&cut, "Volume truncated: 262143 B of 256 KiB present"),
+        "{:?}",
+        cut.notes
+    );
     for padding in [0x00, 0xff] {
         let mut padded = image.clone();
         padded.extend_from_slice(&[padding; 4096]);

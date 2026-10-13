@@ -619,17 +619,24 @@ struct PathRecord<'a> {
 /// The records of the path table at logical block `location`, read with
 /// the byte order `le` selects (true means type L, little-endian).
 fn path_table<'a>(
-    image: &'a [u8],
+    image: Image<'a>,
     volume: &Volume,
     location: u32,
     le: bool,
 ) -> std::result::Result<Vec<PathRecord<'a>>, String> {
     let size = volume.path_table_size as usize;
-    let table = block_offset(location, volume.block_size)
-        .and_then(|start| image.get(start..start.checked_add(size)?))
+    let start = block_offset(location, volume.block_size)
+        .filter(|&start| image.holds(start, size))
         .ok_or_else(|| {
             format!("the table at block {location} ({size} B) lies outside the volume")
         })?;
+    let table = image.present(start, size).ok_or_else(|| {
+        format!(
+            "the table at block {location} ({size} B) lies past the {} present; it is not \
+             checked",
+            image.present_text()
+        )
+    })?;
     let mut records = Vec::new();
     let mut pos = 0;
     while pos < table.len() {
@@ -678,7 +685,7 @@ fn path_table<'a>(
 /// the root directory, and note the result. ECMA-119 requires both tables
 /// (6.9.2); Linux and libarchive do not read them, so damage is noted, not
 /// an error.
-pub(super) fn check_path_tables(image: &[u8], volume: &Volume, c: &mut Container<'_>) {
+pub(super) fn check_path_tables(image: Image<'_>, volume: &Volume, c: &mut Container<'_>) {
     let little = path_table(image, volume, volume.path_table_l, true);
     let big =
         (volume.path_table_m != 0).then(|| path_table(image, volume, volume.path_table_m, false));

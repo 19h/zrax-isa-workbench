@@ -64,6 +64,9 @@ pub(super) struct DirectoryData<'a> {
     pub(super) extents: Vec<Extent<'a>>,
     /// The chain continues past the size limit; the rest was not read.
     pub(super) cut: bool,
+    /// Clusters of the directory past the end of a truncated volume's
+    /// input, which `extents` leaves out.
+    pub(super) absent_clusters: u32,
 }
 
 /// Where a regular file's data is.
@@ -122,6 +125,11 @@ pub(super) struct Census {
     pub(super) over_budget: usize,
     /// Files whose chain continues past the clusters their size needs.
     pub(super) long_chains: usize,
+    /// Directory clusters past the end of a truncated volume's input.
+    pub(super) absent_clusters: usize,
+    /// Regular files not listed because their data lies past the end of a
+    /// truncated volume's input.
+    pub(super) absent_files: usize,
     problems: Vec<String>,
     unlisted_problems: usize,
 }
@@ -157,6 +165,12 @@ impl<'v, 'a> Walker<'v, 'a> {
             extracted: 0,
             directory_clusters: vec![0; clusters / 64 + 1],
         }
+    }
+
+    /// Size of the input that holds the volume, or the start of a
+    /// truncated one.
+    pub(super) fn input_size(&self) -> u64 {
+        self.heap.data.len() as u64
     }
 
     /// Record a directory named `name` in the directory at `parent`;
@@ -231,19 +245,34 @@ impl<'v, 'a> Walker<'v, 'a> {
                 (chain, size)
             }
         };
+        // A truncated volume's input may end inside the directory: its
+        // clusters past the end are left out and counted.
         let mut extents = Vec::with_capacity(chain.runs.len());
         let mut remaining = size;
+        let mut absent_clusters = 0;
         for run in &chain.runs {
-            let (offset, bytes) = self.heap.read(*run, remaining)?;
-            remaining -= bytes.len() as u64;
-            extents.push(Extent { offset, bytes });
+            let present = self.heap.present_part(*run);
+            absent_clusters += run.clusters - present.clusters;
+            if present.clusters > 0 {
+                let (offset, bytes) = self
+                    .heap
+                    .read(present, remaining)
+                    .expect("the present part of a run is in the input");
+                extents.push(Extent { offset, bytes });
+            }
+            remaining -= remaining.min(u64::from(run.clusters) * cluster_size);
         }
+        self.census.absent_clusters += absent_clusters as usize;
         let cut = matches!(span, Span::Chain { .. }) && !chain.terminated;
-        Ok(DirectoryData { extents, cut })
+        Ok(DirectoryData {
+            extents,
+            cut,
+            absent_clusters,
+        })
     }
 
     /// The first `len` bytes of `file` (at most its size).
-    fn read(&self, file: &FileRef, len: u64) -> Walk<FileData<'a>> {
+    fn read(&self, file: &FileRef, len: u64) -> ReadResult<FileData<'a>> {
         let needed = clusters_for(len, self.heap.cluster_size, self.table)?;
         let chain = if file.contiguous {
             Chain::contiguous(self.table, file.first_cluster, needed)?
@@ -251,12 +280,13 @@ impl<'v, 'a> Walker<'v, 'a> {
             Chain::follow(self.table, file.first_cluster, needed)?
         };
         if chain.clusters < needed {
-            return Err(format!(
+            let defect = format!(
                 "the cluster chain ends after {} clusters; {} B need {}",
                 chain.clusters,
                 file.size,
                 clusters_for(file.size, self.heap.cluster_size, self.table)?
-            ));
+            );
+            return Err(Fault::Defect(defect));
         }
         let written = len.min(file.valid_size);
         let mut stored = Vec::with_capacity(chain.runs.len());
@@ -306,8 +336,17 @@ impl<'v, 'a> Walker<'v, 'a> {
     }
 
     /// The bytes of `file` (an exFAT up-case table).
-    pub(super) fn contents(&self, file: &FileRef) -> Walk<Cow<'a, [u8]>> {
+    pub(super) fn contents(&self, file: &FileRef) -> ReadResult<Cow<'a, [u8]>> {
         self.read(file, file.size).map(|contents| contents.bytes)
+    }
+
+    /// A regular file that could not be read: a problem, or data past the
+    /// end of a truncated volume's input, which is counted.
+    fn file_fault(&mut self, path: &str, fault: Fault) {
+        match fault {
+            Fault::Defect(defect) => self.problem(format!("Skipped {path}: {defect}")),
+            Fault::Absent => self.census.absent_files += 1,
+        }
     }
 
     /// List a regular file when its first bytes are a recognized format and
@@ -325,8 +364,8 @@ impl<'v, 'a> Walker<'v, 'a> {
         }
         let prefix = match self.read(file, file.size.min(RECOGNITION_PREFIX)) {
             Ok(prefix) => prefix,
-            Err(defect) => {
-                self.problem(format!("Skipped {path}: {defect}"));
+            Err(fault) => {
+                self.file_fault(&path, fault);
                 return;
             }
         };
@@ -352,8 +391,8 @@ impl<'v, 'a> Walker<'v, 'a> {
         } else {
             match self.read(file, file.size) {
                 Ok(contents) => contents,
-                Err(defect) => {
-                    self.problem(format!("Skipped {path}: {defect}"));
+                Err(fault) => {
+                    self.file_fault(&path, fault);
                     return;
                 }
             }
@@ -405,13 +444,38 @@ fn clusters_for(size: u64, cluster_size: u64, table: &Table<'_>) -> Walk<u32> {
 
 impl Census {
     /// Notes and metadata: what was walked, then what was left out and why.
-    pub(super) fn report(self, c: &mut Container<'_>) {
+    /// `present` is the size of the input, which a truncated volume's
+    /// absent clusters lie past.
+    pub(super) fn report(self, present: u64, c: &mut Container<'_>) {
         c.notes.push(format!(
             "Directory walk: {}, {}; members in a recognized format: {}",
             counted(self.directories, "directory", "directories"),
             counted(self.files, "regular file", "regular files"),
             self.members
         ));
+        if self.absent_clusters > 0 {
+            let (verb, pronoun) = if self.absent_clusters == 1 {
+                ("lies", "its")
+            } else {
+                ("lie", "their")
+            };
+            c.notes.push(format!(
+                "{} {verb} past the {} present; {pronoun} entries were not read",
+                counted(
+                    self.absent_clusters,
+                    "directory cluster",
+                    "directory clusters"
+                ),
+                size_text(present)
+            ));
+        }
+        if self.absent_files > 0 {
+            c.notes.push(format!(
+                "{} not listed: file data lies partly or wholly past the {} present",
+                counted(self.absent_files, "regular file was", "regular files were"),
+                size_text(present)
+            ));
+        }
         if self.deleted > 0 {
             c.notes.push(format!(
                 "{} ignored",

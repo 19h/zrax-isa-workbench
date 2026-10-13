@@ -184,9 +184,9 @@ fn boot_entry(
 impl Catalog {
     /// Read the catalog that `record` points to. The error is a note: an
     /// invalid catalog leaves the filesystem readable.
-    pub(super) fn read(image: &[u8], record: &BootRecord) -> std::result::Result<Self, String> {
+    pub(super) fn read(image: Image<'_>, record: &BootRecord) -> std::result::Result<Self, String> {
         let sector = record.catalog_sector;
-        let Some(offset) = block_offset(sector, SECTOR_SIZE).filter(|offset| *offset < image.len())
+        let Some(offset) = block_offset(sector, SECTOR_SIZE).filter(|offset| *offset < image.size)
         else {
             return Err(format!(
                 "El Torito boot record at 0x{:X}: the boot catalog sector 0x{sector:X} lies \
@@ -194,8 +194,22 @@ impl Catalog {
                 record.offset
             ));
         };
-        let end = image.len().min(offset.saturating_add(MAX_CATALOG_SIZE));
-        let catalog = &image[offset..end];
+        // The catalog's first sector must be present; a truncated volume's
+        // input may end in the sectors after it.
+        let first_sector = SECTOR_SIZE.min(image.size - offset);
+        if image.present(offset, first_sector).is_none() {
+            return Err(format!(
+                "El Torito boot record at 0x{:X}: the boot catalog sector 0x{sector:X} lies past \
+                 the {} present",
+                record.offset,
+                image.present_text()
+            ));
+        }
+        let end = image
+            .bytes
+            .len()
+            .min(offset.saturating_add(MAX_CATALOG_SIZE));
+        let catalog = &image.bytes[offset..end];
         let location = format!("El Torito boot catalog at sector 0x{sector:X} (file 0x{offset:X})");
         if catalog.len() < 2 * ENTRY_SIZE {
             return Err(format!("{location}: truncated"));
@@ -311,7 +325,7 @@ fn skip_extensions(catalog: &[u8], mut pos: usize) -> usize {
 /// image with a sector count of 0 or 1 extends to the end of the volume
 /// (EDK2 `PartitionInstallElToritoChildHandles`).
 fn image_size(
-    image: &[u8],
+    image: Image<'_>,
     entry: &Entry,
     offset: usize,
     file: Option<&BootFile>,
@@ -327,7 +341,7 @@ fn image_size(
         (_, Some(file)) => Ok((file.size, format!("file {}", file.path))),
         (MEDIA_HARD_DISK, None) => hard_disk_size(image, offset),
         (_, None) if entry.platform == PLATFORM_EFI && entry.sector_count < 2 => Ok((
-            image.len() - offset,
+            image.size - offset,
             "the rest of the volume (sector count below 2)".to_string(),
         )),
         (_, None) if entry.sector_count == 0 => Err("the sector count is 0".to_string()),
@@ -339,8 +353,17 @@ fn image_size(
 }
 
 /// An emulated hard disk ends where its first partition ends (4.1).
-fn hard_disk_size(image: &[u8], offset: usize) -> std::result::Result<(usize, String), String> {
+fn hard_disk_size(image: Image<'_>, offset: usize) -> std::result::Result<(usize, String), String> {
+    if image.holds(offset, VIRTUAL_SECTOR_SIZE)
+        && image.present(offset, VIRTUAL_SECTOR_SIZE).is_none()
+    {
+        return Err(format!(
+            "the hard disk image's MBR lies past the {} present",
+            image.present_text()
+        ));
+    }
     let mbr = image
+        .bytes
         .get(offset..offset + VIRTUAL_SECTOR_SIZE)
         .filter(|mbr| mbr[MBR_SIGNATURE_OFFSET..MBR_SIGNATURE_OFFSET + 2] == MBR_SIGNATURE)
         .ok_or_else(|| "the hard disk image has no MBR".to_string())?;
@@ -356,24 +379,28 @@ fn hard_disk_size(image: &[u8], offset: usize) -> std::result::Result<(usize, St
 
 /// The child for one bootable entry, or why there is none.
 fn boot_child<'a>(
-    image: &'a [u8],
+    image: Image<'a>,
     entry: &Entry,
     files: &HashMap<usize, BootFile>,
     notes: &mut Vec<String>,
 ) -> std::result::Result<Child<'a>, String> {
     let offset = entry
         .image_offset()
-        .filter(|offset| *offset < image.len())
+        .filter(|offset| *offset < image.size)
         .ok_or_else(|| format!("load RBA 0x{:X} lies outside the volume", entry.load_rba))?;
     let (size, source) = image_size(image, entry, offset, files.get(&offset))?;
-    let bytes = offset
-        .checked_add(size)
-        .and_then(|end| image.get(offset..end))
-        .ok_or_else(|| {
-            format!(
-                "the {size} B image at 0x{offset:X} (size from {source}) extends past the volume"
-            )
-        })?;
+    if !image.holds(offset, size) {
+        return Err(format!(
+            "the {size} B image at 0x{offset:X} (size from {source}) extends past the volume"
+        ));
+    }
+    let bytes = image.present(offset, size).ok_or_else(|| {
+        format!(
+            "the {size} B image at 0x{offset:X} (size from {source}) lies partly or wholly past \
+             the {} present",
+            image.present_text()
+        )
+    })?;
     if size > MAX_PAYLOAD {
         return Err(format!(
             "the {} image (size from {source}) exceeds the {} member limit",
@@ -424,7 +451,7 @@ fn boot_child<'a>(
 /// Notes, metadata and children for the boot catalog, or the note for an
 /// invalid one.
 pub(super) fn describe<'a>(
-    image: &'a [u8],
+    image: Image<'a>,
     catalog: std::result::Result<Catalog, String>,
     files: &HashMap<usize, BootFile>,
     c: &mut Container<'a>,
@@ -522,7 +549,11 @@ mod tests {
             sector_count: 1,
             load_rba: 20,
         };
-        let (size, _) = image_size(&[], &entry, 0, None).unwrap();
+        let empty = Image {
+            bytes: &[],
+            size: 0,
+        };
+        let (size, _) = image_size(empty, &entry, 0, None).unwrap();
         assert_eq!(size, 1_474_560);
     }
 }

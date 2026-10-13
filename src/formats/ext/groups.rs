@@ -13,31 +13,41 @@ const BG_CHECKSUM: usize = 0x1e;
 /// least [`EXT4_MIN_DESC_SIZE_64BIT`] bytes.
 const BG_HIGH_FIELDS: usize = 0x20;
 
-/// Read every group descriptor, verify its checksum and check that its
-/// bitmaps and inode table lie in the filesystem.
+/// Read the group descriptors, verify their checksums and check that their
+/// bitmaps and inode tables lie in the filesystem. `data` holds the
+/// filesystem, or its first bytes when the input ends inside it. Descriptor
+/// blocks lie in the order of the groups they describe, so the descriptors
+/// stop at the first one past the end of the input, whose block is added
+/// to `absent_blocks`; the later groups are absent.
 pub(super) fn parse(
     data: &[u8],
     sb: &Superblock,
     csum_seed: Option<u32>,
+    absent_blocks: &RefCell<BTreeSet<u64>>,
 ) -> Result<Vec<GroupDesc>> {
     let group_count = u64::from(sb.group_count);
     // Each descriptor occupies its own bytes of the filesystem.
-    if group_count.saturating_mul(sb.desc_size as u64) > data.len() as u64 {
+    if group_count.saturating_mul(sb.desc_size as u64) > sb.size() {
         return Err(error(format!(
             "Invalid group count {group_count}: {} B of group descriptors exceed the {} B \
              filesystem",
             group_count.saturating_mul(sb.desc_size as u64),
-            data.len()
+            sb.size()
         )));
     }
     let descriptors_per_block = (sb.block_size / sb.desc_size) as u64;
     let inode_table_blocks = inode_table_blocks(sb);
-    let capacity = usize::try_from(group_count).expect("bounded by the filesystem size");
+    // The descriptors present occupy bytes present.
+    let present = group_count.min(data.len() as u64 / sb.desc_size as u64);
+    let capacity = usize::try_from(present).expect("bounded by the input size");
     let mut groups = Vec::with_capacity(capacity);
     for group in 0..group_count {
         let block = sb.descriptor_block(group / descriptors_per_block);
         let index = usize::try_from(group % descriptors_per_block).expect("below 2^16");
-        let raw = descriptor(data, sb, block, index, group)?;
+        let Some(raw) = descriptor(data, sb, block, index, group)? else {
+            absent_blocks.borrow_mut().insert(block);
+            break;
+        };
         verify_checksum(raw, sb, csum_seed, group)?;
         let desc = decode(raw, sb)?;
         check_ranges(raw, sb, &desc, inode_table_blocks, group)?;
@@ -54,26 +64,32 @@ fn inode_table_blocks(sb: &Superblock) -> u64 {
 }
 
 /// The raw descriptor of `group`, entry `index` of descriptor block
-/// `block`.
+/// `block`; `None` when it lies inside the filesystem but past the end of
+/// `data`.
 fn descriptor<'a>(
     data: &'a [u8],
     sb: &Superblock,
     block: u64,
     index: usize,
     group: u64,
-) -> Result<&'a [u8]> {
-    let location = block
+) -> Result<Option<&'a [u8]>> {
+    let range = block
         .checked_mul(sb.block_size as u64)
         .and_then(|start| start.checked_add((index * sb.desc_size) as u64))
-        .and_then(|offset| usize::try_from(offset).ok());
-    location
-        .and_then(|offset| data.get(offset..offset.checked_add(sb.desc_size)?))
+        .and_then(|offset| Some(offset..offset.checked_add(sb.desc_size as u64)?))
+        .filter(|range| range.end <= sb.size())
         .ok_or_else(|| {
             error(format!(
                 "Invalid group descriptor {group} location: block 0x{block:X} is beyond the \
                  filesystem"
             ))
-        })
+        })?;
+    if range.end > data.len() as u64 {
+        return Ok(None);
+    }
+    // The range lies in `data`, so it fits in usize.
+    let start = usize::try_from(range.start).expect("offset is in the image");
+    Ok(Some(&data[start..start + sb.desc_size]))
 }
 
 /// Descriptor fields: 0x00 `bg_block_bitmap_lo`, 0x04 `bg_inode_bitmap_lo`,

@@ -87,6 +87,11 @@ struct Census {
     too_large: usize,
     over_budget: usize,
     unwalked: usize,
+    /// Regular files not listed because their data, or the blocks that map
+    /// it, lie past the end of a truncated filesystem's input.
+    absent_files: usize,
+    /// Directory blocks past the end of a truncated filesystem's input.
+    absent_directory_blocks: u64,
     problems: Vec<String>,
     unlisted_problems: usize,
 }
@@ -99,20 +104,28 @@ struct Walker<'f, 'a> {
     extracted: usize,
 }
 
-/// Walk the directory tree from the root and append the members to `c`.
+/// Check that the root inode is a directory.
 ///
 /// # Errors
 ///
-/// An unreadable root inode, or a root inode that is not a directory.
-/// Damage below it is reported in notes.
-pub(super) fn walk<'a>(fs: &Filesystem<'a>, c: &mut Container<'a>) -> Result<()> {
+/// An unreadable root inode, a root inode that is not a directory, or a
+/// root inode past the end of a truncated filesystem's input.
+pub(super) fn check_root(fs: &Filesystem<'_>) -> ReadResult<()> {
     let root = fs.inode(EXT4_ROOT_INO)?;
     if !root.is_dir() {
-        return Err(error(format!(
+        return invalid(format!(
             "Invalid root inode: mode 0x{:04X} is not a directory",
             root.mode
-        )));
+        ));
     }
+    Ok(())
+}
+
+/// Walk the directory tree from the root, which [`check_root`] checked,
+/// and append the members to `c`. Damage below the root is reported in
+/// notes, and what lies past the end of a truncated filesystem's input is
+/// counted.
+pub(super) fn walk<'a>(fs: &Filesystem<'a>, c: &mut Container<'a>) {
     let mut walker = Walker {
         fs,
         nodes: vec![PathNode {
@@ -137,8 +150,7 @@ pub(super) fn walk<'a>(fs: &Filesystem<'a>, c: &mut Container<'a>) -> Result<()>
         // Reversed, so that subdirectories are walked in entry order.
         pending.extend(subdirectories.into_iter().rev());
     }
-    walker.census.report(c);
-    Ok(())
+    walker.census.report(fs, c);
 }
 
 /// The text of a `ClassifierError` without the family prefix.
@@ -276,14 +288,32 @@ impl<'a> Walker<'_, 'a> {
         }
     }
 
+    /// Metadata that could not be read: a problem, or blocks past the end
+    /// of a truncated filesystem's input, which the filesystem counts.
+    fn metadata_fault(&mut self, path: &str, fault: Fault) {
+        if let Fault::Invalid(e) = fault {
+            self.problem(path, e);
+        }
+    }
+
+    /// A regular file that could not be read: a problem, or data or
+    /// mapping blocks past the end of a truncated filesystem's input, which
+    /// are counted.
+    fn file_fault(&mut self, path: &str, fault: Fault) {
+        match fault {
+            Fault::Invalid(e) => self.problem(path, e),
+            Fault::Absent => self.census.absent_files += 1,
+        }
+    }
+
     /// Read one directory and return its subdirectories in entry order.
     fn directory(&mut self, directory: &Directory, c: &mut Container<'a>) -> Vec<Directory> {
         let fs = self.fs;
         let mut subdirectories = Vec::new();
         let inode = match fs.inode(directory.number) {
             Ok(inode) => inode,
-            Err(e) => {
-                self.problem(&self.path(directory.node, b""), e);
+            Err(fault) => {
+                self.metadata_fault(&self.path(directory.node, b""), fault);
                 return subdirectories;
             }
         };
@@ -303,17 +333,23 @@ impl<'a> Walker<'_, 'a> {
         let end = blocks_for(inode.size, block_size).min(fs.sb.blocks_count);
         let runs = match fs.runs(&inode, end) {
             Ok(runs) => runs,
-            Err(e) => {
-                self.problem(&self.path(directory.node, b""), e);
+            Err(fault) => {
+                self.metadata_fault(&self.path(directory.node, b""), fault);
                 return subdirectories;
             }
         };
         let indexed = fs.sb.has_compat(COMPAT_DIR_INDEX) && inode.has_flag(EXT4_INDEX_FL);
         for run in runs {
             for k in 0..run.blocks {
-                let block = match fs.metadata_block(run.physical + k) {
+                let block = match fs.charged_block(run.physical + k) {
                     Ok(block) => block,
-                    Err(e) => {
+                    // The run's blocks from here on lie past the end of the
+                    // input; the directory's other runs may be present.
+                    Err(Fault::Absent) => {
+                        self.census.absent_directory_blocks += run.blocks - k;
+                        break;
+                    }
+                    Err(Fault::Invalid(e)) => {
                         self.problem(&self.path(directory.node, b""), e);
                         return subdirectories;
                     }
@@ -387,8 +423,8 @@ impl<'a> Walker<'_, 'a> {
         }
         let inode = match self.fs.inode(entry.inode) {
             Ok(inode) => inode,
-            Err(e) => {
-                self.problem(&self.path(directory.node, entry.name), e);
+            Err(fault) => {
+                self.metadata_fault(&self.path(directory.node, entry.name), fault);
                 return;
             }
         };
@@ -435,8 +471,8 @@ impl<'a> Walker<'_, 'a> {
             .expect("at most the recognition prefix");
         let prefix = match self.fs.read(inode, prefix_len) {
             Ok(prefix) => prefix,
-            Err(e) => {
-                self.problem(&path, e);
+            Err(fault) => {
+                self.file_fault(&path, fault);
                 return;
             }
         };
@@ -459,8 +495,8 @@ impl<'a> Walker<'_, 'a> {
         } else {
             match self.fs.read(inode, size) {
                 Ok(contents) => contents,
-                Err(e) => {
-                    self.problem(&path, e);
+                Err(fault) => {
+                    self.file_fault(&path, fault);
                     return;
                 }
             }
@@ -497,13 +533,48 @@ fn counted(count: usize, singular: &str, plural: &str) -> String {
 
 impl Census {
     /// Notes and metadata: what was walked, then what was left out and why.
-    fn report(self, c: &mut Container<'_>) {
+    fn report(self, fs: &Filesystem<'_>, c: &mut Container<'_>) {
         c.notes.push(format!(
             "Directory walk: {}, {}; members in a recognized format: {}",
             counted(self.directories, "directory", "directories"),
             counted(self.files, "regular file", "regular files"),
             self.members
         ));
+        let absent_blocks = fs.absent_blocks.borrow().len();
+        if absent_blocks > 0 {
+            let (verb, pronoun) = if absent_blocks == 1 {
+                ("lies", "it was")
+            } else {
+                ("lie", "they were")
+            };
+            c.notes.push(format!(
+                "{} that the walk needed (group descriptors, inode tables, extent or indirect \
+                 blocks) {verb} past the {} present; {pronoun} not read",
+                counted(absent_blocks, "metadata block", "metadata blocks"),
+                fs.present_text()
+            ));
+        }
+        if self.absent_directory_blocks > 0 {
+            let blocks = usize::try_from(self.absent_directory_blocks).unwrap_or(usize::MAX);
+            let (verb, pronoun) = if blocks == 1 {
+                ("lies", "its")
+            } else {
+                ("lie", "their")
+            };
+            c.notes.push(format!(
+                "{} {verb} past the {} present; {pronoun} entries were not read",
+                counted(blocks, "directory block", "directory blocks"),
+                fs.present_text()
+            ));
+        }
+        if self.absent_files > 0 {
+            c.notes.push(format!(
+                "{} not listed: file data, or blocks that map it, lie partly or wholly past the \
+                 {} present",
+                counted(self.absent_files, "regular file was", "regular files were"),
+                fs.present_text()
+            ));
+        }
         if self.repeated > 0 {
             c.notes.push(format!(
                 "{} an inode already visited (hard links); each inode is examined once",
@@ -573,8 +644,8 @@ impl Census {
         }
         if self.unwalked > 0 {
             c.notes.push(format!(
-                "The walk stopped at the metadata read limit (twice the filesystem size); {} \
-                 not walked",
+                "The walk stopped at the metadata read limit (twice {}); {} not walked",
+                fs.budget_basis(),
                 counted(self.unwalked, "directory was", "directories were")
             ));
         }

@@ -7,8 +7,9 @@ use super::fork::Fork;
 use super::header::{extent_record, Extent, EXTENT_DENSITY};
 use super::*;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// Node descriptor size; the first record starts here.
 const NODE_DESCRIPTOR_SIZE: usize = 14;
@@ -102,6 +103,9 @@ pub(super) struct BTree {
     variable_index_keys: bool,
     /// `keyCompareType`.
     pub(super) key_compare_type: u8,
+    /// Nodes that lie past the end of a truncated volume's input, by
+    /// number, as the reader asked for them.
+    absent_nodes: RefCell<BTreeSet<u32>>,
 }
 
 /// A node, after the descriptor and record offset checks.
@@ -146,7 +150,7 @@ pub(super) struct Cursor<'a> {
 
 impl BTree {
     /// Open the B-tree in `fork`: read and check its header node.
-    pub(super) fn open(vol: &Volume<'_>, kind: TreeKind, fork: Fork) -> Result<Self> {
+    pub(super) fn open(vol: &Volume<'_>, kind: TreeKind, fork: Fork) -> ReadResult<Self> {
         let name = kind.name();
         // `nodeSize` is at a fixed place in the header node, which comes
         // first whatever the node size ([TN1150] "Node Sizes").
@@ -155,25 +159,23 @@ impl BTree {
         if !node_size.is_power_of_two()
             || !(kind.min_node_size()..=MAX_NODE_SIZE).contains(&node_size)
         {
-            return Err(error(format!(
-                "Invalid {name} B-tree node size {node_size}"
-            )));
+            return invalid(format!("Invalid {name} B-tree node size {node_size}"));
         }
         let header = read_node(vol, kind, &fork, node_size, 1, 0)?;
         if header.kind != HEADER_NODE || header.height != 0 || header.record_count() < 3 {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid {name} B-tree header node: kind {}, height {}, {} records",
                 header.kind,
                 header.height,
                 header.record_count()
-            )));
+            ));
         }
         let record = &header.bytes[header.offsets[0]..header.offsets[1]];
         if record.len() < HEADER_RECORD_SIZE {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid {name} B-tree header record of {} B",
                 record.len()
-            )));
+            ));
         }
         let depth = be_u16(record, 0)?;
         let root = be_u32(record, 2)?;
@@ -183,29 +185,29 @@ impl BTree {
         let key_compare_type = record[37];
         let attributes = be_u32(record, 38)?;
         if btree_type != HFS_BTREE_TYPE {
-            return Err(error(format!("Invalid {name} B-tree type {btree_type}")));
+            return invalid(format!("Invalid {name} B-tree type {btree_type}"));
         }
         if attributes & BIG_KEYS == 0 {
-            return Err(error(format!(
+            return invalid(format!(
                 "Unsupported {name} B-tree without 16-bit key lengths (attributes 0x{attributes:X})"
-            )));
+            ));
         }
         let nodes_size = u64::from(total_nodes) * node_size as u64;
         if total_nodes == 0 || nodes_size > fork.logical_size {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid {name} B-tree: {total_nodes} nodes of {node_size} B exceed its file of {} B",
                 fork.logical_size
-            )));
+            ));
         }
         if depth > MAX_TREE_DEPTH || (depth == 0) != (root == 0) || root >= total_nodes {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid {name} B-tree: depth {depth}, root node {root} of {total_nodes}"
-            )));
+            ));
         }
         if max_key_length + 2 > node_size {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid {name} B-tree maxKeyLength {max_key_length}"
-            )));
+            ));
         }
         Ok(Self {
             kind,
@@ -217,19 +219,36 @@ impl BTree {
             max_key_length,
             variable_index_keys: attributes & VARIABLE_INDEX_KEYS != 0,
             key_compare_type,
+            absent_nodes: RefCell::default(),
         })
     }
 
-    /// Node `number`, read and checked. Charged to the metadata budget.
-    fn node<'a>(&self, vol: &Volume<'a>, number: u32) -> Result<Node<'a>> {
-        read_node(
+    /// Which B-tree, for notes.
+    pub(super) fn name(&self) -> &'static str {
+        self.kind.name()
+    }
+
+    /// How many of the nodes the reader asked for lie past the end of a
+    /// truncated volume's input.
+    pub(super) fn absent_node_count(&self) -> usize {
+        self.absent_nodes.borrow().len()
+    }
+
+    /// Node `number`, read and checked. Charged to the metadata budget. A
+    /// node past the end of the input is recorded as absent.
+    fn node<'a>(&self, vol: &Volume<'a>, number: u32) -> ReadResult<Node<'a>> {
+        let node = read_node(
             vol,
             self.kind,
             &self.fork,
             self.node_size,
             self.total_nodes,
             number,
-        )
+        );
+        if let Err(Fault::Absent) = node {
+            self.absent_nodes.borrow_mut().insert(number);
+        }
+        node
     }
 
     /// Record `index` of a leaf or index node, split into key and data. In
@@ -274,23 +293,21 @@ impl BTree {
         &self,
         vol: &Volume<'a>,
         order: &dyn Fn(&[u8]) -> Result<Ordering>,
-    ) -> Result<Option<Cursor<'a>>> {
+    ) -> ReadResult<Option<Cursor<'a>>> {
         let name = self.kind.name();
         let mut number = self.root;
         let mut level = self.depth;
         while level > 0 {
             if number == 0 {
-                return Err(error(format!(
-                    "Invalid {name} B-tree: node 0 in the search path"
-                )));
+                return invalid(format!("Invalid {name} B-tree: node 0 in the search path"));
             }
             let node = self.node(vol, number)?;
             let expected = if level == 1 { LEAF_NODE } else { INDEX_NODE };
             if u16::from(node.height) != level || node.kind != expected {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid {name} B-tree node {number}: kind {} height {} at level {level}",
                     node.kind, node.height
-                )));
+                ));
             }
             let mut index = node.record_count();
             let mut exact = false;
@@ -316,9 +333,9 @@ impl BTree {
                 }));
             }
             if node.record_count() == 0 {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid {name} B-tree index node {number}: no records"
-                )));
+                ));
             }
             let chosen = if exact {
                 index
@@ -341,7 +358,7 @@ impl BTree {
         file_id: u32,
         fork_type: u8,
         start_block: u32,
-    ) -> Result<Option<[Extent; EXTENT_DENSITY]>> {
+    ) -> ReadResult<Option<[Extent; EXTENT_DENSITY]>> {
         let target = ExtentKey {
             file_id,
             fork_type,
@@ -358,12 +375,12 @@ impl BTree {
             return Ok(None);
         }
         if record.data.len() < EXTENT_RECORD_SIZE {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid extents overflow record for CNID {file_id}: {} B",
                 record.data.len()
-            )));
+            ));
         }
-        extent_record(record.data, 0).map(Some)
+        Ok(Some(extent_record(record.data, 0)?))
     }
 
     /// File offset of byte `offset` of node `number`.
@@ -388,12 +405,12 @@ fn read_node<'a>(
     node_size: usize,
     total_nodes: u32,
     number: u32,
-) -> Result<Node<'a>> {
+) -> ReadResult<Node<'a>> {
     let name = kind.name();
     if number >= total_nodes {
-        return Err(error(format!(
+        return invalid(format!(
             "Invalid {name} B-tree node {number} of {total_nodes}"
-        )));
+        ));
     }
     vol.charge(node_size)?;
     let at = u64::from(number) * node_size as u64;
@@ -403,9 +420,9 @@ fn read_node<'a>(
     let height = bytes[9];
     let count = usize::from(be_u16(&bytes, 10)?);
     if !matches!(node_kind, LEAF_NODE | INDEX_NODE | HEADER_NODE | MAP_NODE) {
-        return Err(error(format!(
+        return invalid(format!(
             "Invalid {name} B-tree node {number}: kind {node_kind}"
-        )));
+        ));
     }
     // numRecords + 1 offsets at the node end, in reverse order: the first
     // record starts after the descriptor, each record ends where the next
@@ -413,9 +430,9 @@ fn read_node<'a>(
     // offsets themselves ([TN1150] "Node Structure").
     let table = 2 * (count + 1);
     if NODE_DESCRIPTOR_SIZE + table > node_size {
-        return Err(error(format!(
+        return invalid(format!(
             "Invalid {name} B-tree node {number}: {count} records do not fit"
-        )));
+        ));
     }
     let mut offsets = Vec::with_capacity(count + 1);
     for i in 0..=count {
@@ -425,9 +442,9 @@ fn read_node<'a>(
         && offsets.windows(2).all(|w| w[0] < w[1])
         && offsets[count] <= node_size - table;
     if !ordered {
-        return Err(error(format!(
+        return invalid(format!(
             "Invalid {name} B-tree node {number}: record offsets out of order"
-        )));
+        ));
     }
     Ok(Node {
         number,
@@ -466,33 +483,37 @@ impl ExtentKey {
 impl<'a> Cursor<'a> {
     /// The next leaf record in key order, following `fLink` from one leaf
     /// to the next. Each leaf is read once; the next one must be a leaf.
-    pub(super) fn next(&mut self, tree: &BTree, vol: &Volume<'a>) -> Result<Option<Record<'_>>> {
+    pub(super) fn next(
+        &mut self,
+        tree: &BTree,
+        vol: &Volume<'a>,
+    ) -> ReadResult<Option<Record<'_>>> {
         while self.index >= self.node.record_count() {
             let next = self.node.f_link;
             if next == 0 {
                 return Ok(None);
             }
             if !self.visited.insert(next) {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid {} B-tree: the leaf chain returns to node {next}",
                     tree.kind.name()
-                )));
+                ));
             }
             let node = tree.node(vol, next)?;
             if node.kind != LEAF_NODE || node.height != 1 {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid {} B-tree node {next}: kind {} height {} in the leaf chain",
                     tree.kind.name(),
                     node.kind,
                     node.height
-                )));
+                ));
             }
             self.node = node;
             self.index = 0;
         }
         let index = self.index;
         self.index += 1;
-        tree.record(&self.node, index).map(Some)
+        Ok(Some(tree.record(&self.node, index)?))
     }
 }
 

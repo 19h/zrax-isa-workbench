@@ -130,16 +130,16 @@ fn extent_header(node: &[u8], number: u32) -> Result<ExtentHeader> {
 impl<'a> Filesystem<'a> {
     /// The stored runs of `inode`'s logical blocks below `end`, in logical
     /// order. Holes and unwritten extents are absent.
-    pub(super) fn runs(&self, inode: &Inode, end: u64) -> Result<Vec<Run>> {
+    pub(super) fn runs(&self, inode: &Inode, end: u64) -> ReadResult<Vec<Run>> {
         let mut runs = Vec::new();
         let span = Span { start: 0, end };
         if inode.has_flag(EXT4_EXTENTS_FL) {
             let header = extent_header(&inode.block, inode.number)?;
             if header.depth > EXT4_MAX_EXTENT_DEPTH {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid inode {} extent depth {} (at most {EXT4_MAX_EXTENT_DEPTH})",
                     inode.number, header.depth
-                )));
+                ));
             }
             self.extent_node(inode, &inode.block, &header, span, &mut runs)?;
         } else {
@@ -160,20 +160,20 @@ impl<'a> Filesystem<'a> {
         header: &ExtentHeader,
         span: Span,
         runs: &mut Vec<Run>,
-    ) -> Result<()> {
+    ) -> ReadResult<()> {
         if header.depth == 0 {
-            return self.extent_leaf(inode, node, header, span, runs);
+            return Ok(self.extent_leaf(inode, node, header, span, runs)?);
         }
         let mut previous: Option<u64> = None;
         for i in 0..header.entries {
             let at = EXTENT_HEADER_SIZE + i * EXTENT_ENTRY_SIZE;
             let first = u64::from(le_u32(node, at)?);
             if previous.is_some_and(|previous| first <= previous) {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid inode {} extent index: logical block 0x{first:X} does not follow \
                      the previous entry",
                     inode.number
-                )));
+                ));
             }
             previous = Some(first);
             let start = if i == 0 { 0 } else { first };
@@ -189,10 +189,10 @@ impl<'a> Filesystem<'a> {
             let child = self.metadata_block(leaf)?;
             let child_header = extent_header(child, inode.number)?;
             if child_header.depth != header.depth - 1 {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid inode {} extent block 0x{leaf:X}: depth {} under depth {}",
                     inode.number, child_header.depth, header.depth
-                )));
+                ));
             }
             if let Some(seed) = inode.csum_seed {
                 verify_extent_block(child, &child_header, seed, inode.number, leaf)?;
@@ -269,7 +269,7 @@ impl<'a> Filesystem<'a> {
     /// An ext2/ext3 block map: `i_block[0..12]` are direct blocks, then one
     /// single, one double and one triple indirect block. Block number 0 is
     /// a hole.
-    fn block_map(&self, inode: &Inode, span: Span, runs: &mut Vec<Run>) -> Result<()> {
+    fn block_map(&self, inode: &Inode, span: Span, runs: &mut Vec<Run>) -> ReadResult<()> {
         for slot in 0..EXT4_NDIR_BLOCKS {
             let logical = slot as u64;
             if logical >= span.end {
@@ -308,7 +308,7 @@ impl<'a> Filesystem<'a> {
         first: u64,
         span: Span,
         runs: &mut Vec<Run>,
-    ) -> Result<()> {
+    ) -> ReadResult<()> {
         let number = u64::from(pointer);
         self.check_pointer(inode, number)?;
         let block = self.metadata_block(number)?;
@@ -369,12 +369,9 @@ impl<'a> Filesystem<'a> {
     /// The first `len` bytes of `inode`'s contents. Bytes stored in one run
     /// from the start of the file are borrowed; otherwise the stored runs
     /// are copied into zeroed bytes of `len`.
-    pub(super) fn read(&self, inode: &Inode, len: usize) -> Result<FileData<'a>> {
+    pub(super) fn read(&self, inode: &Inode, len: usize) -> ReadResult<FileData<'a>> {
         if inode.has_flag(EXT4_INLINE_DATA_FL) {
-            return Err(error(format!(
-                "Unsupported inline data in inode {}",
-                inode.number
-            )));
+            return invalid(format!("Unsupported inline data in inode {}", inode.number));
         }
         let block_size = self.sb.block_size as u64;
         let end = blocks_for(len as u64, block_size);
@@ -384,6 +381,12 @@ impl<'a> Filesystem<'a> {
         } else {
             BLOCK_MAP_TRANSFORM
         };
+        // Every run is read before its file offset is taken: in a truncated
+        // filesystem a run may lie past the end of the input.
+        let stored = runs
+            .iter()
+            .map(|run| self.blocks(run.physical, run.blocks))
+            .collect::<ReadResult<Vec<_>>>()?;
         let first_run = runs.first().map(|run| {
             let stored = usize::try_from(run.blocks * block_size).unwrap_or(usize::MAX);
             StoredRun {
@@ -391,19 +394,17 @@ impl<'a> Filesystem<'a> {
                 size: stored.min(len - file_position(run, block_size)),
             }
         });
-        if let [run] = runs[..] {
+        if let ([run], [bytes]) = (&runs[..], &stored[..]) {
             if run.logical == 0 && run.blocks * block_size >= len as u64 {
-                let stored = self.blocks(run.physical, run.blocks)?;
                 return Ok(FileData {
-                    bytes: Cow::Borrowed(&stored[..len]),
+                    bytes: Cow::Borrowed(&bytes[..len]),
                     first_run,
                     transform,
                 });
             }
         }
         let mut bytes = vec![0u8; len];
-        for run in &runs {
-            let stored = self.blocks(run.physical, run.blocks)?;
+        for (run, stored) in runs.iter().zip(stored) {
             let start = file_position(run, block_size);
             let size = stored.len().min(len - start);
             bytes[start..start + size].copy_from_slice(&stored[..size]);
@@ -464,6 +465,7 @@ mod tests {
             csum_seed: None,
             verify_inodes: false,
             metadata_budget: Cell::new(u64::MAX),
+            absent_blocks: RefCell::default(),
         }
     }
 
@@ -552,11 +554,34 @@ mod tests {
         set_pointer(&mut data, 1, 0, 16);
         let fs = filesystem(&data);
         let inode = block_map_inode(&[(EXT4_IND_BLOCK, 1)]);
-        let message = fs.runs(&inode, 64).expect_err("out of range").to_string();
+        let Err(Fault::Invalid(e)) = fs.runs(&inode, 64) else {
+            panic!("block 16 is beyond the 16 blocks of the filesystem");
+        };
+        let message = e.to_string();
         assert!(
             message.contains("block map entry 0x10 beyond the filesystem"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn blocks_past_the_end_of_a_truncated_filesystem_are_absent() {
+        let mut data = vec![0u8; BLOCKS * EXT4_MIN_BLOCK_SIZE];
+        // Direct block 2, and single-indirect block 12, which maps block 3.
+        set_pointer(&mut data, 12, 0, 3);
+        let inode = block_map_inode(&[(0, 2), (EXT4_IND_BLOCK, 12)]);
+        // Only the first 8 of the 16 blocks are present.
+        let fs = filesystem(&data[..8 * EXT4_MIN_BLOCK_SIZE]);
+        assert!(matches!(fs.runs(&inode, 64), Err(Fault::Absent)));
+        assert_eq!(*fs.absent_blocks.borrow(), BTreeSet::from([12]));
+        // The direct block is read; a file that needs block 12 is absent.
+        assert_eq!(fs.runs(&inode, 1).expect("block 2 is present").len(), 1);
+        assert!(fs.read(&inode, EXT4_MIN_BLOCK_SIZE).is_ok());
+        let past_the_direct_blocks = (EXT4_NDIR_BLOCKS + 1) * EXT4_MIN_BLOCK_SIZE;
+        assert!(matches!(
+            fs.read(&inode, past_the_direct_blocks),
+            Err(Fault::Absent)
+        ));
     }
 
     #[test]

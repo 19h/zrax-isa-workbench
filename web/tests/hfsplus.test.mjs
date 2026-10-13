@@ -82,6 +82,30 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
   });
 }
 
+// The first 768 KiB of hfsplus.img, as a container that decodes only part of
+// a volume hands it on: the members whose data lies in it are listed.
+const TRUNCATED_END = 0xc0000;
+const TRUNCATED_MEMBERS = ['/Applications/Zrax.app/Contents/MacOS/Zrax', '/bin/fragmented.elf'];
+
+for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
+  test(`a truncated HFS+ volume lists the files present through ${module}`, async t => {
+    const page = await openPage(t);
+    await page.goto(baseUrl + '/web/index.html');
+    const bytes = [...(await fixture('hfsplus.img')).subarray(0, TRUNCATED_END)];
+    const p = await page.evaluate(async ({ module, bytes }) => {
+      const wasm = await import(module);
+      await wasm.default();
+      return JSON.parse(wasm.classify(new Uint8Array(bytes)));
+    }, { module, bytes });
+    assert.ok(!p.error, p.error);
+    assert.equal(p.format.format, 'hfsplus');
+    assert.deepEqual(p.slices.map(s => s.label), TRUNCATED_MEMBERS);
+    assert.ok(p.slices.every(s => s.offset + s.size <= TRUNCATED_END), 'members lie inside the input');
+    assert.ok(p.notes.some(n => n.message.startsWith('Volume truncated: 768 KiB of 1 MiB present')));
+    assert.ok(p.notes.some(n => n.message.startsWith('3 regular files were not listed')));
+  });
+}
+
 for (const path of ['/web/index.html', '/dist/index.html']) {
   test(`the workbench names HFS+ volumes and keeps stored member offsets in ${path}`, async t => {
     const page = await openPage(t);

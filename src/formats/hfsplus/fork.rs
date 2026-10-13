@@ -52,7 +52,7 @@ pub(super) fn resolve(
     file_id: u32,
     fork_type: u8,
     need: u64,
-) -> Result<Fork> {
+) -> ReadResult<Fork> {
     let needed_blocks = blocks_for(need.min(data.logical_size), vol.block_size());
     let mut fork = Fork {
         logical_size: data.logical_size,
@@ -71,18 +71,18 @@ pub(super) fn resolve(
             None => None,
         };
         let Some(record) = record else {
-            return Err(error(format!(
+            return invalid(format!(
                 "Missing extents overflow record for CNID {file_id} {} fork at block \
                  {start_block}",
                 fork_name(fork_type)
-            )));
+            ));
         };
         let after = fork.push_runs(vol, &record, covered)?;
         if after == covered {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid extents overflow record for CNID {file_id} at block {start_block}: no \
                  blocks"
-            )));
+            ));
         }
         covered = after;
     }
@@ -107,8 +107,7 @@ impl Fork {
             if extent.block_count == 0 {
                 break;
             }
-            // Checks that the run lies inside the volume.
-            vol.blocks(extent.start_block, extent.block_count)
+            vol.check_extent(extent.start_block, extent.block_count)
                 .map_err(|_| {
                     error(format!(
                         "Invalid extent of CNID {}: blocks 0x{:X} + {} beyond the {} blocks of \
@@ -130,7 +129,7 @@ impl Fork {
         let block_size = vol.block_size();
         let mut run_start = 0u64;
         for run in &self.runs {
-            let run_end = run_start + u64::from(run.block_count) * block_size;
+            let run_end = run_start.saturating_add(u64::from(run.block_count) * block_size);
             if position < run_end {
                 let volume_offset = u64::from(run.start_block) * block_size + position - run_start;
                 return usize::try_from(volume_offset)
@@ -145,8 +144,15 @@ impl Fork {
 
 impl<'a> Volume<'a> {
     /// The `len` bytes of `fork` at fork offset `offset`, which must lie
-    /// within its logical size and its resolved runs.
-    pub(super) fn read_fork(&self, fork: &Fork, offset: u64, len: usize) -> Result<ForkBytes<'a>> {
+    /// within its logical size and its resolved runs. Only the blocks that
+    /// hold them are read, so a fork that continues past the end of a
+    /// truncated volume's input reads up to it.
+    pub(super) fn read_fork(
+        &self,
+        fork: &Fork,
+        offset: u64,
+        len: usize,
+    ) -> ReadResult<ForkBytes<'a>> {
         let end = offset
             .checked_add(len as u64)
             .filter(|&end| end <= fork.logical_size)
@@ -166,19 +172,18 @@ impl<'a> Volume<'a> {
             if run_start >= end {
                 break;
             }
-            let run_end = run_start + u64::from(run.block_count) * block_size;
+            let run_end = run_start.saturating_add(u64::from(run.block_count) * block_size);
             if run_end > offset {
-                let stored = self.blocks(run.start_block, run.block_count)?;
-                // Both bounds lie inside this run, so they fit in usize.
-                let from = usize::try_from(offset.max(run_start) - run_start)
-                    .expect("offset inside the run");
-                let to = usize::try_from(end.min(run_end) - run_start).expect("end inside the run");
-                let piece = &stored[from..to];
+                self.check_extent(run.start_block, run.block_count)?;
+                let from = offset.max(run_start) - run_start;
+                let to = end.min(run_end) - run_start;
+                let start = u64::from(run.start_block) * block_size + from;
+                let piece = self.present(start, to - from)?;
                 if first_run.is_none() {
-                    let volume_offset = usize::try_from(u64::from(run.start_block) * block_size)
-                        .expect("block offset is in the volume");
+                    // The piece is present, so its volume offset fits in usize.
+                    let at = usize::try_from(start).expect("present bytes are addressable");
                     first_run = Some(StoredRun {
-                        offset: self.file_offset(volume_offset + from),
+                        offset: self.file_offset(at),
                         size: piece.len(),
                     });
                 }
@@ -188,10 +193,10 @@ impl<'a> Volume<'a> {
             run_start = run_end;
         }
         if read < len {
-            return Err(error(format!(
+            return invalid(format!(
                 "Truncated fork of CNID {}: its extents hold {read} of the {len} B at 0x{offset:X}",
                 fork.file_id
-            )));
+            ));
         }
         let bytes = match pieces[..] {
             [] => Cow::Borrowed(&[][..]),

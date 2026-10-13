@@ -67,8 +67,12 @@ const BOOT_CODE_TARGET: Target = Target::new(Isa::X86, 16, Endianness::Little);
 
 /// A dump may end before the volume its boot sector declares (a missing
 /// last track, an image rounded down to whole MiB). [FATGEN] calls such a
-/// volume malformed; this reader accepts at most 1 MiB and at most an
-/// eighth of the volume missing, and notes it. The bounds are ours.
+/// volume malformed; weak detection of FAT12, FAT16 and FAT32 accepts at
+/// most 1 MiB and at most an eighth of the volume missing. The bounds are
+/// ours. A volume cut shorter (the first 64 MiB of a larger partition that
+/// a container decoded) is still parsed by [`parse_container`] as a
+/// truncated volume, and exFAT, which carries its name, is recognized at
+/// any length.
 const MAX_MISSING_SIZE: u64 = 1 << 20;
 const MAX_MISSING_DIVISOR: u64 = 8;
 
@@ -128,10 +132,13 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 /// signature, a BPB whose sector size, cluster size, reserved sectors, FAT
 /// count, media descriptor, total sectors and FAT size are consistent, a
 /// FAT type by cluster count that agrees with the BPB layout, the metadata
-/// region in the input, a volume no more than slightly larger than the
-/// input, and a first FAT entry that holds a media descriptor.
+/// region in the input, a first FAT entry that holds a media descriptor,
+/// and a volume no more than slightly larger than the input.
 pub fn detect_weak(data: &[u8]) -> Option<Layout> {
-    bpb::Geometry::parse(data).ok().map(|g| g.layout())
+    bpb::Geometry::parse(data)
+        .ok()
+        .filter(|g| g.coverage.is_tolerated(g.volume_size()))
+        .map(|g| g.layout())
 }
 
 /// Parse a FAT or exFAT volume into the shared container model: the
@@ -141,10 +148,11 @@ pub fn detect_weak(data: &[u8]) -> Option<Layout> {
 /// # Errors
 ///
 /// [`ClassifierError::FatParseError`] for a boot sector or BPB that does
-/// not validate, a volume much larger than the input, a FAT type other
-/// than `layout`, and for exFAT a boot checksum mismatch, an unsupported
-/// revision or an unreadable root directory. Damage below the root is
-/// reported in notes instead.
+/// not validate, a FAT type other than `layout`, and for exFAT a boot
+/// checksum mismatch, an unsupported revision or an unreadable root
+/// directory, and for a volume larger than the input whose FATs (or exFAT
+/// root directory entries) lie past the end of the input. Damage below the
+/// root is reported in notes instead.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     match layout {
         Layout::Fat12 | Layout::Fat16 | Layout::Fat32 => dir::parse(data, layout),
@@ -155,6 +163,25 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
 /// A result below the root of a volume: the error is a defect that skips
 /// the entry and becomes a note.
 type Walk<T> = std::result::Result<T, String>;
+
+/// Why stored bytes below the root could not be read.
+#[derive(Debug)]
+enum Fault {
+    /// A defect that skips the entry and becomes a note.
+    Defect(String),
+    /// The clusters lie inside the volume but past the end of the input,
+    /// which holds only the start of a truncated volume.
+    Absent,
+}
+
+impl From<String> for Fault {
+    fn from(defect: String) -> Self {
+        Self::Defect(defect)
+    }
+}
+
+/// The result of a read of stored bytes below the root of a volume.
+type ReadResult<T> = std::result::Result<T, Fault>;
 
 fn error(message: impl Into<String>) -> ClassifierError {
     ClassifierError::FatParseError {
@@ -228,8 +255,7 @@ fn serial_text(serial: u32) -> String {
     format!("{:04X}-{:04X}", serial >> 16, serial & 0xffff)
 }
 
-/// How the declared volume relates to the input, after
-/// [`check_volume_size`].
+/// How the declared volume relates to the input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Coverage {
     /// The input holds the volume exactly.
@@ -240,34 +266,47 @@ enum Coverage {
     Trailing(u64),
 }
 
-/// Compare the declared volume size with the input: a volume may end
-/// before the input does, and may extend beyond it by at most
-/// [`MAX_MISSING_SIZE`] and an eighth of the volume.
-fn check_volume_size(volume_size: u64, input_size: usize) -> Result<Coverage> {
-    let input_size = input_size as u64;
-    if volume_size <= input_size {
-        return Ok(if volume_size == input_size {
-            Coverage::Exact
-        } else {
-            Coverage::Trailing(input_size - volume_size)
-        });
+impl Coverage {
+    /// Compare the declared volume size with the input.
+    fn of(volume_size: u64, input_size: usize) -> Self {
+        let input_size = input_size as u64;
+        match volume_size.checked_sub(input_size) {
+            Some(0) => Self::Exact,
+            Some(missing) => Self::Truncated(missing),
+            None => Self::Trailing(input_size - volume_size),
+        }
     }
-    let missing = volume_size - input_size;
-    if missing > MAX_MISSING_SIZE || missing > volume_size / MAX_MISSING_DIVISOR {
-        return Err(error(format!(
-            "Truncated volume: {volume_size} B declared, {input_size} B present"
-        )));
+
+    /// Whether weak detection accepts the volume: it may end before the
+    /// input does, and may extend beyond it by at most
+    /// [`MAX_MISSING_SIZE`] and an eighth of the volume.
+    fn is_tolerated(self, volume_size: u64) -> bool {
+        match self {
+            Self::Exact | Self::Trailing(_) => true,
+            Self::Truncated(missing) => {
+                missing <= MAX_MISSING_SIZE && missing <= volume_size / MAX_MISSING_DIVISOR
+            }
+        }
     }
-    Ok(Coverage::Truncated(missing))
+}
+
+/// The error for a volume larger than the input whose structures needed
+/// before anything can be listed lie past the end of the input.
+fn truncated_volume(volume_size: u64, input_size: usize) -> ClassifierError {
+    error(format!(
+        "Truncated volume: {volume_size} B declared, {input_size} B present"
+    ))
 }
 
 /// The note for a volume that is not exactly the input, if any.
 fn coverage_note(coverage: Coverage, volume_size: u64, data: &[u8]) -> Option<String> {
     match coverage {
         Coverage::Exact => None,
-        Coverage::Truncated(missing) => Some(format!(
-            "Truncated dump: the volume declares {volume_size} B and the input ends {missing} B \
-             early; clusters past the end are not read"
+        Coverage::Truncated(_) => Some(format!(
+            "Volume truncated: {} of {} present; files are listed only when all of their data \
+             is present",
+            size_text(data.len() as u64),
+            size_text(volume_size)
         )),
         Coverage::Trailing(size) => {
             let start = usize::try_from(volume_size).expect("smaller than the input");
@@ -423,19 +462,17 @@ mod tests {
     }
 
     #[test]
-    fn volumes_may_be_slightly_shorter_than_declared() {
-        assert_eq!(check_volume_size(4096, 4096).unwrap(), Coverage::Exact);
-        assert_eq!(
-            check_volume_size(4096, 5000).unwrap(),
-            Coverage::Trailing(904)
-        );
-        assert_eq!(
-            check_volume_size(1 << 23, (1 << 23) - 4096).unwrap(),
-            Coverage::Truncated(4096)
-        );
+    fn weak_detection_tolerates_volumes_slightly_shorter_than_declared() {
+        assert_eq!(Coverage::of(4096, 4096), Coverage::Exact);
+        assert_eq!(Coverage::of(4096, 5000), Coverage::Trailing(904));
+        let short = Coverage::of(1 << 23, (1 << 23) - 4096);
+        assert_eq!(short, Coverage::Truncated(4096));
+        assert!(short.is_tolerated(1 << 23));
         // More than an eighth of the volume, or more than 1 MiB, missing.
-        assert!(check_volume_size(4096, 3000).is_err());
-        assert!(check_volume_size(1 << 30, (1 << 30) - (2 << 20)).is_err());
+        assert!(!Coverage::of(4096, 3000).is_tolerated(4096));
+        let cut = Coverage::of(1 << 30, (1 << 30) - (2 << 20));
+        assert_eq!(cut, Coverage::Truncated(2 << 20));
+        assert!(!cut.is_tolerated(1 << 30));
     }
 
     #[test]

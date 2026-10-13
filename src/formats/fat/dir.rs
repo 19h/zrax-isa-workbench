@@ -145,10 +145,13 @@ fn walk_volume<'a>(g: &Geometry, data: &'a [u8], c: &mut Container<'a>) {
     let root = if let Some(fields) = g.fat32 {
         walker.directory(fields.root_cluster, span)
     } else {
+        // The root directory region is part of the metadata region, which
+        // [`Geometry::parse`] found in the input.
         let (offset, bytes) = g.root_region(data);
         Ok(DirectoryData {
             extents: vec![Extent { offset, bytes }],
             cut: false,
+            absent_clusters: 0,
         })
     };
     let mut walk = DirectoryWalk {
@@ -186,7 +189,7 @@ fn walk_volume<'a>(g: &Geometry, data: &'a [u8], c: &mut Container<'a>) {
             label,
         );
     }
-    walker.census.report(c);
+    walker.census.report(data.len() as u64, c);
 }
 
 impl<'a> DirectoryWalk<'_, '_, 'a> {

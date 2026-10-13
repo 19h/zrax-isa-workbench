@@ -151,11 +151,12 @@ size decmpfs states.
 
 ## Validation and resource bounds
 
-- The volume must hold `totalBlocks` blocks. Bytes after it are accepted when
-  they are shorter than one block (the remainder of a disk that is not a
-  multiple of the block size, where the alternate volume header lies) or are
-  `0x00`/`0xFF` padding; otherwise the volume is a parse error. A wrapper's
-  embedded extent must lie in the input.
+- A volume of `totalBlocks` blocks that the input holds may be followed by
+  bytes shorter than one block (the remainder of a disk that is not a
+  multiple of the block size, where the alternate volume header lies) or by
+  `0x00`/`0xFF` padding; other trailing bytes are a parse error. A volume
+  larger than the input is read as a truncated volume (see below). In a
+  wrapper, the volume must fit the embedded extent.
 - An HFSX version other than 5 is refused.
 - B-tree headers: header node kind 1, height 0 and at least three records;
   `nodeSize` a power of two from 512 B (4 KiB for the catalog and attributes
@@ -179,9 +180,10 @@ size decmpfs states.
   tables must lie in the fork; chunks are at most 65,537 B; each unit must
   decode to exactly its size. An attribute stored in extents
   (`kHFSPlusAttrForkData`) is not supported.
-- B-tree node reads are limited to 64 times the volume size, because every
-  search reads one node per level; when the limit is reached the walk stops
-  and a note counts the folders not walked. The factor is ours.
+- B-tree node reads are limited to 64 times the volume size (for a truncated
+  volume, 64 times the bytes present), because every search reads one node
+  per level; when the limit is reached the walk stops and a note counts the
+  folders not walked. The factor is ours.
 - Folders deeper than 64 levels below the root are not walked. Each folder is
   walked once.
 - At most 4096 members are listed and 65,536 regular files examined. A
@@ -191,6 +193,45 @@ size decmpfs states.
   reach 256 MiB in total. Notes count what was left out.
 - Problems below the root are listed in up to 16 notes; further problems are
   counted.
+
+## Truncated volumes
+
+Containers decode at most 64 MiB of a component (`MAX_PAYLOAD`): the DMG
+family hands on the first 64 MiB of a larger `Apple_HFS` partition, and
+virtual disks and compressed streams do the same. A volume whose
+`totalBlocks` times `blockSize` ([TN1150] "Volume Header") exceeds the bytes
+present is read as a truncated volume:
+
+- Detection is unchanged: it needs only the volume header.
+- The structures needed before anything can be listed must be present: the
+  volume header, the header nodes of the extents overflow, catalog and (if
+  any) attributes B-trees, the extents overflow nodes that locate the
+  catalog's and attributes file's extents, and the catalog nodes that hold
+  the root folder's thread and folder records. Without them the volume is
+  the error it was before: `Truncated volume: N blocks of B need S B, P B
+  present` (or `Truncated HFS wrapper: ...` for a wrapper whose embedded
+  extent passes the end of the input).
+- Every block, extent and node number is still checked against the
+  declared volume; a defect inside the bytes present is an error or a note,
+  as for a complete volume.
+- A read past the end of the input is absent, never an error: B-tree nodes
+  past it are skipped (a folder's enumeration stops at the first absent
+  leaf), and a note counts them per tree: "N nodes of the catalog B-tree
+  that the walk needed lie past the X present; their records were not
+  read".
+- A regular file is listed only when all of its data fork (or, for decmpfs,
+  its resource fork) is present, together with the extents overflow and
+  attributes records that locate it. Others are counted: "N regular files
+  were not listed: file data, or B-tree records that locate it, lie partly
+  or wholly past the X present". A decmpfs file whose resource fork is
+  absent is not counted as decoded.
+- Hard links whose indirect node folder was cut count as absent files, not
+  as broken links.
+- A journal or startup file past the end of the input is noted ("the
+  journal lies past the X present and was not read").
+- A note states "Volume truncated: X of Y present; files are listed only
+  when all of their data is present", with X and Y in B, KiB or MiB.
+- The whole input belongs to the volume (`consumed`).
 
 ## Assumption register
 
@@ -205,13 +246,15 @@ size decmpfs states.
 | H7 | Hard links resolve only with the root's or a metadata folder's creation date | `cat_lookupbykey`; the fixture's links carry the metadata folder's date |
 | H8 | The first 4 KiB decide whether a file is a recognized format | As for the other filesystem families; a weak format that needs its whole input is not listed |
 | H9 | 64 times the volume size is enough node reading for a consistent volume | Both fixtures and all synthetic volumes walk without reaching it; not tested on large real volumes |
+| H10 | A truncated volume is a prefix of the whole volume, so what lies in the bytes present is what the whole volume holds there | The Xcode tools DMG's `Apple_HFS` partition read whole (191,931,904 B through `hdiutil attach -readonly -nomount`) lists 41 members; its first 64 MiB list 4, byte-identical to theirs in the whole, and the 37 others start at 0x8139000 or later. The sweep `prefixes_are_truncated_volumes_that_list_only_members_inside_them` checks every listed member of a prefix against the whole fixture |
 
 ## Known boundaries
 
 | Boundary | Behavior |
 | --- | --- |
 | Classic HFS (`BD` without an embedded `H+`) | Not detected |
-| A volume larger than the bytes given, including a volume that a container cut at the 64 MiB extraction limit (for example the `Apple_HFS` partition of a DMG larger than 64 MiB) | "Truncated volume" parse error; no file is listed, although the catalog and some files may lie in the bytes present |
+| A volume larger than the bytes given, including a volume that a container cut at the 64 MiB extraction limit (for example the `Apple_HFS` partition of a DMG larger than 64 MiB) | Read as a truncated volume when its B-tree header nodes and root folder are present: files whose data lies in the bytes present are listed, the rest are counted. Files and folders whose catalog records lie past the end are not known; their number is not reported, only the B-tree nodes the walk asked for |
+| A truncated volume whose catalog or attributes file continues in extents overflow nodes past the end of the input | The extents cannot be resolved: the "Truncated volume" parse error |
 | The wrapper's own HFS files | Not read; noted |
 | Journal | Located and its header read; never replayed. Transactions are noted as possibly stale metadata |
 | decmpfs types 5, 9, 10, 13, 14 and dataless files | Not decoded; counted in a note |
@@ -264,3 +307,38 @@ decompress them), the native suite passed 2,351 tests with 6 ignored, and
 IDA's corpus (4,621 files) classified as before. A downloaded Xcode tools
 DMG whose `Apple_HFS` partition is 183 MiB was cut at 64 MiB by the DMG
 family, and this parser reported the cut volume as truncated.
+
+Truncated volumes, on 2026-10-13 (macOS 27.2 AArch64, rustc 1.100.0-nightly
+`f248f4038`, wasm-pack 0.14.0, Node 25.8.1): `tests/hfsplus.rs` (28 tests)
+and the 10 unit tests in `src/formats/hfsplus/` passed within `cargo test
+--all-features --locked` (2,425 passed, 6 ignored). The prefix sweep now
+parses every prefix of both fixtures up to the end of the catalog file and,
+after it, every 61st prefix and the prefixes at and around each 512 B
+boundary: each prefix is either the old "Truncated volume" error (before the
+catalog's root nodes) or a truncated volume whose members are byte-identical
+to the whole volume's and lie inside the prefix. A synthetic catalog with a
+leaf moved to the last block, a journal moved past the cut, a truncated HFS
+wrapper and the cut fixtures cover the notes. `web/tests/hfsplus.test.mjs`
+(6 tests, one of them a 768 KiB prefix) passed through `/pkg/` and `/dist/`;
+the browser suite passed 278 tests with 4 skipped (D10 and RX113 firmware
+not in the repository). A differential snapshot against the previous commit
+over both fixtures (2,275,040 inputs: the whole volumes, every prefix and
+single-byte mutations of every 7th byte and every 3rd of the first 16 KiB)
+changed 796,680 outcomes, all of inputs whose `totalBlocks` times
+`blockSize` exceeds the input: old "Truncated volume" errors that are now
+truncated volumes (prefixes, and 8 mutations of the high byte of
+`totalBlocks`). Seven DMG fixtures with HFS+ and FAT partitions (324,858
+inputs) did not change.
+
+`Additional_Tools_for_Xcode_26.2.dmg` (87,179,210 B, read in place; not
+committed): the HFS+ volume of its `Apple_HFS` partition (46,858 blocks of
+4 KiB, 191,930,368 B) is cut at 64 MiB; the cut volume lists 4 members (two universal Mach-O binaries, `HAPAccessoryKit`
+and `HomeKit Accessory Simulator`, decoded from zlib decmpfs resource forks,
+and two gzip files) and counts 615 regular files whose data lies past
+64 MiB; the disk image's primary ISA is now x86-64 instead of unknown. The
+whole partition, read through `hdiutil attach -readonly -nomount`, lists 41
+members; the 4 are byte-identical to theirs there and the 37 others start
+at 0x8139000 or later. The test
+`a_local_dmg_lists_the_files_in_the_first_64_mib_of_its_cut_volume` runs on
+it when `ZRAX_LOCAL_DMG` names the file (skipped otherwise). The IDA Pro
+test inputs hold no HFS+ volume (not verified on third-party volumes).

@@ -27,12 +27,22 @@
 //! `1024 << s_log_block_size` bytes; offsets in notes and metadata are file
 //! bytes. The format names no processor: `s_creator_os` is an operating
 //! system, so members are classified from their own bytes.
+//!
+//! A filesystem larger than the input (`s_blocks_count` blocks; containers
+//! hand on the first 64 MiB of a larger partition) is read as a truncated
+//! filesystem when its superblock and its root inode are present: group
+//! descriptors, inode records and other metadata blocks past the end of
+//! the input are
+//! skipped and counted, and files are listed only when all of their data
+//! is present. Linux refuses to mount such a filesystem
+//! (`ext4_check_geometry`: "block count exceeds size of device").
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::container::Container;
 use crate::types::FileFormat;
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 
 mod groups;
 mod inode;
@@ -402,9 +412,12 @@ struct Inode {
 /// A parsed filesystem: the bytes that belong to it, its superblock and
 /// group descriptors.
 struct Filesystem<'a> {
-    /// The filesystem's bytes (`s_blocks_count` blocks).
+    /// The filesystem's bytes (`s_blocks_count` blocks), or the bytes of
+    /// them present when the input ends inside the filesystem.
     data: &'a [u8],
     sb: Superblock,
+    /// The group descriptors: all of them, or those before the first one
+    /// past the end of a truncated filesystem's input.
     groups: Vec<GroupDesc>,
     /// Metadata checksum seed, with `metadata_csum`.
     csum_seed: Option<u32>,
@@ -414,12 +427,40 @@ struct Filesystem<'a> {
     /// indirect blocks) the reader may still read; see
     /// [`Filesystem::charge`].
     metadata_budget: Cell<u64>,
+    /// Metadata blocks (group descriptors, inode tables, directory, extent
+    /// and indirect blocks) past the end of a truncated filesystem's input,
+    /// by number, as the reader asked for them.
+    absent_blocks: RefCell<BTreeSet<u64>>,
 }
 
 fn error(message: impl Into<String>) -> ClassifierError {
     ClassifierError::ExtParseError {
         message: message.into(),
     }
+}
+
+/// Why a read of the filesystem failed.
+#[derive(Debug)]
+enum Fault {
+    /// The filesystem is invalid; the error says how.
+    Invalid(ClassifierError),
+    /// The bytes lie inside the filesystem but past the end of the input,
+    /// which holds only the start of a truncated filesystem.
+    Absent,
+}
+
+impl From<ClassifierError> for Fault {
+    fn from(e: ClassifierError) -> Self {
+        Self::Invalid(e)
+    }
+}
+
+/// The result of a read of the filesystem's bytes.
+type ReadResult<T> = std::result::Result<T, Fault>;
+
+/// A read that failed because the filesystem is invalid.
+fn invalid<T>(message: impl Into<String>) -> ReadResult<T> {
+    Err(Fault::Invalid(error(message)))
 }
 
 /// The `len` bytes at `start`.
@@ -550,9 +591,10 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 ///
 /// [`ClassifierError::ExtParseError`] for an invalid superblock, a
 /// superblock checksum mismatch, an unsupported incompatible feature, an
-/// image shorter than the filesystem or followed by data other than
-/// padding, invalid group descriptors, or an unreadable root inode.
-/// Damage below the root directory is reported in notes instead.
+/// image followed by data other than padding, invalid group descriptors,
+/// or an unreadable root inode, and for an image shorter than the
+/// filesystem whose root inode lies past the end of the input. Damage below
+/// the root directory is reported in notes instead.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     let sb = Superblock::parse(data)?;
     sb.verify_checksum(data)?;
@@ -563,31 +605,45 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
             feature_names(0, 0, unsupported).join(", ")
         )));
     }
-    let Some(fs_size) = usize::try_from(sb.size())
+    let fs_size = match usize::try_from(sb.size())
         .ok()
         .filter(|&size| size <= data.len())
-    else {
-        return Err(error(format!(
-            "Truncated filesystem: {} blocks of {} need {} B, {} B present",
-            sb.blocks_count,
-            size_text(sb.block_size as u64),
-            sb.size(),
-            data.len()
-        )));
+    {
+        Some(fs_size) => {
+            let trailing = &data[fs_size..];
+            if !is_padding(trailing) {
+                return Err(error(format!(
+                    "Invalid trailing data: {} B after the filesystem at 0x{fs_size:X} are not \
+                     padding",
+                    trailing.len()
+                )));
+            }
+            fs_size
+        }
+        // The input ends inside the filesystem: all of it belongs to it.
+        None => data.len(),
     };
-    let trailing = &data[fs_size..];
-    if !is_padding(trailing) {
-        return Err(error(format!(
-            "Invalid trailing data: {} B after the filesystem at 0x{fs_size:X} are not padding",
-            trailing.len()
-        )));
-    }
 
     let fs = Filesystem::new(&data[..fs_size], sb)?;
+    // The root inode must be present; without it nothing can be listed.
+    match walk::check_root(&fs) {
+        Ok(()) => {}
+        Err(Fault::Invalid(e)) => return Err(e),
+        Err(Fault::Absent) => {
+            let sb = &fs.sb;
+            return Err(error(format!(
+                "Truncated filesystem: {} blocks of {} need {} B, {} B present",
+                sb.blocks_count,
+                size_text(sb.block_size as u64),
+                sb.size(),
+                data.len()
+            )));
+        }
+    }
     let mut c = Container::new(FileFormat::Ext, layout.label(), "ext");
     c.consumed = fs_size;
     describe(&fs, layout, &mut c);
-    walk::walk(&fs, &mut c)?;
+    walk::walk(&fs, &mut c);
     Ok(c)
 }
 
@@ -610,6 +666,14 @@ fn describe(fs: &Filesystem<'_>, layout: Layout, c: &mut Container<'_>) {
         size_text(sb.block_size as u64),
         sb.inode_size
     ));
+    if fs.is_truncated() {
+        c.notes.push(format!(
+            "Volume truncated: {} of {} present; files are listed only when all of their data \
+             is present",
+            fs.present_text(),
+            size_text(sb.size())
+        ));
+    }
     c.notes.push(checksum_note(fs));
     if sb.has_incompat(INCOMPAT_RECOVER) {
         c.notes
@@ -677,7 +741,8 @@ impl<'a> Filesystem<'a> {
     fn new(data: &'a [u8], sb: Superblock) -> Result<Self> {
         let csum_seed = sb.has_metadata_csum().then(|| sb.csum_seed());
         let verify_inodes = csum_seed.is_some() && sb.creator_os == EXT4_OS_LINUX;
-        let groups = groups::parse(data, &sb, csum_seed)?;
+        let absent_blocks = RefCell::default();
+        let groups = groups::parse(data, &sb, csum_seed, &absent_blocks)?;
         let metadata_budget = Cell::new((data.len() as u64).saturating_mul(2));
         Ok(Self {
             data,
@@ -686,11 +751,32 @@ impl<'a> Filesystem<'a> {
             csum_seed,
             verify_inodes,
             metadata_budget,
+            absent_blocks,
         })
     }
 
-    /// The bytes of `count` blocks starting at block `first`.
-    fn blocks(&self, first: u64, count: u64) -> Result<&'a [u8]> {
+    /// Whether the input ends before the filesystem does.
+    fn is_truncated(&self) -> bool {
+        (self.data.len() as u64) < self.sb.size()
+    }
+
+    /// The bytes of the filesystem present, as text for notes.
+    fn present_text(&self) -> String {
+        size_text(self.data.len() as u64)
+    }
+
+    /// What the metadata read limit is a multiple of, for messages.
+    fn budget_basis(&self) -> String {
+        if self.is_truncated() {
+            format!("the {} present", self.present_text())
+        } else {
+            "the filesystem size".to_string()
+        }
+    }
+
+    /// The bytes of `count` blocks starting at block `first`; absent when
+    /// they pass the end of the input.
+    fn blocks(&self, first: u64, count: u64) -> ReadResult<&'a [u8]> {
         let end = first
             .checked_add(count)
             .filter(|&end| end <= self.sb.blocks_count)
@@ -702,17 +788,31 @@ impl<'a> Filesystem<'a> {
                 ))
             })?;
         let block_size = self.sb.block_size as u64;
-        // Both ends lie within the filesystem bytes, so they fit in usize.
-        let start = usize::try_from(first * block_size).expect("block offset is in the image");
-        let stop = usize::try_from(end * block_size).expect("block offset is in the image");
+        // A truncated filesystem may declare more bytes than u64 counts;
+        // such blocks lie past the end of the input.
+        match (first.checked_mul(block_size), end.checked_mul(block_size)) {
+            (Some(start), Some(stop)) => self.present(start, stop),
+            _ => Err(Fault::Absent),
+        }
+    }
+
+    /// The bytes from file offset `start` to `stop`, a range inside the
+    /// filesystem; absent when it passes the end of the input.
+    fn present(&self, start: u64, stop: u64) -> ReadResult<&'a [u8]> {
+        if stop > self.data.len() as u64 {
+            return Err(Fault::Absent);
+        }
+        // Both ends lie within the bytes present, so they fit in usize.
+        let start = usize::try_from(start).expect("offset is in the image");
+        let stop = usize::try_from(stop).expect("offset is in the image");
         Ok(&self.data[start..stop])
     }
 
-    fn block(&self, number: u64) -> Result<&'a [u8]> {
+    fn block(&self, number: u64) -> ReadResult<&'a [u8]> {
         self.blocks(number, 1)
     }
 
-    /// File offset of block `number`, which [`Self::blocks`] has checked.
+    /// File offset of block `number`, which [`Self::blocks`] has read.
     fn offset(&self, number: u64) -> usize {
         usize::try_from(number * self.sb.block_size as u64).expect("block offset is in the image")
     }
@@ -723,8 +823,9 @@ impl<'a> Filesystem<'a> {
         let Some(left) = remaining.checked_sub(size as u64) else {
             self.metadata_budget.set(0);
             return Err(error(format!(
-                "Invalid metadata: more than {} B read (twice the filesystem size)",
-                (self.data.len() as u64).saturating_mul(2)
+                "Invalid metadata: more than {} B read (twice {})",
+                (self.data.len() as u64).saturating_mul(2),
+                self.budget_basis()
             )));
         };
         self.metadata_budget.set(left);
@@ -737,10 +838,20 @@ impl<'a> Filesystem<'a> {
     }
 
     /// Block `number`, read as metadata and charged to the metadata budget.
-    fn metadata_block(&self, number: u64) -> Result<&'a [u8]> {
+    fn charged_block(&self, number: u64) -> ReadResult<&'a [u8]> {
         let block = self.block(number)?;
         self.charge(block.len())?;
         Ok(block)
+    }
+
+    /// Block `number`, read as metadata and charged to the metadata budget.
+    /// A block past the end of the input is recorded as absent.
+    fn metadata_block(&self, number: u64) -> ReadResult<&'a [u8]> {
+        let read = self.charged_block(number);
+        if let Err(Fault::Absent) = read {
+            self.absent_blocks.borrow_mut().insert(number);
+        }
+        read
     }
 }
 

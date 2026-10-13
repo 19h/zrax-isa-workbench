@@ -33,6 +33,13 @@
 //! `blockSize`; offsets in notes, metadata and members are file bytes. The
 //! volume names no processor, so members are classified from their own
 //! bytes.
+//!
+//! A volume larger than the input (`totalBlocks` times `blockSize`, [TN1150]
+//! "Volume Header"; containers hand on the first 64 MiB of a larger
+//! partition) is read as a truncated volume when its header, its B-tree
+//! header nodes and its root folder are present: B-tree nodes past the end
+//! of the input are skipped and counted, and files are listed only when
+//! all of their data is present.
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::compressed::size_text;
@@ -162,6 +169,35 @@ fn error(message: impl Into<String>) -> ClassifierError {
     }
 }
 
+/// Why a read of the volume failed.
+#[derive(Debug)]
+enum Fault {
+    /// The volume is invalid; the error says how.
+    Invalid(ClassifierError),
+    /// The bytes lie inside the volume but past the end of the input, which
+    /// holds only the start of a truncated volume.
+    Absent,
+}
+
+impl From<ClassifierError> for Fault {
+    fn from(e: ClassifierError) -> Self {
+        Self::Invalid(e)
+    }
+}
+
+/// The result of a read of the volume's bytes.
+type ReadResult<T> = std::result::Result<T, Fault>;
+
+/// A read that failed because the volume is invalid.
+fn invalid<T>(message: impl Into<String>) -> ReadResult<T> {
+    Err(Fault::Invalid(error(message)))
+}
+
+/// A size in bytes as text; a size past the address space in bytes.
+fn volume_size_text(size: u64) -> String {
+    usize::try_from(size).map_or_else(|_| format!("{size} B"), size_text)
+}
+
 /// The `len` bytes at `start`.
 fn slice(data: &[u8], start: usize, len: usize) -> Result<&[u8]> {
     let end = start
@@ -245,48 +281,92 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 struct Placement {
     /// File offset of volume byte 0.
     offset: usize,
-    /// Bytes from `offset` to the end of the volume's region: the end of
+    /// Size of the wrapper's embedded extent, which the volume must fit in;
+    /// `None` for a volume that starts the input.
+    extent: Option<usize>,
+    /// Bytes of the volume's region present from `offset`: to the end of
     /// the input, or of the wrapper's embedded extent.
-    available: usize,
+    present: usize,
     /// The HFS wrapper, if the volume is embedded in one.
     wrapper: Option<header::Wrapper>,
 }
 
-/// Where the volume lies in `data` for `layout`.
+/// Where the volume lies in `data` for `layout`. A wrapper whose embedded
+/// extent passes the end of the input is placed when the embedded volume
+/// header is present; the volume is then read as a truncated volume.
 fn place(data: &[u8], layout: Layout) -> Result<Placement> {
     match layout {
         Layout::HfsPlus | Layout::Hfsx => Ok(Placement {
             offset: 0,
-            available: data.len(),
+            extent: None,
+            present: data.len(),
             wrapper: None,
         }),
         Layout::HfsWrapper => {
             let wrapper = header::Wrapper::parse(data)?;
-            let end = wrapper
+            let header_end = wrapper
                 .offset
-                .checked_add(wrapper.size)
-                .filter(|&end| end <= data.len())
-                .ok_or_else(|| {
-                    error(format!(
-                        "Truncated HFS wrapper: the embedded volume at 0x{:X} needs {} B, {} B \
-                         present",
-                        wrapper.offset,
-                        wrapper.size,
-                        data.len().saturating_sub(wrapper.offset)
-                    ))
-                })?;
+                .checked_add(VOLUME_HEADER_OFFSET + VOLUME_HEADER_SIZE);
+            let present = match wrapper.offset.checked_add(wrapper.size) {
+                Some(end) if end <= data.len() => wrapper.size,
+                Some(_) if header_end.is_some_and(|end| end <= data.len()) => {
+                    data.len() - wrapper.offset
+                }
+                _ => return Err(truncated_wrapper(&wrapper, data.len())),
+            };
             Ok(Placement {
                 offset: wrapper.offset,
-                available: end - wrapper.offset,
+                extent: Some(wrapper.size),
+                present,
                 wrapper: Some(wrapper),
             })
         }
     }
 }
 
+/// The error for a wrapper whose embedded extent passes the end of the
+/// input.
+fn truncated_wrapper(wrapper: &header::Wrapper, input_size: usize) -> ClassifierError {
+    error(format!(
+        "Truncated HFS wrapper: the embedded volume at 0x{:X} needs {} B, {} B present",
+        wrapper.offset,
+        wrapper.size,
+        input_size.saturating_sub(wrapper.offset)
+    ))
+}
+
+/// The error for a volume larger than the bytes of its region: `present`
+/// bytes of the input, or of the wrapper's embedded extent.
+fn truncated_volume(header: &VolumeHeader, present: usize) -> ClassifierError {
+    error(format!(
+        "Truncated volume: {} blocks of {} need {} B, {present} B present",
+        header.total_blocks,
+        size_text(header.block_size as usize),
+        header.size()
+    ))
+}
+
+impl Placement {
+    /// Whether the wrapper's embedded extent passes the end of the input.
+    fn is_wrapper_cut(&self) -> bool {
+        self.extent.is_some_and(|extent| self.present < extent)
+    }
+
+    /// The error for a volume that does not fit in its region, or whose
+    /// header nodes or root folder lie past the end of the input: the
+    /// truncated wrapper, or the truncated volume.
+    fn truncation_error(&self, header: &VolumeHeader, input_size: usize) -> ClassifierError {
+        match &self.wrapper {
+            Some(wrapper) if self.is_wrapper_cut() => truncated_wrapper(wrapper, input_size),
+            _ => truncated_volume(header, self.present),
+        }
+    }
+}
+
 /// The volume's bytes and header, with the metadata read budget.
 struct Volume<'a> {
-    /// The volume's `totalBlocks` allocation blocks.
+    /// The volume's `totalBlocks` allocation blocks, or the bytes of them
+    /// present when the input ends inside the volume.
     data: &'a [u8],
     /// File offset of volume byte 0.
     base: usize,
@@ -306,8 +386,19 @@ impl<'a> Volume<'a> {
         self.base + at
     }
 
-    /// The bytes of `count` allocation blocks from block `start`.
-    fn blocks(&self, start: u32, count: u32) -> Result<&'a [u8]> {
+    /// Whether the input ends before the volume does.
+    fn is_truncated(&self) -> bool {
+        (self.data.len() as u64) < self.header.size()
+    }
+
+    /// The bytes of the volume present, as text for notes.
+    fn present_text(&self) -> String {
+        size_text(self.data.len())
+    }
+
+    /// Check that `count` allocation blocks from block `start` lie inside
+    /// the volume.
+    fn check_extent(&self, start: u32, count: u32) -> Result<()> {
         let end = u64::from(start) + u64::from(count);
         if end > u64::from(self.header.total_blocks) {
             return Err(error(format!(
@@ -315,11 +406,36 @@ impl<'a> Volume<'a> {
                 self.header.total_blocks
             )));
         }
-        // Both ends lie within the volume bytes, so they fit in usize.
-        let first = usize::try_from(u64::from(start) * self.block_size())
-            .expect("block offset is in the volume");
-        let last = usize::try_from(end * self.block_size()).expect("block offset is in the volume");
-        Ok(&self.data[first..last])
+        Ok(())
+    }
+
+    /// The bytes of `count` allocation blocks from block `start`.
+    fn blocks(&self, start: u32, count: u32) -> ReadResult<&'a [u8]> {
+        self.check_extent(start, count)?;
+        let first = u64::from(start) * self.block_size();
+        self.present(first, u64::from(count) * self.block_size())
+    }
+
+    /// The `len` bytes at volume offset `at`, a range inside the volume;
+    /// absent when they pass the end of the input.
+    fn present(&self, at: u64, len: u64) -> ReadResult<&'a [u8]> {
+        let range = at
+            .checked_add(len)
+            .filter(|&end| end <= self.data.len() as u64)
+            .and_then(|end| Some(usize::try_from(at).ok()?..usize::try_from(end).ok()?));
+        match range {
+            Some(range) => Ok(&self.data[range]),
+            None => Err(Fault::Absent),
+        }
+    }
+
+    /// What the metadata read limit is a multiple of, for messages.
+    fn budget_basis(&self) -> String {
+        if self.is_truncated() {
+            format!("the {} present", self.present_text())
+        } else {
+            "the volume size".to_string()
+        }
     }
 
     /// Account for `size` bytes of metadata about to be read.
@@ -329,8 +445,9 @@ impl<'a> Volume<'a> {
             self.metadata_budget.set(0);
             return Err(error(format!(
                 "Invalid metadata: more than {} B of B-tree nodes read ({METADATA_READ_FACTOR} times \
-                 the volume size)",
-                (self.data.len() as u64).saturating_mul(METADATA_READ_FACTOR)
+                 {})",
+                (self.data.len() as u64).saturating_mul(METADATA_READ_FACTOR),
+                self.budget_basis()
             )));
         };
         self.metadata_budget.set(left);
@@ -357,7 +474,7 @@ impl<'a> Filesystem<'a> {
     /// Open the extents overflow, catalog and attributes B-trees. The
     /// extents overflow file's own extents are all in the volume header
     /// ([TN1150] "Core Concepts").
-    fn open(vol: Volume<'a>) -> Result<Self> {
+    fn open(vol: Volume<'a>) -> ReadResult<Self> {
         let header = &vol.header;
         let extents = if header.extents_file.logical_size == 0 {
             None
@@ -400,8 +517,18 @@ fn special_fork(
     extents: Option<&BTree>,
     data: &ForkData,
     file_id: u32,
-) -> Result<fork::Fork> {
+) -> ReadResult<fork::Fork> {
     fork::resolve(vol, extents, data, file_id, DATA_FORK, data.logical_size)
+}
+
+/// A read of a structure the volume cannot be listed without: bytes past
+/// the end of the input are the error `truncation`.
+fn needed<T>(read: ReadResult<T>, truncation: impl FnOnce() -> ClassifierError) -> Result<T> {
+    match read {
+        Ok(value) => Ok(value),
+        Err(Fault::Invalid(e)) => Err(e),
+        Err(Fault::Absent) => Err(truncation()),
+    }
 }
 
 /// Parse an HFS Plus or HFSX volume into the shared container model.
@@ -411,10 +538,12 @@ fn special_fork(
 /// # Errors
 ///
 /// [`ClassifierError::HfsPlusParseError`] for an invalid volume header or
-/// wrapper, an unsupported HFSX version, a volume larger than the input or
-/// followed by data other than padding, an invalid extents, catalog or
-/// attributes B-tree header, or a missing root folder. Damage below the
-/// root folder is reported in notes instead.
+/// wrapper, an unsupported HFSX version, a volume larger than its wrapper's
+/// embedded extent or followed by data other than padding, an invalid
+/// extents, catalog or attributes B-tree header, or a missing root folder,
+/// and for a volume larger than the input whose B-tree header nodes or
+/// root folder lie past the end of the input. Damage below the root folder
+/// is reported in notes instead.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     let placement = place(data, layout)?;
     let header = VolumeHeader::read(data, placement.offset)?;
@@ -427,18 +556,59 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
         )));
     }
     let volume_size = header.size();
-    let available = &data[placement.offset..placement.offset + placement.available];
-    let Some(size) = usize::try_from(volume_size)
+    if placement
+        .extent
+        .is_some_and(|extent| volume_size > extent as u64)
+    {
+        return Err(placement.truncation_error(&header, data.len()));
+    }
+    let available = &data[placement.offset..placement.offset + placement.present];
+    let consumed = match usize::try_from(volume_size)
         .ok()
         .filter(|&size| size <= available.len())
-    else {
-        return Err(error(format!(
-            "Truncated volume: {} blocks of {} need {volume_size} B, {} B present",
-            header.total_blocks,
-            size_text(header.block_size as usize),
-            available.len()
-        )));
+    {
+        Some(size) => consumed_size(data, available, size, &placement, &header)?,
+        // The input ends inside the volume: all of it belongs to the volume.
+        None => data.len(),
     };
+    let present = volume_bytes(available, volume_size);
+    let declared = header.clone();
+    let truncation = || placement.truncation_error(&declared, data.len());
+    let vol = Volume {
+        data: present,
+        base: placement.offset,
+        header,
+        metadata_budget: Cell::new((present.len() as u64).saturating_mul(METADATA_READ_FACTOR)),
+    };
+    // The B-tree header nodes and the root folder must be present; without
+    // them nothing can be listed.
+    let fs = needed(Filesystem::open(vol), truncation)?;
+    let root = needed(walk::root(&fs), truncation)?;
+    let mut c = Container::new(layout.format(), layout.label(), "hfsplus");
+    c.consumed = consumed;
+    describe(&fs, layout, placement.wrapper.as_ref(), &mut c);
+    journal_notes(&fs, &mut c);
+    walk::walk(&fs, root, &mut c);
+    walk::startup_file(&fs, &mut c);
+    Ok(c)
+}
+
+/// The bytes of a volume of `size` bytes present in `available`: all of
+/// them, or those before the end of the input.
+fn volume_bytes(available: &[u8], size: u64) -> &[u8] {
+    let present = usize::try_from(size).map_or(available.len(), |size| size.min(available.len()));
+    &available[..present]
+}
+
+/// The bytes of the input a complete volume of `size` bytes consumes, after
+/// checking what follows it in `available`.
+fn consumed_size(
+    data: &[u8],
+    available: &[u8],
+    size: usize,
+    placement: &Placement,
+    header: &VolumeHeader,
+) -> Result<usize> {
     // A disk that is not a multiple of the block size ends in less than one
     // block that no allocation block counts; it holds the alternate volume
     // header ([TN1150] "Volume Header"). Within a wrapper, the rest of the
@@ -453,7 +623,6 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
             trailing.len()
         )));
     }
-
     // A wrapper's own structures surround the embedded volume, and a
     // remainder shorter than a block belongs to the disk; longer padding
     // does not.
@@ -462,20 +631,7 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     } else {
         size
     };
-    let vol = Volume {
-        data: &available[..size],
-        base: placement.offset,
-        header,
-        metadata_budget: Cell::new((size as u64).saturating_mul(METADATA_READ_FACTOR)),
-    };
-    let fs = Filesystem::open(vol)?;
-    let mut c = Container::new(layout.format(), layout.label(), "hfsplus");
-    c.consumed = consumed;
-    describe(&fs, layout, placement.wrapper.as_ref(), &mut c);
-    journal_notes(&fs, &mut c);
-    walk::walk(&fs, &mut c)?;
-    walk::startup_file(&fs, &mut c);
-    Ok(c)
+    Ok(consumed)
 }
 
 /// Summary notes and metadata from the volume header and the catalog
@@ -496,6 +652,14 @@ fn describe(
         size_text(fs.catalog.node_size),
         fs.catalog.depth
     ));
+    if fs.vol.is_truncated() {
+        c.notes.push(format!(
+            "Volume truncated: {} of {} present; files are listed only when all of their data is \
+             present",
+            fs.vol.present_text(),
+            volume_size_text(header.size())
+        ));
+    }
     if let Some(wrapper) = wrapper {
         c.notes.push(format!(
             "HFS wrapper \"{}\": embedded volume at 0x{:X}, {}; the wrapper's own files are not \
@@ -591,15 +755,19 @@ fn journal_notes(fs: &Filesystem<'_>, c: &mut Container<'_>) {
     }
     match journal(&fs.vol) {
         Ok(text) => c.notes.push(text),
-        Err(e) => c.notes.push(format!(
+        Err(Fault::Invalid(e)) => c.notes.push(format!(
             "Journaled volume; the journal could not be read: {}",
             walk::message(e)
+        )),
+        Err(Fault::Absent) => c.notes.push(format!(
+            "Journaled volume; the journal lies past the {} present and was not read",
+            fs.vol.present_text()
         )),
     }
 }
 
 /// What the journal info block and the journal header say.
-fn journal(vol: &Volume<'_>) -> Result<String> {
+fn journal(vol: &Volume<'_>) -> ReadResult<String> {
     let info = vol.blocks(vol.header.journal_info_block, 1)?;
     let flags = be_u32(info, 0)?;
     if flags & JOURNAL_ON_OTHER_DEVICE != 0 || flags & JOURNAL_IN_FS == 0 {
@@ -607,17 +775,14 @@ fn journal(vol: &Volume<'_>) -> Result<String> {
     }
     let offset = be_u64(info, JOURNAL_INFO_OFFSET_FIELD)?;
     let size = be_u64(info, JOURNAL_INFO_SIZE_FIELD)?;
-    let at = usize::try_from(offset)
-        .ok()
-        .filter(|&at| {
-            at.checked_add(JOURNAL_HEADER_SIZE)
-                .is_some_and(|end| end <= vol.data.len())
-        })
-        .ok_or_else(|| error(format!("Invalid journal offset 0x{offset:X}")))?;
+    let header_end = offset.checked_add(JOURNAL_HEADER_SIZE as u64);
+    if header_end.map_or(true, |end| end > vol.header.size()) {
+        return invalid(format!("Invalid journal offset 0x{offset:X}"));
+    }
     let location = format!(
         "journal of {} at 0x{:X}",
         size_text(usize::try_from(size).unwrap_or(usize::MAX)),
-        vol.file_offset(at)
+        vol.base as u64 + offset
     );
     if flags & JOURNAL_NEED_INIT != 0 {
         return Ok(format!(
@@ -626,16 +791,16 @@ fn journal(vol: &Volume<'_>) -> Result<String> {
     }
     // The journal header is written in the byte order of the host that
     // wrote it; ENDIAN_MAGIC tells which ([TN1150] "Journal Header").
-    let journal_header = &vol.data[at..at + JOURNAL_HEADER_SIZE];
+    let journal_header = vol.present(offset, JOURNAL_HEADER_SIZE as u64)?;
     let le = if be_u32(journal_header, 0)? == JOURNAL_HEADER_MAGIC {
         false
     } else if le_u32(journal_header, 0)? == JOURNAL_HEADER_MAGIC {
         true
     } else {
-        return Err(error(format!(
+        return invalid(format!(
             "Invalid journal header magic 0x{:08X}",
             be_u32(journal_header, 0)?
-        )));
+        ));
     };
     let read_u64 = |at| {
         if le {
@@ -650,9 +815,7 @@ fn journal(vol: &Volume<'_>) -> Result<String> {
         be_u32(journal_header, 4)?
     };
     if endian != JOURNAL_ENDIAN_MAGIC {
-        return Err(error(format!(
-            "Invalid journal endian field 0x{endian:08X}"
-        )));
+        return invalid(format!("Invalid journal endian field 0x{endian:08X}"));
     }
     let start = read_u64(8)?;
     let end = read_u64(16)?;

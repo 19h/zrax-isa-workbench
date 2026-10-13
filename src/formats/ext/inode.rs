@@ -57,14 +57,14 @@ impl Filesystem<'_> {
     /// `i_links_count`, 0x20 `i_flags`, 0x28 `i_block` (60 bytes), 0x64
     /// `i_generation`, 0x6C `i_size_high`, 0x7C `l_i_checksum_lo`, 0x80
     /// `i_extra_isize`, 0x82 `i_checksum_hi`.
-    pub(super) fn inode(&self, number: u32) -> Result<Inode> {
+    pub(super) fn inode(&self, number: u32) -> ReadResult<Inode> {
         let raw = self.inode_record(number)?;
         let mode = le_u16(raw, 0x00)?;
         let links_count = le_u16(raw, 0x1a)?;
         if mode == 0 || links_count == 0 {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid inode {number}: not in use (mode 0x{mode:04X}, {links_count} links)"
-            )));
+            ));
         }
         let extra_isize = self.extra_isize(raw, number)?;
         let generation = le_u32(raw, 0x64)?;
@@ -98,46 +98,54 @@ impl Filesystem<'_> {
 
     /// The record of inode `number` in its group's inode table. Groups
     /// with descriptor checksums record which inodes were never
-    /// initialized; those are refused, as their bytes are not inodes.
-    fn inode_record(&self, number: u32) -> Result<&[u8]> {
+    /// initialized; those are refused, as their bytes are not inodes. A
+    /// record past the end of a truncated filesystem's input, or of a group
+    /// whose descriptor is, is absent.
+    fn inode_record(&self, number: u32) -> ReadResult<&[u8]> {
         if number == 0 || number > self.sb.inodes_count {
-            return Err(error(format!(
+            return invalid(format!(
                 "Invalid inode number {number} (the filesystem has {} inodes)",
                 self.sb.inodes_count
-            )));
+            ));
         }
         let group = (number - 1) / self.sb.inodes_per_group;
         let index = (number - 1) % self.sb.inodes_per_group;
         // `s_inodes_count` is the group count times `s_inodes_per_group`
-        // (checked with the superblock), so `group` indexes `groups`.
-        let desc = self.groups[group as usize];
+        // (checked with the superblock), so `group` indexes `groups` unless
+        // its descriptor lies past the end of the input.
+        let Some(&desc) = self.groups.get(group as usize) else {
+            return Err(Fault::Absent);
+        };
         if self.sb.has_group_desc_csum() {
             let initialized = self.sb.inodes_per_group.saturating_sub(desc.itable_unused);
             if desc.flags & EXT4_BG_INODE_UNINIT != 0 || index >= initialized {
-                return Err(error(format!(
+                return invalid(format!(
                     "Invalid inode {number}: uninitialized in group {group}'s inode table"
-                )));
+                ));
             }
         }
         let block_size = self.sb.block_size as u64;
         let inode_size = self.sb.inode_size as u64;
-        let offset = desc
+        let range = desc
             .inode_table
             .checked_mul(block_size)
             .and_then(|table| table.checked_add(u64::from(index) * inode_size))
-            .and_then(|offset| usize::try_from(offset).ok())
-            .filter(|&offset| {
-                offset
-                    .checked_add(self.sb.inode_size)
-                    .is_some_and(|end| end <= self.data.len())
-            })
+            .and_then(|offset| Some(offset..offset.checked_add(inode_size)?))
+            .filter(|range| range.end <= self.sb.size())
             .ok_or_else(|| {
                 error(format!(
                     "Invalid inode {number}: its record is beyond the filesystem"
                 ))
             })?;
+        let read = self.present(range.start, range.end);
+        if let Err(Fault::Absent) = read {
+            self.absent_blocks
+                .borrow_mut()
+                .insert(range.start / block_size);
+        }
+        let record = read?;
         self.charge(self.sb.inode_size)?;
-        Ok(&self.data[offset..offset + self.sb.inode_size])
+        Ok(record)
     }
 
     /// `i_extra_isize`: 0 for 128-byte records; otherwise a multiple of 4

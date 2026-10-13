@@ -125,9 +125,9 @@ The CRC32C and the chained CRC16 helpers are in `src/formats/checksum.rs`
 
 ## Validation and resource bounds
 
-- The image must hold `s_blocks_count` blocks; bytes after the filesystem
-  may only be `0x00` or `0xFF` padding. Otherwise the image is a parse
-  error.
+- Bytes after a filesystem of `s_blocks_count` blocks may only be `0x00`
+  or `0xFF` padding; otherwise the image is a parse error. An image shorter
+  than the filesystem is read as a truncated filesystem (see below).
 - Incompatible features outside the kernel's `EXT4_FEATURE_INCOMPAT_SUPP`
   are refused: `compression`, `journal_dev` (an external journal, not a
   filesystem), `dirdata` and unnamed bits.
@@ -150,14 +150,49 @@ The CRC32C and the chained CRC16 helpers are in `src/formats/checksum.rs`
   whole file if it is extracted. A directory is mapped up to the smaller of
   its size and the block count.
 - Metadata reads (inode records, directory, extent and indirect blocks) are
-  limited to twice the filesystem size. When the limit is reached the walk
-  stops and a note counts the directories not walked.
+  limited to twice the filesystem size (for a truncated filesystem, twice
+  the bytes present). When the limit is reached the walk stops and a note
+  counts the directories not walked.
 - Directories deeper than 64 levels below the root are not walked.
 - At most 4096 members are listed and 65,536 regular files examined.
 - A member larger than 64 MiB is not extracted; extraction stops when the
   members reach 256 MiB in total. Notes count what was left out.
 - Problems below the root are listed in up to 16 notes; further problems
   are counted. An unreadable or non-directory root inode is a parse error.
+
+## Truncated filesystems
+
+Containers decode at most 64 MiB of a component (`MAX_PAYLOAD`), so a
+larger filesystem in a disk image, virtual disk or compressed stream
+reaches this parser cut. Linux refuses such a filesystem
+(`ext4_check_geometry`: "bad geometry: block count %llu exceeds size of
+device"); this reader lists what the bytes present hold:
+
+- Detection is unchanged: the superblock alone.
+- The superblock (with its checksum), the descriptor of group 0 and the
+  root inode's record must be present. Without them the image is the error
+  it was before: `Truncated filesystem: N blocks of B need S B, P B
+  present`.
+- Block numbers, descriptor locations and inode record locations are still
+  checked against the declared filesystem; a defect in the bytes present is
+  an error or a note, as for a complete image.
+- Group descriptors are read up to the first one past the end of the input
+  (descriptor blocks follow the groups they describe, with and without
+  `meta_bg`); inodes of the later groups are absent.
+- An inode record, extent or indirect block past the end of the input is
+  skipped, and a note counts the distinct blocks the walk asked for: "N
+  metadata blocks that the walk needed (group descriptors, inode tables,
+  extent or indirect blocks) lie past the X present; they were not read".
+- A directory's blocks are read up to the first one past the end of each
+  of its runs (the rest of the run lies past it too, so it is counted
+  without being visited); its other runs are still read: "N directory
+  blocks lie past the X present; their entries were not read".
+- A regular file is listed only when every block of its data and every
+  block that maps it is present. Others are counted: "N regular files were
+  not listed: file data, or blocks that map it, lie partly or wholly past
+  the X present".
+- A note states "Volume truncated: X of Y present; files are listed only
+  when all of their data is present"; the whole input is consumed.
 
 ## Assumption register
 
@@ -171,6 +206,8 @@ The CRC32C and the chained CRC16 helpers are in `src/formats/checksum.rs`
 | E6 | `meta_bg` descriptor blocks are where `descriptor_loc` puts them | Synthetic 33-group `meta_bg` image and the unit test `meta_bg_descriptor_blocks_follow_each_meta_groups_backup`; no `mke2fs -O meta_bg` image was tested |
 | E7 | Inode checksums are defined only for a Linux creator OS | Follows `ext4_inode_csum_verify`; the fixtures are Linux-created; other creators were not tested |
 | E8 | 64 KiB-block `rec_len` encoding follows `ext4_rec_len_from_disk` | Synthetic 64 KiB-block image with a `0xFFFF` record and the unit test `large_block_rec_len_encodes_the_high_bits_in_the_low_bits`; no real 64 KiB-block image was tested |
+| E9 | Group descriptor blocks lie in the order of their groups, so the descriptors present are those before the first absent one | `descriptor_loc` places them after the superblock or, with `meta_bg`, in the first group of each meta group; a hostile superblock that breaks the order loses groups (they are reported absent), it never lists missing bytes |
+| E10 | A truncated image is a prefix of the whole filesystem | `prefixes_are_truncated_filesystems_that_list_only_members_inside_them` checks every member of each sampled prefix of both fixtures against the whole parse; not tested on a real cut partition |
 
 ## Known boundaries
 
@@ -181,7 +218,7 @@ The CRC32C and the chained CRC16 helpers are in `src/formats/checksum.rs`
 | Journal | Not replayed. With `recover` set, a note says that file contents may be stale |
 | Partition tables, filesystems at an offset | Not detected; only an image whose superblock is at file offset 1024 |
 | Trailing data other than padding | Parse error, for example a disk dump with further partitions after the filesystem |
-| Truncated images | Parse error; nothing is listed |
+| Truncated images | Read as truncated filesystems when the root inode is present; files whose blocks are all present are listed, the rest counted. Files in directories whose blocks or inodes lie past the end are not known; only the metadata and directory blocks the walk asked for are counted |
 | Bitmaps, htree index, extended attribute and journal checksums | Not verified |
 | htree hashes | Not computed; entries are found by the linear read |
 | Symlinks | Not followed; fast and slow symlinks are not read |
@@ -214,3 +251,23 @@ Not verified: images written by other tools (Android `make_ext4fs`,
 other than the synthetic one, filesystems larger than 512 KiB, and the
 triple-indirect block map outside
 the unit test `block_maps_resolve_direct_single_double_and_triple_indirect_blocks`.
+
+Truncated filesystems, on 2026-10-13 (macOS 27.2 AArch64, rustc
+1.100.0-nightly `f248f4038`): `tests/ext.rs` (23 tests) and the 13 unit
+tests in `src/formats/ext/` passed within `cargo test --all-features
+--locked` (2,425 passed, 6 ignored). The prefix sweep parses every prefix
+of both fixtures up to one block past the root inode's record and, after
+it, every 61st prefix and the prefixes at and around each block boundary:
+each is the old "Truncated filesystem" error exactly when it ends before
+the root inode's record, and otherwise a truncated filesystem whose members
+are byte-identical to the whole image's and lie inside the prefix. The unit
+test `blocks_past_the_end_of_a_truncated_filesystem_are_absent` covers an
+indirect block past the end. `web/tests/ext.test.mjs` (4 tests) passed
+through `/pkg/` and `/dist/`. A differential snapshot against the previous
+commit over both fixtures (777,076 inputs: the whole images, every prefix
+and single-byte mutations of every 7th byte and every 3rd of the first
+16 KiB) changed 379,136 outcomes, all of prefixes whose filesystem exceeds
+them: old "Truncated filesystem" errors that are now truncated
+filesystems. Not verified: a real filesystem cut by a
+container (no ext image larger than 64 MiB was at hand), and `meta_bg`
+filesystems cut before a later meta group's descriptors.

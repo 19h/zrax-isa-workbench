@@ -38,6 +38,14 @@
 //! count 2048-byte sectors and its sector counts 512-byte virtual sectors.
 //! The format names no processor. Only the El Torito platform ID names one
 //! for a boot image; members are classified from their own bytes.
+//!
+//! A volume larger than the input (the volume space size, 8.4.8;
+//! containers hand on the first 64 MiB of a larger image) is read as a
+//! truncated volume when its descriptor set and the start of its root
+//! directory are present: directory extents, path tables, continuation
+//! areas and El Torito images past the end of the input are skipped and
+//! counted or noted, and files are listed only when all of their data is
+//! present.
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::container::Container;
@@ -134,25 +142,23 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 /// # Errors
 ///
 /// [`ClassifierError::Iso9660ParseError`] for a volume descriptor set
-/// without a valid primary volume descriptor or terminator, a volume larger
-/// than the file or followed by data other than padding (unless the system
-/// area holds a partition table that may describe it), or an unreadable
-/// root directory. Damage below the root directory and an invalid El Torito
-/// catalog are reported in notes.
+/// without a valid primary volume descriptor or terminator, a volume
+/// followed by data other than padding (unless the system area holds a
+/// partition table that may describe it), or an unreadable root directory,
+/// and for a volume larger than the file whose root directory (or its
+/// Rock Ridge continuation, or the Joliet root that names the files) lies
+/// past the end of the file. Damage below the root directory and an
+/// invalid El Torito catalog are reported in notes.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     let set = descriptors::read_set(data)?;
     let volume = &set.primary;
     let volume_size = volume.size()?;
-    let Some(image) = data.get(..volume_size) else {
-        return Err(error(format!(
-            "Truncated ISO 9660 volume: {} blocks of {} B need {volume_size} B, {} B present",
-            volume.space_blocks,
-            volume.block_size,
-            data.len()
-        )));
+    let image = Image {
+        bytes: &data[..volume_size.min(data.len())],
+        size: volume_size,
     };
     let system_area = descriptors::SystemArea::read(data);
-    let trailing = &data[volume_size..];
+    let trailing = data.get(volume_size..).unwrap_or_default();
     if !is_padding(trailing) && !system_area.has_partition_table() {
         return Err(error(format!(
             "Invalid trailing data: {} B after the volume at 0x{volume_size:X} are not padding",
@@ -161,8 +167,17 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     }
 
     let mut c = Container::new(layout.format(), layout.label(), "iso9660");
-    c.consumed = volume_size;
-    let tree = walk::Tree::choose(image, &set)?;
+    c.consumed = image.bytes.len();
+    // The root directory's first block must be present; without it
+    // nothing can be listed.
+    let Some(tree) = walk::Tree::choose(image, &set)? else {
+        return Err(error(format!(
+            "Truncated ISO 9660 volume: {} blocks of {} B need {volume_size} B, {} B present",
+            volume.space_blocks,
+            volume.block_size,
+            data.len()
+        )));
+    };
     describe(&set, &tree, &mut c);
     let catalog = set
         .el_torito
@@ -200,6 +215,15 @@ fn describe(set: &DescriptorSet, tree: &walk::Tree<'_>, c: &mut Container<'_>) {
         size_text(u64::from(volume.space_blocks) * volume.block_size as u64),
         tree.names.description()
     ));
+    let image = tree.image();
+    if image.is_truncated() {
+        c.notes.push(format!(
+            "Volume truncated: {} of {} present; files are listed only when all of their data \
+             is present",
+            image.present_text(),
+            size_text(image.size as u64)
+        ));
+    }
     if let Some(joliet) = &set.joliet {
         let use_text = match (&tree.names, &tree.joliet_unusable) {
             (walk::Names::Joliet, _) => "its hierarchy supplies the names".to_string(),
@@ -273,6 +297,57 @@ fn describe(set: &DescriptorSet, tree: &walk::Tree<'_>, c: &mut Container<'_>) {
 fn error(message: impl Into<String>) -> ClassifierError {
     ClassifierError::Iso9660ParseError {
         message: message.into(),
+    }
+}
+
+/// A volume's bytes: all of them, or the first bytes of a truncated
+/// volume.
+#[derive(Debug, Clone, Copy)]
+struct Image<'a> {
+    /// The bytes of the volume present in the input.
+    bytes: &'a [u8],
+    /// Volume size in bytes: the volume space size times the logical block
+    /// size (8.4.8, 8.4.12).
+    size: usize,
+}
+
+impl<'a> Image<'a> {
+    /// Whether the input ends before the volume does.
+    fn is_truncated(&self) -> bool {
+        self.bytes.len() < self.size
+    }
+
+    /// The bytes of the volume present, as text for notes.
+    fn present_text(&self) -> String {
+        size_text(self.bytes.len() as u64)
+    }
+
+    /// Whether the `len` bytes at file offset `offset` lie inside the
+    /// volume.
+    fn holds(&self, offset: usize, len: usize) -> bool {
+        offset.checked_add(len).is_some_and(|end| end <= self.size)
+    }
+
+    /// The `len` bytes at file offset `offset`, a range inside the volume;
+    /// `None` when they pass the end of the input.
+    fn present(&self, offset: usize, len: usize) -> Option<&'a [u8]> {
+        self.bytes.get(offset..offset.checked_add(len)?)
+    }
+}
+
+/// Why bytes below the root directory could not be read.
+#[derive(Debug)]
+enum Fault {
+    /// A defect, for the notes.
+    Defect(String),
+    /// The bytes lie inside the volume but past the end of the input,
+    /// which holds only the start of a truncated volume.
+    Absent,
+}
+
+impl From<String> for Fault {
+    fn from(defect: String) -> Self {
+        Self::Defect(defect)
     }
 }
 

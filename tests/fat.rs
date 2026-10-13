@@ -6,7 +6,10 @@
 //! boot-code stubs, truncated dumps, limits), corrupted fields and
 //! checksums, and truncation and mutation sweeps.
 
-use std::borrow::Cow;
+#[path = "support/truncated_volume.rs"]
+mod truncated_volume;
+
+use truncated_volume::{assert_members_inside, prefix_ends};
 use zrax::formats::compressed::{self, Codec};
 use zrax::formats::container::{Child, Classify, Container};
 use zrax::formats::fat::{self, Layout};
@@ -559,16 +562,34 @@ fn exfat_boot_region_damage_is_a_parse_error() {
         exfat_error(&image[..4096]),
         "FAT filesystem parse error: Truncated main boot region: 6144 B needed, 4096 B present"
     );
-    assert_eq!(
-        exfat_error(&image[..1 << 20]),
-        "FAT filesystem parse error: Truncated volume: 2097152 B declared, 1048576 B present"
-    );
-    // A dump that ends a few clusters early is still read, with a note.
-    let c = parse_exfat(&image[..image.len() - 8192]);
-    assert!(has_note(
-        &c,
-        "Truncated dump: the volume declares 2097152 B and the input ends 8192 B early"
-    ));
+    // Without the FAT (sectors 24-31) or the root directory's allocation
+    // bitmap and up-case table entries (cluster 5, from 0x7000), a
+    // truncated volume lists nothing.
+    for end in [0x3800, 0x7000] {
+        assert_eq!(
+            exfat_error(&image[..end]),
+            format!(
+                "FAT filesystem parse error: Truncated volume: 2097152 B declared, {end} B present"
+            )
+        );
+    }
+    // With them, it is read up to the end of the input, at any length.
+    for end in [1 << 20, image.len() - 8192] {
+        let c = parse_exfat(&image[..end]);
+        assert!(
+            has_note(
+                &c,
+                &format!(
+                    "Volume truncated: {} of 2 MiB present; files are listed only when all of \
+                     their data is present",
+                    if end == 1 << 20 { "1 MiB" } else { "2040 KiB" }
+                )
+            ),
+            "{:?}",
+            c.notes
+        );
+        assert_members_inside("exfat.img", &parse_exfat(&image), &c, end);
+    }
 }
 
 #[test]
@@ -1662,15 +1683,21 @@ fn truncated_dumps_and_trailing_data_are_noted() {
     assert!(
         has_note(
             &c,
-            "Truncated dump: the volume declares 50688 B and the input ends 1024 B early"
+            "Volume truncated: 49664 B of 50688 B present; files are listed only when all of \
+             their data is present"
         ),
         "{:?}",
         c.notes
     );
     assert_eq!(c.consumed, truncated.len());
     assert_eq!(labels(&c).len(), 3, "the members are all before the cut");
-    // More than an eighth of the volume missing is not FAT.
-    assert_eq!(fat::detect_weak(&image[..image.len() - 13 * SECTOR]), None);
+    // More than an eighth of the volume missing is not detected as FAT,
+    // which has no magic; parsed as FAT12, it is a truncated volume.
+    let short = &image[..image.len() - 13 * SECTOR];
+    assert_eq!(fat::detect_weak(short), None);
+    let c = fat::parse_container(short, Layout::Fat12).expect("the FATs and root are present");
+    assert_eq!(labels(&c), labels(&parse(&image)));
+    assert!(has_note(&c, "Volume truncated: 43 KiB of 50688 B present"));
 
     let mut padded = image.clone();
     padded.extend_from_slice(&[0xff; SECTOR]);
@@ -1684,7 +1711,8 @@ fn truncated_dumps_and_trailing_data_are_noted() {
         "13 B after the volume at 0xC600 are data that is not part of the volume"
     ));
 
-    // A member whose cluster lies past the end of a truncated dump.
+    // A member whose cluster lies past the end of a truncated dump is
+    // counted, not listed and not a problem.
     let mut v = Volume::new(Bits::Fat12, 64);
     let mut root = v.root();
     v.next_free = 63;
@@ -1694,11 +1722,42 @@ fn truncated_dumps_and_trailing_data_are_noted() {
     assert!(
         has_note(
             &c,
-            "Skipped /LAST.ELF: cluster 63 at 0xC000 lies beyond the end of the input"
+            "1 regular file was not listed: file data lies partly or wholly past the 48 KiB \
+             present"
         ),
         "{:?}",
         c.notes
     );
+    assert!(
+        !c.notes.iter().any(|n| n.starts_with("Skipped")),
+        "{:?}",
+        c.notes
+    );
+    assert!(!labels(&c).contains(&"/LAST.ELF".to_string()));
+}
+
+#[test]
+fn directory_clusters_past_the_end_of_the_input_are_skipped_and_counted() {
+    // A subdirectory of two clusters, the second at the end of the volume
+    // (cluster 65); the files in its first cluster are listed.
+    let mut v = Volume::new(Bits::Fat12, 64);
+    let mut root = v.root();
+    let mut sub = v.directory(&mut root, b"SUB        ", 1);
+    v.file(&mut sub, b"A       ELF", None, &payload_elf());
+    let first = sub.clusters[0];
+    v.next_free = 65;
+    let last = v.allocate(1);
+    v.link(&[first, last[0]]);
+    let end = v.cluster_offset(65);
+    let image = v.finish();
+    let c = parse(&image[..end]);
+    assert_eq!(labels(&c)[..1], ["/SUB/A.ELF"]);
+    for note in [
+        "1 directory cluster lies past the 49 KiB present; its entries were not read",
+        "Volume truncated: 49 KiB of 50688 B present",
+    ] {
+        assert!(has_note(&c, note), "{note}: {:?}", c.notes);
+    }
 }
 
 #[test]
@@ -1729,68 +1788,80 @@ fn fat_copies_and_reserved_entries_are_reported() {
 // Truncation and mutation sweeps
 // ---------------------------------------------------------------------------
 
-/// Every member of a parse of a prefix is the same as in the whole image,
-/// and its stored bytes lie inside the prefix: a prefix never claims
-/// missing bytes.
-fn assert_prefix_claims_nothing_missing(
-    name: &str,
-    whole: &Container<'_>,
-    prefix: &Container<'_>,
-    end: usize,
-) {
-    for member in &prefix.children {
-        let full = whole
-            .children
-            .iter()
-            .find(|c| c.label == member.label)
-            .unwrap_or_else(|| panic!("{name}: prefix {end} lists {}", member.label));
-        assert_eq!(
-            member.data, full.data,
-            "{name}: prefix {end} {}",
-            member.label
-        );
-        assert!(
-            member.offset + member.stored_size <= end,
-            "{name}: prefix {end} {}",
-            member.label
-        );
-        if let Cow::Borrowed(bytes) = member.data {
-            assert!(member.offset + bytes.len() <= end, "{name}: prefix {end}");
-        }
-    }
+/// File offset of the data region (cluster 2) of a FAT12 or FAT16 image,
+/// from its BPB: `BPB_BytsPerSec` (11), `BPB_RsvdSecCnt` (14),
+/// `BPB_NumFATs` (16), `BPB_RootEntCnt` (17) and `BPB_FATSz16` (22). The
+/// reserved sectors, FATs and root directory before it must be present.
+fn metadata_end(image: &[u8]) -> usize {
+    let sector = usize::from(le_u16(image, 11));
+    let reserved = usize::from(le_u16(image, 14));
+    let fats = usize::from(image[16]);
+    let root_bytes = usize::from(le_u16(image, 17)) * 32;
+    let root_sectors = root_bytes / sector + usize::from(root_bytes % sector != 0);
+    let fat_sectors = usize::from(le_u16(image, 22));
+    (reserved + fats * fat_sectors + root_sectors) * sector
 }
 
 #[test]
-fn prefixes_never_claim_missing_bytes() {
+fn prefixes_are_truncated_volumes_that_never_claim_missing_bytes() {
+    // Weak detection accepts at most an eighth of the volume missing.
     let image = fixture("fat/fat12.img");
-    let whole = parse(&image);
     for end in 0..image.len() {
-        let prefix = &image[..end];
-        let Some(layout) = fat::detect_weak(prefix) else {
-            continue;
-        };
-        let c = fat::parse_container(prefix, layout).expect("a detected prefix parses");
-        assert!(
-            end >= image.len() - image.len() / 8,
-            "fat12.img: prefix {end} is FAT"
-        );
-        assert_prefix_claims_nothing_missing("fat12.img", &whole, &c, end);
+        if fat::detect_weak(&image[..end]).is_some() {
+            assert!(
+                end >= image.len() - image.len() / 8,
+                "fat12.img: prefix {end} is FAT"
+            );
+        }
     }
+    // Parsed with its layout, a prefix that holds the reserved sectors,
+    // the FATs and the root directory is a truncated volume.
     let images = [
-        ("fat16.img", gunzip("fat/fat16.img.gz")),
-        ("exfat.img", exfat_image()),
+        ("fat12.img", image, Layout::Fat12),
+        ("fat16.img", gunzip("fat/fat16.img.gz"), Layout::Fat16),
     ];
-    for (name, image) in images {
-        let detect = |data: &[u8]| fat::detect(data).or_else(|| fat::detect_weak(data));
-        let layout = detect(&image).expect("detected");
-        let whole = fat::parse_container(&image, layout).expect("parses");
-        for end in (0..image.len()).step_by(4093) {
+    for (name, image, layout) in images {
+        let whole = parse(&image);
+        let metadata = metadata_end(&image);
+        for end in prefix_ends(image.len(), metadata + SECTOR, 4093, SECTOR) {
             let prefix = &image[..end];
-            if let Some(Ok(c)) = detect(prefix).map(|layout| fat::parse_container(prefix, layout)) {
-                assert_prefix_claims_nothing_missing(name, &whole, &c, end);
+            match fat::parse_container(prefix, layout) {
+                Ok(c) => {
+                    assert!(end >= metadata, "{name}: prefix {end} lacks the metadata");
+                    assert!(has_note(&c, "Volume truncated: "), "{name}: prefix {end}");
+                    assert_members_inside(name, &whole, &c, end);
+                }
+                Err(e) => assert!(end < metadata, "{name}: prefix {end}: {e}"),
             }
-            if end % (4093 * 16) == 0 {
-                let _ = detect_payload(prefix, &ClassifierOptions::new());
+        }
+    }
+    // exFAT is recognized by its name at any length; a prefix that holds
+    // the FAT and the root directory (cluster 5, with the allocation bitmap
+    // and up-case table entries) is read.
+    let image = exfat_image();
+    let whole = parse_exfat(&image);
+    let root_end = exfat_cluster(&image, 5) + 4096;
+    for end in prefix_ends(image.len(), root_end + SECTOR, 4093, SECTOR) {
+        let prefix = &image[..end];
+        if fat::detect(prefix).is_none() {
+            assert!(end < 11, "exfat.img: prefix {end} lost its name");
+            continue;
+        }
+        match fat::parse_container(prefix, Layout::ExFat) {
+            Ok(c) => {
+                assert!(end >= root_end, "exfat.img: prefix {end}");
+                assert_members_inside("exfat.img", &whole, &c, end);
+            }
+            Err(e) => assert!(end < root_end, "exfat.img: prefix {end}: {e}"),
+        }
+        if end % (4093 * 16) == 0 {
+            if let Ok(p) = detect_payload(prefix, &ClassifierOptions::new()) {
+                for slice in &p.slices {
+                    assert!(
+                        slice.offset + slice.size <= end as u64,
+                        "exfat.img: prefix {end}"
+                    );
+                }
             }
         }
     }

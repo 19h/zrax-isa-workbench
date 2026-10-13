@@ -82,14 +82,15 @@ struct Entry<'a> {
 /// Visit the entries of the system use area `area` (at file offset
 /// `offset`) and of the continuation areas its `CE` entries name. A
 /// continuation is read after the current area (SUSP 5.1). Entries shorter
-/// than their header end an area, as Linux treats them.
+/// than their header end an area, as Linux treats them. A continuation
+/// area past the end of a truncated volume's input is absent.
 fn for_each_entry<'a>(
-    image: &'a [u8],
+    image: Image<'a>,
     block_size: usize,
     area: &'a [u8],
     offset: usize,
     mut visit: impl FnMut(&Entry<'a>),
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), Fault> {
     let mut current = (area, offset);
     let mut hops = 0;
     loop {
@@ -102,10 +103,11 @@ fn for_each_entry<'a>(
                 break;
             }
             let Some(entry) = bytes.get(pos..pos + len) else {
-                return Err(format!(
+                let defect = format!(
                     "system use entry at 0x{:X} ({len} B) overruns its area",
                     base + pos
-                ));
+                );
+                return Err(Fault::Defect(defect));
             };
             let signature = [entry[0], entry[1]];
             let data = &entry[ENTRY_HEADER_SIZE..];
@@ -121,19 +123,19 @@ fn for_each_entry<'a>(
         };
         hops += 1;
         if hops > MAX_CONTINUATIONS {
-            return Err(format!(
-                "more than {MAX_CONTINUATIONS} continuation areas from 0x{offset:X}"
-            ));
+            let defect =
+                format!("more than {MAX_CONTINUATIONS} continuation areas from 0x{offset:X}");
+            return Err(Fault::Defect(defect));
         }
         let at = block_offset(block, block_size)
             .and_then(|block_start| block_start.checked_add(start as usize))
             .ok_or_else(|| format!("continuation area at block {block} is outside the volume"))?;
-        let bytes = at
-            .checked_add(len as usize)
-            .and_then(|end| image.get(at..end))
-            .ok_or_else(|| {
-                format!("continuation area at 0x{at:X} ({len} B) lies outside the volume")
-            })?;
+        let len = len as usize;
+        if !image.holds(at, len) {
+            let defect = format!("continuation area at 0x{at:X} ({len} B) lies outside the volume");
+            return Err(Fault::Defect(defect));
+        }
+        let bytes = image.present(at, len).ok_or(Fault::Absent)?;
         current = (bytes, at);
     }
 }
@@ -156,11 +158,24 @@ fn continuation(data: &[u8], at: usize) -> std::result::Result<(u32, u32, u32), 
 /// (or after CD-ROM XA information), and an `ER` entry naming the RRIP or an
 /// RRIP 1.09 `RR` entry in its system use area (SUSP 5.3, 5.5; Linux enables
 /// Rock Ridge on the `ER` entry).
-pub(super) fn rock_ridge(image: &[u8], block_size: usize, root: &Record<'_>) -> Option<RockRidge> {
+///
+/// # Errors
+///
+/// Only [`Fault::Absent`]: a continuation area past the end of a truncated
+/// volume's input, so that the answer is unknown. Damaged entries mean no
+/// Rock Ridge.
+pub(super) fn rock_ridge(
+    image: Image<'_>,
+    block_size: usize,
+    root: &Record<'_>,
+) -> std::result::Result<Option<RockRidge>, Fault> {
     let area = root.system_use;
-    let start = SP_POSITIONS
+    let Some(start) = SP_POSITIONS
         .into_iter()
-        .find(|&at| area.get(at..at + SP_SIZE).is_some_and(is_sp))?;
+        .find(|&at| area.get(at..at + SP_SIZE).is_some_and(is_sp))
+    else {
+        return Ok(None);
+    };
     let skip = usize::from(area[start + SP_SKIP_OFFSET]);
     let mut evidence = None;
     let visited = for_each_entry(
@@ -180,11 +195,11 @@ pub(super) fn rock_ridge(image: &[u8], block_size: usize, root: &Record<'_>) -> 
             _ => {}
         },
     );
-    visited.ok()?;
-    Some(RockRidge {
-        skip,
-        evidence: evidence?,
-    })
+    match visited {
+        Ok(()) => Ok(evidence.map(|evidence| RockRidge { skip, evidence })),
+        Err(Fault::Defect(_)) => Ok(None),
+        Err(Fault::Absent) => Err(Fault::Absent),
+    }
 }
 
 /// An `SP` entry: the signature, a length of at least [`SP_SIZE`] and the
@@ -238,11 +253,11 @@ pub(super) struct Attributes {
 /// The Rock Ridge attributes of `record`, whose entries start `LEN_SKP`
 /// bytes into its system use field (SUSP 4).
 pub(super) fn attributes(
-    image: &[u8],
+    image: Image<'_>,
     block_size: usize,
     rock: &RockRidge,
     record: &Record<'_>,
-) -> std::result::Result<Attributes, String> {
+) -> std::result::Result<Attributes, Fault> {
     let mut attributes = Attributes::default();
     let Some(area) = record.system_use.get(rock.skip..) else {
         return Ok(attributes);
@@ -323,8 +338,32 @@ mod tests {
         area.extend(entry(SIG_ST, b""));
         area.extend(entry(SIG_NM, b"\0ignored"));
         let mut seen = Vec::new();
-        for_each_entry(&image, 2048, &area, 0, |e| seen.push(e.data.to_vec())).unwrap();
+        let visit = |e: &Entry<'_>| seen.push(e.data.to_vec());
+        for_each_entry(whole(&image), 2048, &area, 0, visit).unwrap();
         assert_eq!(seen, [b"\x01head".to_vec(), b"\0tail".to_vec()]);
+        // With the volume cut before block 1, the continuation is absent.
+        let truncated = Image {
+            bytes: &image[..2048],
+            size: image.len(),
+        };
+        let error = for_each_entry(truncated, 2048, &area, 0, |_| {});
+        assert!(matches!(error, Err(Fault::Absent)), "{error:?}");
+    }
+
+    /// A volume whose bytes are all present.
+    fn whole(bytes: &[u8]) -> Image<'_> {
+        Image {
+            bytes,
+            size: bytes.len(),
+        }
+    }
+
+    /// The defect text of a failed walk of entries.
+    fn defect(result: std::result::Result<(), Fault>) -> String {
+        match result {
+            Err(Fault::Defect(defect)) => defect,
+            other => panic!("a defect expected: {other:?}"),
+        }
     }
 
     #[test]
@@ -335,13 +374,13 @@ mod tests {
         ce.extend(both(28));
         let looping = entry(SIG_CE, &ce);
         image[..looping.len()].copy_from_slice(&looping);
-        let error = for_each_entry(&image, 2048, &looping, 0, |_| {}).unwrap_err();
+        let error = defect(for_each_entry(whole(&image), 2048, &looping, 0, |_| {}));
         assert!(error.contains("more than 32"), "{error}");
         let mut outside = both(9);
         outside.extend(both(0));
         outside.extend(both(28));
-        let error = for_each_entry(&image, 2048, &entry(SIG_CE, &outside), 0, |_| {});
-        assert!(error.unwrap_err().contains("outside the volume"));
+        let error = for_each_entry(whole(&image), 2048, &entry(SIG_CE, &outside), 0, |_| {});
+        assert!(defect(error).contains("outside the volume"));
     }
 
     #[test]

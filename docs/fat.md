@@ -199,22 +199,57 @@ carries.
   count); at most 4096 members are listed and 65,536 regular files
   examined; directories deeper than 64 levels are not walked; at most 16
   problems are listed and the rest counted.
-- Damage below the root (bad chains, invalid entries, clusters past a
-  truncated dump) skips that entry with a note. An unreadable FAT32 root
-  directory is a note; an unreadable exFAT root directory, or one without
-  its allocation bitmaps and exactly one up-case table, is an error.
+- Damage below the root (bad chains, invalid entries) skips that entry with
+  a note. An unreadable FAT32 root directory is a note; an unreadable exFAT
+  root directory, or one without its allocation bitmaps and exactly one
+  up-case table, is an error.
+
+## Truncated volumes
+
+A volume whose `BPB_TotSec16`/`BPB_TotSec32` ([FATGEN] "Boot Sector and
+BPB") or `VolumeLength` ([EXFAT] 3.1.5) exceeds the input is read as a
+truncated volume. Containers decode at most 64 MiB of a component
+(`MAX_PAYLOAD`), so a larger volume in a disk image, virtual disk or
+compressed stream reaches the parser cut.
+
+- Detection is unchanged. FAT12, FAT16 and FAT32 have no magic, and weak
+  detection still accepts at most 1 MiB and an eighth of the volume missing
+  ([FATGEN] calls a volume larger than its media "seriously damaged or
+  malformed"); a volume cut shorter is not recognized by `detect_format`.
+  `parse_container` called with the layout parses it at any length. exFAT
+  carries its name and is recognized and parsed at any length.
+- FAT12/16/32 need the reserved sectors, the FATs and (FAT12/16) the root
+  directory region, as before ("Truncated volume: the reserved sectors,
+  FATs and root directory need ..."). exFAT needs its main boot region, its
+  active FAT and the root directory clusters that hold the allocation
+  bitmap and up-case table entries; without the FAT or those entries the
+  error is `Truncated volume: S B declared, P B present`.
+- Cluster numbers are still checked against the declared cluster count.
+  Every cluster of the heap lies inside the volume, so a cluster past the
+  end of the input is absent, never an error.
+- Directory clusters past the end of the input are skipped (the
+  directory's present clusters are still read) and counted: "N directory
+  clusters lie past the X present; their entries were not read".
+- A regular file is listed only when all of its clusters are present.
+  Others are counted: "N regular files were not listed: file data lies
+  partly or wholly past the X present". An exFAT up-case table past the end
+  is noted as not verified.
+- A note states "Volume truncated: X of Y present; files are listed only
+  when all of their data is present" (this replaces the former "Truncated
+  dump: ..." note of a slightly short volume).
 
 ## Assumption register
 
 | ID | Assumption | Falsification probe |
 | --- | --- | --- |
 | F1 | Every FAT volume worth recognizing has the `55 AA` signature, an allowed jump form and FAT[0] with its media byte; [FATGEN] requires all three | DOS 1.x and some Atari ST floppies lack the signature or jump: they are not recognized (left to later checks or raw) |
-| F2 | A dump may miss at most 1 MiB and an eighth of its declared volume; the bound is ours, [FATGEN] calls any shortfall malformed | `truncated_dumps_and_trailing_data_are_noted`; a firmware image trimmed after its last used cluster is not recognized |
+| F2 | Weak detection: a dump may miss at most 1 MiB and an eighth of its declared volume; the bound is ours, [FATGEN] calls any shortfall malformed | `truncated_dumps_and_trailing_data_are_noted`; a firmware image trimmed after its last used cluster is not recognized, and neither is the first 64 MiB of a larger FAT volume that a container decoded |
 | F3 | Data after the declared volume is not part of it and is noted, not an error: [FATGEN] says a volume smaller than its media is "nothing whatsoever wrong" | A FAT volume followed by another partition's data is still FAT; a non-FAT image whose first sector happens to validate would also be accepted |
 | F4 | A FAT32 BPB on fewer than 65,525 clusters (as `mkfs.fat -F 32` writes on small volumes) is not FAT: the cluster count makes it FAT16 by [FATGEN]'s only rule, and its FAT does not have that layout | `bpb_layouts_that_disagree_with_the_cluster_count_are_not_fat`; such volumes are left to later checks |
 | F5 | `DIR_NTRes` is not looked at ([FATGEN]: "never modify or look at it"), so names the Windows NT case flags lower-case are listed upper-case | The mtools fixtures list `/PAYLOAD.ELF` for `payload.elf` |
 | F6 | The jump destination is where the boot code starts, and an idle loop or a single repeated byte there is no code; the idle-loop pattern is ours | `boot_code_stubs_are_not_classified`; a boot sector whose code lies before its jump target is not extracted |
 | F7 | The exFAT up-case table follows its FAT chain, as [EXFAT] 7.2.3 says (the allocation bitmap is not read) | The exfatprogs fixture chains its two up-case clusters; an image that stores the table contiguously without FAT entries gets the note "Up-case table checksum not verified" with the chain defect |
+| F8 | A truncated volume is a prefix of the whole volume | `prefixes_are_truncated_volumes_that_never_claim_missing_bytes` checks every member of each sampled prefix of the FAT12, FAT16 and exFAT fixtures against the whole parse; not tested on a real cut partition |
 
 ## Known boundaries
 
@@ -229,6 +264,8 @@ carries.
 | TexFAT (two FATs and bitmaps), Windows CE security descriptors, vendor extensions | Benign entries are skipped; the active FAT follows `ActiveFat` |
 | Deleted files | Counted, never recovered |
 | FAT volumes with more than two FATs | Not recognized (`BPB_NumFATs` 1 or 2) |
+| A FAT12/16/32 volume missing more than 1 MiB or an eighth (the first 64 MiB of a larger partition in a DMG, virtual disk or compressed stream) | Not recognized: weak detection is unchanged. Parsed as a truncated volume when `parse_container` is called with its layout. exFAT is read at any length |
+| Truncated volumes | Files whose clusters are all present are listed, the rest counted; files in directory clusters past the end are not known, only those clusters are counted |
 
 ## Verification
 
@@ -257,3 +294,25 @@ images were used), sectors other than 512 B on tool-built volumes (1 KiB
 and 4 KiB sectors are covered by synthetic volumes only), FAT32 volumes with
 mirroring disabled other than in the synthetic test, TexFAT volumes, and how
 any operating system mounts the volumes the reader rejects or accepts.
+
+Truncated volumes, on 2026-10-13 (macOS 27.2 AArch64, rustc
+1.100.0-nightly `f248f4038`): `tests/fat.rs` (29 tests) and the 19 unit
+tests in `src/formats/fat.rs` and `src/formats/fat/` passed within `cargo
+test --all-features --locked` (2,425 passed, 6 ignored). The sweep checks
+that weak detection of every prefix of the FAT12 fixture still needs all
+but an eighth of the volume, and parses the FAT12 and FAT16 fixtures with
+their layout and the exFAT fixture at every prefix up to the end of their
+metadata (exFAT: the root directory cluster) and every 4,093rd prefix and
+the prefixes around each sector boundary after it: each lacks the metadata
+and is an error, or is a truncated volume whose members are byte-identical
+to the whole volume's and lie inside the prefix. Synthetic volumes cover a
+file and a directory cluster past the end. `web/tests/fat.test.mjs`
+(4 tests) passed through `/pkg/` and `/dist/`. A differential snapshot
+against the previous commit over the four fixtures (1,449,169 inputs: the
+whole volumes, every prefix of the FAT12 fixture and of the first 64 KiB of
+the others, then sampled prefixes, and single-byte mutations) changed
+1,049,364 outcomes, all of prefixes whose volume exceeds them: old
+"Truncated volume" errors that are now truncated volumes, and the
+slightly short dumps that weak detection accepts, whose note changed from
+"Truncated dump: ..." to "Volume truncated: ...". Mutations did not change.
+Not verified: a real FAT or exFAT volume cut by a container.

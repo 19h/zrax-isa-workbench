@@ -63,7 +63,7 @@ impl Names {
 
 /// The hierarchy that is walked.
 pub(super) struct Tree<'a> {
-    image: &'a [u8],
+    image: Image<'a>,
     /// Logical block size in bytes.
     block_size: usize,
     /// File offset and size in bytes of the root directory.
@@ -76,16 +76,12 @@ pub(super) struct Tree<'a> {
 /// File offset and size of a directory's extent, checked against the
 /// volume. A directory holds at least its `.` and `..` records.
 fn directory_extent(
-    image: &[u8],
+    image: Image<'_>,
     offset: Option<usize>,
     size: u32,
 ) -> std::result::Result<(usize, usize), String> {
     let size = size as usize;
-    let Some(offset) = offset.filter(|offset| {
-        offset
-            .checked_add(size)
-            .is_some_and(|end| end <= image.len())
-    }) else {
+    let Some(offset) = offset.filter(|&offset| image.holds(offset, size)) else {
         return Err(format!("extent of {size} B lies outside the volume"));
     };
     if size == 0 {
@@ -94,13 +90,22 @@ fn directory_extent(
     Ok((offset, size))
 }
 
+/// Whether the first sector of a directory's extent, which holds its `.`
+/// record, is present.
+fn has_first_sector(image: Image<'_>, offset: usize, size: usize) -> bool {
+    image.present(offset, size.min(SECTOR_SIZE)).is_some()
+}
+
 impl<'a> Tree<'a> {
-    /// Choose the hierarchy and its name source.
+    /// Choose the hierarchy and its name source. `None` when the root
+    /// directory that supplies the names, or the continuation of the
+    /// primary root's Rock Ridge entries, lies past the end of a truncated
+    /// volume's input.
     ///
     /// # Errors
     ///
     /// The primary root directory lies outside the volume.
-    pub(super) fn choose(image: &'a [u8], set: &DescriptorSet) -> Result<Self> {
+    pub(super) fn choose(image: Image<'a>, set: &DescriptorSet) -> Result<Option<Self>> {
         let primary = &set.primary;
         let root =
             directory_extent(image, primary.root_offset, primary.root_size).map_err(|reason| {
@@ -109,6 +114,9 @@ impl<'a> Tree<'a> {
                     primary.offset + ROOT_RECORD_OFFSET
                 ))
             })?;
+        if !has_first_sector(image, root.0, root.1) {
+            return Ok(None);
+        }
         let mut tree = Self {
             image,
             block_size: primary.block_size,
@@ -117,17 +125,24 @@ impl<'a> Tree<'a> {
             joliet_unusable: None,
         };
         // The root's `.` record carries the SUSP `SP` and `ER` entries.
-        let rock = directory::records(image, root.0, root.1.min(SECTOR_SIZE))
+        let dot = directory::records(image.bytes, root.0, root.1.min(SECTOR_SIZE))
             .next()
             .and_then(std::result::Result::ok)
-            .filter(Record::is_self)
-            .and_then(|dot| susp::rock_ridge(image, primary.block_size, &dot));
+            .filter(Record::is_self);
+        let rock = match dot.map(|dot| susp::rock_ridge(image, primary.block_size, &dot)) {
+            Some(Ok(rock)) => rock,
+            // A continuation area past the end of the input: whether the
+            // hierarchy carries Rock Ridge names is unknown.
+            Some(Err(_)) => return Ok(None),
+            None => None,
+        };
         if let Some(rock) = rock {
             tree.names = Names::RockRidge(rock);
-            return Ok(tree);
+            return Ok(Some(tree));
         }
         if let Some(joliet) = &set.joliet {
             match joliet_root(image, &joliet.volume) {
+                Ok(root) if !has_first_sector(image, root.0, root.1) => return Ok(None),
                 Ok(root) => {
                     tree.root = root;
                     tree.names = Names::Joliet;
@@ -135,12 +150,17 @@ impl<'a> Tree<'a> {
                 Err(reason) => tree.joliet_unusable = Some(reason),
             }
         }
-        Ok(tree)
+        Ok(Some(tree))
+    }
+
+    /// The volume's bytes.
+    pub(super) fn image(&self) -> Image<'a> {
+        self.image
     }
 }
 
 /// The Joliet hierarchy's root directory.
-fn joliet_root(image: &[u8], volume: &Volume) -> std::result::Result<(usize, usize), String> {
+fn joliet_root(image: Image<'_>, volume: &Volume) -> std::result::Result<(usize, usize), String> {
     directory_extent(image, volume.root_offset, volume.root_size).map_err(|reason| {
         format!(
             "its root directory record at 0x{:X}: {reason}",
@@ -192,6 +212,15 @@ struct Census {
     byte_order_mismatches: usize,
     /// Entries of a Rock Ridge hierarchy without an `NM` entry.
     without_alternate_name: usize,
+    /// Directories whose extent lies partly or wholly past the end of a
+    /// truncated volume's input.
+    absent_directories: usize,
+    /// Directory records whose Rock Ridge entries continue past the end of
+    /// a truncated volume's input.
+    absent_records: usize,
+    /// Regular files whose data lies partly or wholly past the end of a
+    /// truncated volume's input.
+    absent_files: usize,
     problems: Vec<String>,
     unlisted_problems: usize,
 }
@@ -203,6 +232,8 @@ pub(super) struct Walked<'a> {
     /// listed as boot images, not as members.
     pub(super) boot_files: HashMap<usize, BootFile>,
     census: Census,
+    /// The volume's bytes, for the notes on a truncated volume.
+    image: Image<'a>,
 }
 
 struct Walker<'t, 'a> {
@@ -236,7 +267,7 @@ pub(super) fn walk<'a>(tree: &Tree<'a>, boot_offsets: &[usize]) -> Walked<'a> {
         members: Vec::new(),
         boot_files: HashMap::new(),
         extracted: 0,
-        directory_budget: tree.image.len().saturating_mul(2),
+        directory_budget: tree.image.bytes.len().saturating_mul(2),
     };
     let mut pending = vec![PendingDirectory {
         offset: tree.root.0,
@@ -245,13 +276,16 @@ pub(super) fn walk<'a>(tree: &Tree<'a>, boot_offsets: &[usize]) -> Walked<'a> {
         depth: 0,
     }];
     while let Some(directory) = pending.pop() {
-        if walker.census.directories >= MAX_DIRECTORIES || directory.size > walker.directory_budget
-        {
+        let present = present_size(tree.image, &directory);
+        if walker.census.directories >= MAX_DIRECTORIES || present > walker.directory_budget {
             walker.census.over_walk_limit = pending.len() + 1;
             break;
         }
-        walker.directory_budget -= directory.size;
-        let subdirectories = walker.directory(&directory);
+        walker.directory_budget -= present;
+        if present < directory.size {
+            walker.census.absent_directories += 1;
+        }
+        let subdirectories = walker.directory(&directory, present);
         // Reversed, so that subdirectories are walked in record order.
         pending.extend(subdirectories.into_iter().rev());
     }
@@ -259,6 +293,20 @@ pub(super) fn walk<'a>(tree: &Tree<'a>, boot_offsets: &[usize]) -> Walked<'a> {
         members: walker.members,
         boot_files: walker.boot_files,
         census: walker.census,
+        image: tree.image,
+    }
+}
+
+/// The bytes of a directory's extent to read: all of them, or, when a
+/// truncated volume's input ends inside the extent, its whole sectors
+/// before the end. A record never crosses a sector (6.8.1.1), so no record
+/// is cut.
+fn present_size(image: Image<'_>, directory: &PendingDirectory) -> usize {
+    let available = image.bytes.len().saturating_sub(directory.offset);
+    if directory.size <= available {
+        directory.size
+    } else {
+        available - available % SECTOR_SIZE
     }
 }
 
@@ -296,14 +344,15 @@ impl<'a> Walker<'_, 'a> {
         }
     }
 
-    /// Read one directory and return its subdirectories in record order.
+    /// Read the first `size` bytes of one directory's extent (see
+    /// [`present_size`]) and return its subdirectories in record order.
     /// Consecutive records of a multi-extent file are collected into one
     /// file (ECMA-119 6.5.1, 9.1.6 bit 7).
-    fn directory(&mut self, directory: &PendingDirectory) -> Vec<PendingDirectory> {
+    fn directory(&mut self, directory: &PendingDirectory, size: usize) -> Vec<PendingDirectory> {
         self.census.directories += 1;
         let mut subdirectories = Vec::new();
         let mut sections: Vec<Record<'a>> = Vec::new();
-        for record in directory::records(self.tree.image, directory.offset, directory.size) {
+        for record in directory::records(self.tree.image.bytes, directory.offset, size) {
             let record = match record {
                 Ok(record) => record,
                 Err(defect) => {
@@ -375,7 +424,9 @@ impl<'a> Walker<'_, 'a> {
         subdirectories: &mut Vec<PendingDirectory>,
     ) {
         let record = sections.last().expect("an entry has a record");
-        let attributes = self.attributes(directory, record);
+        let Some(attributes) = self.attributes(directory, record) else {
+            return;
+        };
         if attributes.relocated {
             self.census.relocated += 1;
             return;
@@ -405,19 +456,29 @@ impl<'a> Walker<'_, 'a> {
     }
 
     /// The Rock Ridge attributes of `record`, when the hierarchy has them.
-    fn attributes(&mut self, directory: &PendingDirectory, record: &Record<'_>) -> Attributes {
+    /// `None`, counted, when they continue past the end of a truncated
+    /// volume's input: the record's name and type are then unknown.
+    fn attributes(
+        &mut self,
+        directory: &PendingDirectory,
+        record: &Record<'_>,
+    ) -> Option<Attributes> {
         let Names::RockRidge(rock) = &self.tree.names else {
-            return Attributes::default();
+            return Some(Attributes::default());
         };
         match susp::attributes(self.tree.image, self.tree.block_size, rock, record) {
-            Ok(attributes) => attributes,
-            Err(reason) => {
+            Ok(attributes) => Some(attributes),
+            Err(Fault::Defect(reason)) => {
                 let path = self.path(directory.node, None);
                 self.problem(format!(
                     "{path}: Rock Ridge entries of the record at 0x{:X} ignored: {reason}",
                     record.offset
                 ));
-                Attributes::default()
+                Some(Attributes::default())
+            }
+            Err(Fault::Absent) => {
+                self.census.absent_records += 1;
+                None
             }
         }
     }
@@ -466,14 +527,14 @@ impl<'a> Walker<'_, 'a> {
         let image = self.tree.image;
         let block_size = self.tree.block_size;
         let extent = match attributes.child_link {
-            Some(block) => block_offset(block, block_size)
-                .ok_or_else(|| format!("CL block {block} lies outside the volume"))
-                .and_then(|offset| {
-                    let available = image.len().saturating_sub(offset).min(SECTOR_SIZE);
-                    Record::parse(image, offset, available)
-                        .map(|dot| (Some(offset), dot.data_len))
-                        .map_err(|e| format!("moved directory: {}", descriptors::message(e)))
-                }),
+            Some(block) => match moved_directory(image, block, block_size) {
+                Ok(Some(dot)) => Ok((Some(dot.offset), dot.data_len)),
+                Ok(None) => {
+                    self.census.absent_directories += 1;
+                    return;
+                }
+                Err(reason) => Err(reason),
+            },
             None => Ok((record.data_offset(block_size), record.data_len)),
         };
         let checked = extent.and_then(|(offset, size)| directory_extent(image, offset, size));
@@ -484,6 +545,10 @@ impl<'a> Walker<'_, 'a> {
                 return;
             }
         };
+        if !has_first_sector(image, offset, size) {
+            self.census.absent_directories += 1;
+            return;
+        }
         if directory.depth + 1 > MAX_DEPTH {
             self.census.unwalked += 1;
             return;
@@ -536,11 +601,9 @@ impl<'a> Walker<'_, 'a> {
         let mut total = 0usize;
         for section in sections {
             let size = section.data_len as usize;
-            let range = section.data_offset(self.tree.block_size).filter(|offset| {
-                offset
-                    .checked_add(size)
-                    .is_some_and(|end| end <= image.len())
-            });
+            let range = section
+                .data_offset(self.tree.block_size)
+                .filter(|&offset| image.holds(offset, size));
             let Some(offset) = range else {
                 self.problem(format!(
                     "{path}: file section at block {} ({size} B) lies outside the volume",
@@ -561,6 +624,13 @@ impl<'a> Walker<'_, 'a> {
                 .insert(first, BootFile { path, size: total });
             return;
         }
+        let is_present = ranges
+            .iter()
+            .all(|&(offset, size)| image.present(offset, size).is_some());
+        if !is_present {
+            self.census.absent_files += 1;
+            return;
+        }
         self.examine(path, &ranges, total);
     }
 
@@ -577,7 +647,7 @@ impl<'a> Walker<'_, 'a> {
             return;
         }
         let image = self.tree.image;
-        if !container::is_recognized(&prefix(image, ranges, probe_size)) {
+        if !container::is_recognized(&prefix(image.bytes, ranges, probe_size)) {
             return;
         }
         if total > MAX_PAYLOAD {
@@ -589,8 +659,30 @@ impl<'a> Walker<'_, 'a> {
             return;
         }
         self.members
-            .push(member(image, path, ranges, total).if_recognized());
+            .push(member(image.bytes, path, ranges, total).if_recognized());
     }
+}
+
+/// The `.` record of the directory that a Rock Ridge `CL` entry moved to
+/// logical block `block`; its data length is the directory's size (RRIP
+/// 4.1.5.1). `None` when the record's sector lies past the end of a
+/// truncated volume's input.
+fn moved_directory(
+    image: Image<'_>,
+    block: u32,
+    block_size: usize,
+) -> std::result::Result<Option<Record<'_>>, String> {
+    let offset = block_offset(block, block_size)
+        .ok_or_else(|| format!("CL block {block} lies outside the volume"))?;
+    // A record does not cross a logical sector (6.8.1.1).
+    let sector = image.size.saturating_sub(offset).min(SECTOR_SIZE);
+    if sector > 0 && image.present(offset, sector).is_none() {
+        return Ok(None);
+    }
+    let available = image.bytes.len().saturating_sub(offset).min(SECTOR_SIZE);
+    Record::parse(image.bytes, offset, available)
+        .map(Some)
+        .map_err(|e| format!("moved directory: {}", descriptors::message(e)))
 }
 
 /// The first `size` bytes of a file stored in `ranges`.
@@ -643,6 +735,7 @@ impl<'a> Walked<'a> {
             self.members.len(),
             size_text(PROBE_SIZE as u64)
         ));
+        let present = self.image.present_text();
         let counted = [
             (
                 census.over_component_limit,
@@ -666,7 +759,33 @@ impl<'a> Walked<'a> {
                 census.over_walk_limit,
                 format!(
                     "directories were not walked: walk limit reached ({MAX_DIRECTORIES} \
-                     directories or twice the volume size in directory data)"
+                     directories or twice {} in directory data)",
+                    if self.image.is_truncated() {
+                        format!("the {present} present")
+                    } else {
+                        "the volume size".to_string()
+                    }
+                ),
+            ),
+            (
+                census.absent_directories,
+                format!(
+                    "directories lie partly or wholly past the {present} present; their records \
+                     past it were not read"
+                ),
+            ),
+            (
+                census.absent_records,
+                format!(
+                    "directory records carry Rock Ridge entries continued past the {present} \
+                     present; they were not read"
+                ),
+            ),
+            (
+                census.absent_files,
+                format!(
+                    "regular files were not listed: file data lies partly or wholly past the \
+                     {present} present"
                 ),
             ),
             (
@@ -776,10 +895,26 @@ mod tests {
 
     #[test]
     fn directory_extents_must_lie_in_the_volume() {
-        let image = [0u8; 4096];
-        assert_eq!(directory_extent(&image, Some(2048), 2048), Ok((2048, 2048)));
-        assert!(directory_extent(&image, Some(2048), 2049).is_err());
-        assert!(directory_extent(&image, None, 1).is_err());
-        assert!(directory_extent(&image, Some(0), 0).is_err());
+        let bytes = [0u8; 4096];
+        let image = Image {
+            bytes: &bytes,
+            size: bytes.len(),
+        };
+        assert_eq!(directory_extent(image, Some(2048), 2048), Ok((2048, 2048)));
+        assert!(directory_extent(image, Some(2048), 2049).is_err());
+        assert!(directory_extent(image, None, 1).is_err());
+        assert!(directory_extent(image, Some(0), 0).is_err());
+        // In a truncated volume, an extent inside the volume may lie past
+        // the bytes present.
+        let truncated = Image {
+            bytes: &bytes[..2048],
+            size: bytes.len(),
+        };
+        assert_eq!(
+            directory_extent(truncated, Some(2048), 2048),
+            Ok((2048, 2048))
+        );
+        assert!(!has_first_sector(truncated, 2048, 2048));
+        assert!(has_first_sector(truncated, 0, 4096));
     }
 }
