@@ -1198,6 +1198,15 @@ pub enum FileFormat {
     Plus3Dos,
     /// File with an Amstrad CPC AMSDOS header
     Amsdos,
+    // Nintendo 3DS and Switch containers
+    /// Nintendo 3DS NCSD image (CTR cart image or NAND image)
+    Ncsd,
+    /// Nintendo 3DS CTR importable archive (CIA)
+    Cia,
+    /// Nintendo Switch `PartitionFs` archive (`PFS0`: NSP or `ExeFS`)
+    Pfs0,
+    /// Nintendo Switch gamecard image (XCI)
+    Xci,
 }
 
 impl fmt::Display for FileFormat {
@@ -1504,6 +1513,11 @@ impl fmt::Display for FileFormat {
             FileFormat::CpcDsk => write!(f, "CPC DSK disk image"),
             FileFormat::Plus3Dos => write!(f, "+3DOS file"),
             FileFormat::Amsdos => write!(f, "AMSDOS file"),
+            // Nintendo 3DS and Switch containers
+            FileFormat::Ncsd => write!(f, "3DS NCSD"),
+            FileFormat::Cia => write!(f, "3DS CIA"),
+            FileFormat::Pfs0 => write!(f, "Switch PFS0"),
+            FileFormat::Xci => write!(f, "Switch XCI"),
         }
     }
 }

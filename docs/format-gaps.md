@@ -238,7 +238,10 @@ DOS 3.2, nibble images (.nib, .nb2, WOZ), physical and CP/M sector orders
 are not implemented; see [Apple II disk images](apple2.md). CPCEMU and
 Extended DSK images (AMSDOS and +3DOS file systems; AMSDOS binary and +3DOS
 CODE files as Z80) and standalone +3DOS and AMSDOS headered files followed;
-see [CPC and Spectrum +3 disk images](cpcdsk.md).
+see [CPC and Spectrum +3 disk images](cpcdsk.md). Nintendo 3DS NCSD and CIA
+and Switch PFS0/NSP and XCI containers followed (NCA, NAND partitions and
+title-key-encrypted contents opaque); see [Nintendo 3DS and Switch
+containers](nintendo2.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as

@@ -153,6 +153,9 @@ pub enum Kind {
     /// An Amstrad CPC or Spectrum +3 disk image, or a file with an AMSDOS
     /// or +3DOS header.
     CpcDsk(super::cpcdsk::Layout),
+    /// A Nintendo 3DS NCSD image or CIA, or a Nintendo Switch PFS0 archive
+    /// or XCI gamecard image.
+    Nintendo2(super::nintendo2::Layout),
 }
 
 impl Kind {
@@ -207,6 +210,7 @@ impl Kind {
             Self::Atari8(layout) => layout.format(),
             Self::Apple2(layout) => layout.format(),
             Self::CpcDsk(layout) => layout.format(),
+            Self::Nintendo2(layout) => layout.format(),
         }
     }
 
@@ -261,6 +265,7 @@ impl Kind {
             Self::Atari8(layout) => layout.label(),
             Self::Apple2(layout) => layout.label(),
             Self::CpcDsk(layout) => layout.label(),
+            Self::Nintendo2(layout) => layout.label(),
         }
     }
 
@@ -315,6 +320,7 @@ impl Kind {
             Self::Atari8(layout) => layout.is_weak(),
             Self::Apple2(layout) => layout.is_weak(),
             Self::CpcDsk(layout) => layout.is_weak(),
+            Self::Nintendo2(layout) => layout.is_weak(),
         }
     }
 }
@@ -374,6 +380,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Atari8(layout) => super::atari8::parse_container(data, layout),
         Kind::Apple2(layout) => super::apple2::parse_container(data, layout),
         Kind::CpcDsk(layout) => super::cpcdsk::parse_container(data, layout),
+        Kind::Nintendo2(layout) => super::nintendo2::parse_container(data, layout),
     }
 }
 

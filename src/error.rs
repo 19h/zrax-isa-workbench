@@ -128,6 +128,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Nintendo 3DS NCSD image or CIA, or a Nintendo Switch
+    /// PFS0 archive or XCI gamecard image.
+    #[error("Nintendo container parse error: {message}")]
+    Nintendo2ParseError {
+        /// What is wrong with the container.
+        message: String,
+    },
+
     /// Error parsing an Amstrad CPC or Spectrum +3 disk image (CPCEMU or
     /// Extended DSK) or a file with an AMSDOS or +3DOS header.
     #[error("CPC disk image parse error: {message}")]

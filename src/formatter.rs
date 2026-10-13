@@ -827,6 +827,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::CpcDsk => "CPC DSK disk image",
         FileFormat::Plus3Dos => "+3DOS file",
         FileFormat::Amsdos => "AMSDOS file",
+        FileFormat::Ncsd => "3DS NCSD",
+        FileFormat::Cia => "3DS CIA",
+        FileFormat::Pfs0 => "Switch PFS0",
+        FileFormat::Xci => "Switch XCI",
     }
 }
 

@@ -76,6 +76,7 @@ pub mod minidump;
 pub mod mtd;
 pub mod mz;
 pub mod nintendo;
+pub mod nintendo2;
 pub mod nlm;
 pub mod ols;
 pub mod omf;
@@ -966,6 +967,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Nintendo 3DS NCSD (`NCSD` at 0x100), Switch XCI (`HEAD` at 0x100 and a
+    // root HFS0 where the card header points) and Switch PFS0 (`PFS0` at 0
+    // with tables that fit). The 0x100 magics differ from the NCCH and Mega
+    // Drive keys that `retro::detect` reads at the same offset.
+    if let Some(layout) = nintendo2::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Nintendo2(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -1299,6 +1310,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = cpcdsk::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::CpcDsk(layout),
+        };
+    }
+
+    // 3DS CIA archives have no magic: the 0x2020-byte header, the sections
+    // against the file size and the TMD with its record hashes must all be
+    // consistent. A CIA starts with its header size, so no boot-sector or
+    // partition-table check above matches one.
+    if let Some(layout) = nintendo2::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Nintendo2(layout),
         };
     }
 
