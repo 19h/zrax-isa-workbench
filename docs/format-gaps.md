@@ -183,7 +183,11 @@ three byte orders; CIC check code verified) are implemented; see
 Beyond the table, Master System/Game Gear, Sega 32X, Saturn IP.BIN, Sega CD
 system areas, MSX cartridges, Atari Lynx and 7800, C64 CRT, Atari ST GEMDOS
 executables, ZX Spectrum .z80/.sna snapshots, WonderSwan and Neo Geo Pocket
-followed; see [console and home-computer images](retro2.md).
+followed; see [console and home-computer images](retro2.md). Console disc
+images followed: GameCube (boot DOL, apploader, FST files), Wii (partition
+table; AES partitions opaque) and Xbox XDVDFS (XISO, XGD1, XGD2, XGD3);
+Wii decryption and the GCZ, WIA, RVZ, WBFS, CISO and NKit containers are
+not implemented; see [console disc images](discs.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as

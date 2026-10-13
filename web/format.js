@@ -110,6 +110,7 @@ const FORMAT_NAMES = {
   mbr: 'MBR partition table', gpt: 'GPT partition table', applepartitionmap: 'Apple Partition Map',
   fat: 'FAT filesystem', exfat: 'exFAT filesystem',
   iso9660: 'ISO 9660',
+  gamecubedisc: 'GameCube disc', wiidisc: 'Wii disc', xboxdvd: 'Xbox DVD (XDVDFS)',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

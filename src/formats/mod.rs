@@ -41,6 +41,7 @@ pub mod container;
 pub mod coreboot;
 pub mod d10;
 pub mod dex;
+pub mod discs;
 pub mod ecoff;
 pub mod elf;
 pub mod epoc;
@@ -744,6 +745,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = erofs::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Erofs(layout),
+        };
+    }
+
+    // Console disc images: the Wii magic at 0x18, the GameCube magic at
+    // 0x1C, or the XDVDFS volume descriptor magic at sector 32 of a game
+    // partition (0, 0x18300000, 0xFD90000 or 0x2080000). An XISO written
+    // by extract-xiso also carries an ECMA-119 descriptor at 0x8000, so
+    // this check belongs before any ISO 9660 check.
+    if let Some(layout) = discs::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Discs(layout),
         };
     }
 

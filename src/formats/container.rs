@@ -118,6 +118,8 @@ pub enum Kind {
     Fat(super::fat::Layout),
     /// An ISO 9660 optical disc filesystem image.
     Iso9660(super::iso9660::Layout),
+    /// A console disc image: `GameCube`, Wii or Xbox XDVDFS.
+    Discs(super::discs::Layout),
 }
 
 impl Kind {
@@ -156,6 +158,7 @@ impl Kind {
             Self::Partitions(layout) => layout.format(),
             Self::Fat(layout) => layout.format(),
             Self::Iso9660(layout) => layout.format(),
+            Self::Discs(layout) => layout.format(),
         }
     }
 
@@ -194,6 +197,7 @@ impl Kind {
             Self::Partitions(layout) => layout.label(),
             Self::Fat(layout) => layout.label(),
             Self::Iso9660(layout) => layout.label(),
+            Self::Discs(layout) => layout.label(),
         }
     }
 
@@ -232,6 +236,7 @@ impl Kind {
             Self::Partitions(layout) => layout.is_weak(),
             Self::Fat(layout) => layout.is_weak(),
             Self::Iso9660(layout) => layout.is_weak(),
+            Self::Discs(layout) => layout.is_weak(),
         }
     }
 }
@@ -275,6 +280,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Partitions(layout) => super::partitions::parse_container(data, layout),
         Kind::Fat(layout) => super::fat::parse_container(data, layout),
         Kind::Iso9660(layout) => super::iso9660::parse_container(data, layout),
+        Kind::Discs(layout) => super::discs::parse_container(data, layout),
     }
 }
 

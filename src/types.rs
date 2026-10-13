@@ -1100,6 +1100,13 @@ pub enum FileFormat {
     // ISO 9660
     /// ISO 9660 (ECMA-119) optical disc filesystem image
     Iso9660,
+    // Console disc images
+    /// `GameCube` disc image
+    GameCubeDisc,
+    /// Wii disc image
+    WiiDisc,
+    /// Xbox or Xbox 360 game disc image (XDVDFS)
+    XboxDvd,
 }
 
 impl fmt::Display for FileFormat {
@@ -1350,6 +1357,10 @@ impl fmt::Display for FileFormat {
             FileFormat::ExFat => write!(f, "exFAT filesystem"),
             // ISO 9660
             FileFormat::Iso9660 => write!(f, "ISO 9660"),
+            // Console disc images
+            FileFormat::GameCubeDisc => write!(f, "GameCube disc"),
+            FileFormat::WiiDisc => write!(f, "Wii disc"),
+            FileFormat::XboxDvd => write!(f, "Xbox DVD (XDVDFS)"),
         }
     }
 }

@@ -788,6 +788,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Fat => "FAT filesystem",
         FileFormat::ExFat => "exFAT filesystem",
         FileFormat::Iso9660 => "ISO 9660",
+        FileFormat::GameCubeDisc => "GameCube disc",
+        FileFormat::WiiDisc => "Wii disc",
+        FileFormat::XboxDvd => "Xbox DVD (XDVDFS)",
     }
 }
 
