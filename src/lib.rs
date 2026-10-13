@@ -1144,7 +1144,8 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
         }
         model @ (formats::DetectedFormat::Container { .. }
         | formats::DetectedFormat::Kernel { .. }
-        | formats::DetectedFormat::Bflt) => {
+        | formats::DetectedFormat::Bflt
+        | formats::DetectedFormat::Epoc) => {
             let container = match formats::parse_container_model(data, &model)
                 .expect("container-model format")
             {

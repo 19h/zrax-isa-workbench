@@ -54,6 +54,13 @@ pub enum ClassifierError {
         limit: usize,
     },
 
+    /// Error parsing a Symbian E32 image (EPOC executable or library).
+    #[error("Symbian E32 image parse error: {message}")]
+    EpocParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an ARM Image Format (AIF) executable image.
     #[error("ARM AIF parse error: {message}")]
     AifParseError {

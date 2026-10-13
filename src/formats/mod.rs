@@ -901,8 +901,8 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     }
 
     // Symbian OS v9 SIS packages: UID1 0x10201A7A and the SISContents field
-    // type at 0x10. Before the late EPOC check, whose known UID1 list holds
-    // 0x10201A7A; an E32 image carries `EPOC` at 0x10 instead.
+    // type at 0x10. The late EPOC check cannot claim them: an E32 image
+    // carries `EPOC` at 0x10 instead.
     if let Some(layout) = sis::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Sis(layout),
@@ -1081,7 +1081,8 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Palm;
     }
 
-    // Symbian EPOC/E32 images
+    // Symbian E32 images: the `EPOC` signature at 0x10. Files without it
+    // are not E32 images, whatever their UIDs.
     if epoc::detect(data) {
         return DetectedFormat::Epoc;
     }
@@ -1406,6 +1407,7 @@ pub fn parse_container_model<'a>(
         DetectedFormat::Container { kind } => Some(container::parse(data, kind)),
         DetectedFormat::Kernel { variant } => Some(kernel::parse_container(data, variant)),
         DetectedFormat::Bflt => Some(bflt::parse_container(data)),
+        DetectedFormat::Epoc => Some(epoc::parse_container(data)),
         _ => None,
     }
 }

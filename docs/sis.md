@@ -28,12 +28,13 @@ their own bytes.
 
 Detection order in `formats::detect_format`: the strong check runs after
 the Psy-Q check and before the magic-bearing compressed streams. It comes
-long before the EPOC check, whose list of known E32 UID1 values includes
-`0x10201A7A`: before this family, a SIS 9 package whose UID3 lay in
-`0x10000000`-`0x100FFFFF` was reported as an E32 image, and any other
-went to the code model. An E32 image carries `EPOC` at 0x10, not type 12,
-so E32 images (including IDA's `arm_bad_huffman.epoc`, which has the SIS
-UID1 and an E32 header) stay with the EPOC parser.
+long before the EPOC check, which then also accepted known E32 UID1 values
+including `0x10201A7A`: before this family, a SIS 9 package whose UID3 lay
+in `0x10000000`-`0x100FFFFF` was reported as an E32 image, and any other
+went to the code model. The EPOC check now needs the `EPOC` signature
+([Symbian E32 images](epoc.md)). An E32 image carries `EPOC` at 0x10, not
+type 12, so E32 images (including IDA's `arm_bad_huffman.epoc`, which has
+the SIS UID1 and an E32 header) stay with the EPOC parser.
 
 ## Structure
 
@@ -163,8 +164,8 @@ parser reports one.
 
 | Boundary | Behavior |
 | --- | --- |
-| Pre-v9 EPOC SIS files (UID3 `0x10000419`; EPOC release 3-6, Symbian OS up to v8) | Not implemented: no Symbian specification was found, only a reverse-engineered description (A. Thoukydides, "SIS File Format" 1.07, 2001) that says it "probably contains both errors and omissions" and gives UID2 as always `0x1000006D`, while two of IDA's four pre-v9 samples (`arm_sis.epoc`, `arm_uncomperr_sis6.epoc`) carry `0x10003A12`. These files keep their current classification: the EPOC check claims those with UID2 `0x10003A12`, the others go to the code model |
-| E32 executables inside a package | Classified by the existing EPOC parser, which reports 32-bit little-endian Arm for every E32 image without reading a CPU field from its header; an emulator (x86) build would be reported as Arm. Not changed by this family |
+| Pre-v9 EPOC SIS files (UID3 `0x10000419`; EPOC release 3-6, Symbian OS up to v8) | Not implemented: no Symbian specification was found, only a reverse-engineered description (A. Thoukydides, "SIS File Format" 1.07, 2001) that says it "probably contains both errors and omissions" and gives UID2 as always `0x1000006D`, while two of IDA's four pre-v9 samples (`arm_sis.epoc`, `arm_uncomperr_sis6.epoc`) carry `0x10003A12`. No format claims them: since the E32 parser fix ([Symbian E32 images](epoc.md)) the EPOC check needs the `EPOC` signature, so they go to the code model |
+| E32 executables inside a package | Classified by the EPOC parser from their own header's CPU identifier ([Symbian E32 images](epoc.md)); an executable with a damaged header is listed with an unknown ISA and the parse error in a note |
 | Signatures, certificate chains, capabilities | Counted or skipped; never verified or decoded |
 | Conditions (`SISExpression`), options, languages, prerequisites, properties | Not evaluated; every conditional branch's files are listed |
 | Files in no recognized format (resources, icons, text, data) | Counted, not listed |
@@ -218,6 +219,13 @@ files), `arm_bad_impend.epoc` and `arm_logexportv11_sis9.epoc` went from
 inconclusive to Arm, and `arm_bad_stkovr.epoc` and
 `arm_bad_uncompressed_size.epoc` from inconclusive to parse errors; no
 other file changed.
+
+On 2026-10-13, after the E32 parser fix ([Symbian E32 images](epoc.md)),
+the tests build their executables with complete V headers, and the gated
+test passed with two changed expectations: `arm_bad_impend.epoc`'s
+`!:\sys\bin\Slick.exe` (code size 0xFFFFFFFF, wrong header CRC) is listed
+with an unknown ISA, so the package's primary ISA is unknown, and
+`arm_bad_huffman.epoc` is an EPOC parse error.
 
 Not verified: packages with embedded SIS files, conditional blocks or
 63-bit lengths from a real tool (only synthetic ones were tested), signed

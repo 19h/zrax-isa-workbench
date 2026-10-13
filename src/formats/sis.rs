@@ -61,7 +61,7 @@ const SISX_UID1: u32 = 0x1020_1A7A;
 const HEADER_SIZE: usize = 16;
 
 /// Bytes of the UIDs the UID checksum covers.
-const UIDS_SIZE: usize = 12;
+pub(super) const UIDS_SIZE: usize = 12;
 
 /// Fields are padded with zero bytes to 4-byte boundaries (section 2.12.2).
 const ALIGNMENT: usize = 4;
@@ -692,8 +692,9 @@ fn field_crc(field: &Field<'_>) -> u16 {
 
 /// The UID checksum of the header: the CRC-16 of the UIDs' odd bytes in the
 /// high half and of their even bytes in the low half (`Parser::CheckUidCrc`
-/// with `Mem::Crc`; `MakeSIS` `CSISContents::UidChecksum`).
-fn uid_checksum(uids: &[u8; UIDS_SIZE]) -> u32 {
+/// with `Mem::Crc`; `MakeSIS` `CSISContents::UidChecksum`). The E32 image
+/// header's `iUidChecksum` is the same `TCheckedUid` check.
+pub(super) fn uid_checksum(uids: &[u8; UIDS_SIZE]) -> u32 {
     let even: [u8; UIDS_SIZE / 2] = std::array::from_fn(|i| uids[2 * i]);
     let odd: [u8; UIDS_SIZE / 2] = std::array::from_fn(|i| uids[2 * i + 1]);
     let low = checksum::crc16_ibm3740_update(0, &even);

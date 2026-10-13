@@ -5,6 +5,7 @@ import { deflateSync } from 'node:zlib';
 import { before, after, test } from 'node:test';
 import { setup, teardown, openPage, load, finished, selectEntry, baseUrl } from './helpers.mjs';
 import { FORMAT_NAMES } from '../format.js';
+import { e32Image } from './e32-image.mjs';
 before(setup);
 after(teardown);
 
@@ -109,17 +110,6 @@ function fileHeader(uid3) {
   return Buffer.concat([uids, u32(((crc16(odd) << 16) | crc16(even)) >>> 0)]);
 }
 
-// A synthetic E32 executable: UID1 0x1000007A, UID2 0x100039CE, UID3, zero UID checksum, `EPOC` at 0x10, zero
-// header words to 0x40, then the code.
-function e32Image(code) {
-  const header = Buffer.alloc(0x40);
-  header.writeUInt32LE(0x1000007a, 0);
-  header.writeUInt32LE(0x100039ce, 4);
-  header.writeUInt32LE(PACKAGE_UID, 8);
-  header.write('EPOC', 0x10, 'latin1');
-  return Buffer.concat([header, code]);
-}
-
 // SISFileDescription: target, MIME type, SISHash (SHA-1 in a SISBlob), operation, options, stored and uncompressed
 // lengths, file index.
 const description = (target, file, index) => Buffer.concat([
@@ -146,7 +136,8 @@ function controller(files) {
 // A package with a deflated executable and a stored resource file. SISContents holds both CRC-16s (of the whole
 // compressed controller and data fields), the zlib-compressed controller and the data unit.
 function sisPackage(code) {
-  const exe = e32Image(code);
+  // A synthetic E32 executable: an ARMv5 V header, then the code (./e32-image.mjs).
+  const exe = e32Image({ uid3: PACKAGE_UID, code });
   const rsc = Buffer.concat([u32(0x101f4a6b), Buffer.from('resource strings', 'latin1').map(b => b ^ 0x5a)]);
   const descriptions = [description(EXE_TARGET, exe, 0), description(RSC_TARGET, rsc, 1)];
   const controllerField = compressed(COMPRESS_DEFLATE, controller(descriptions));

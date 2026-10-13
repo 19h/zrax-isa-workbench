@@ -7,6 +7,9 @@
 //! truncation and mutation sweeps. IDA's SIS test inputs are read from
 //! `IDA_INPUT_DIR` when it is set.
 
+#[path = "support/e32_image.rs"]
+mod e32;
+
 use std::path::PathBuf;
 use zrax::formats::checksum::Sha1;
 use zrax::formats::sis;
@@ -173,19 +176,12 @@ fn file_header(uid3: u32) -> Vec<u8> {
     header
 }
 
-/// A synthetic E32 executable: UID1 0x1000007A, UID2 0x100039CE, UID3, a
-/// zero UID checksum, the `EPOC` signature at 0x10 and zero header words to
-/// 0x40, then `code`. The UIDs and the signature are what the EPOC parser
-/// reads; IDA's sample executables carry the same words.
+/// A synthetic E32 executable: a V header (UID1 0x1000007A, UID2
+/// 0x100039CE, UID3, a valid UID checksum and header CRC, CPU
+/// `ECpuArmV5`) followed by `code` as the code part
+/// (`tests/support/e32_image.rs`).
 fn e32_image(uid3: u32, code: &[u8]) -> Vec<u8> {
-    let mut image = 0x1000_007Au32.to_le_bytes().to_vec();
-    image.extend_from_slice(&0x1000_39CEu32.to_le_bytes());
-    image.extend_from_slice(&uid3.to_le_bytes());
-    image.extend_from_slice(&0u32.to_le_bytes());
-    image.extend_from_slice(b"EPOC");
-    image.resize(0x40, 0);
-    image.extend_from_slice(code);
-    image
+    e32::Image::arm_v5(uid3, code).build()
 }
 
 /// A compiled resource file: the resource UID 0x101F4A6B and data, in no
@@ -837,13 +833,14 @@ fn checksum_and_hash_mismatches_are_noted_not_rejected() {
 
 #[test]
 fn sha1_is_compared_with_an_independently_computed_digest() {
-    // SHA-1 of this 68-byte E32 image, computed with Python's hashlib.
+    // SHA-1 of this 160-byte E32 image, computed with Python's hashlib over
+    // the image built there from the documented header layout.
     const DIGEST: [u8; 20] = [
-        0x7b, 0x2d, 0x6c, 0x3c, 0x0a, 0x26, 0x8d, 0x20, 0x27, 0xf2, 0x59, 0x75, 0xf8, 0x76, 0xea,
-        0x5e, 0x31, 0x6f, 0x34, 0x43,
+        0x35, 0x5e, 0x1e, 0x80, 0x77, 0x76, 0xa5, 0x7a, 0x1d, 0xf5, 0xc6, 0x67, 0xb5, 0x4c, 0xe0,
+        0x34, 0xfb, 0x4b, 0xad, 0x90,
     ];
     let exe = e32_image(PACKAGE_UID, &[0x1E, 0xFF, 0x2F, 0xE1]);
-    assert_eq!(exe.len(), 68);
+    assert_eq!(exe.len(), 160);
     let mut description = Description::of(EXE_TARGET, &exe, 0);
     description.sha1 = DIGEST;
     let mut package = Package::new(PACKAGE_UID, "Pinned");
@@ -1153,8 +1150,8 @@ fn byte_mutations_never_panic() {
 
 /// IDA's SIS 9 test inputs (`IDA_INPUT_DIR`), read in place: the valid and
 /// tampered packages classify, the damaged ones fail with bounded errors,
-/// and the E32 image with a SIS UID1 stays an EPOC image. Skipped without
-/// the variable.
+/// and the damaged E32 image with a SIS UID1 is an EPOC parse error.
+/// Skipped without the variable.
 #[test]
 fn ida_input_packages_parse_or_fail_with_bounded_errors() {
     let Some(dir) = std::env::var_os("IDA_INPUT_DIR").map(PathBuf::from) else {
@@ -1181,10 +1178,20 @@ fn ida_input_packages_parse_or_fail_with_bounded_errors() {
     assert!(has_note(&p, "1 signature certificate chain present"));
 
     // A tampered package: its data CRC and the executable's SHA-1 differ,
-    // and one deflated file does not decode to its declared size.
+    // and one deflated file does not decode to its declared size. The
+    // executable's own header is damaged (code size 0xFFFFFFFF, a wrong
+    // header CRC), so the EPOC parser rejects it and its ISA is unknown.
     let p = classify(&read("arm_bad_impend.epoc"));
     assert_eq!(p.format.format, FileFormat::SymbianSis);
-    assert_eq!(slice(&p, "!:\\sys\\bin\\Slick.exe").isa, Isa::Arm);
+    assert!(matches!(
+        slice(&p, "!:\\sys\\bin\\Slick.exe").isa,
+        Isa::Unknown(_)
+    ));
+    assert!(has_note(
+        &p,
+        "!:\\sys\\bin\\Slick.exe: ISA unknown (Symbian E32 image parse error: Truncated E32 code \
+         part at 0x9C (4294967295 B) in the 5096 B uncompressed image)"
+    ));
     assert!(has_note(
         &p,
         "data CRC-16 0xAD48 does not match the computed 0xE95F"
@@ -1214,7 +1221,10 @@ fn ida_input_packages_parse_or_fail_with_bounded_errors() {
     }
 
     // UID1 0x10201A7A with `EPOC` at 0x10 and a wrong UID checksum: an E32
-    // image header, which the EPOC parser keeps.
-    let p = classify(&read("arm_bad_huffman.epoc"));
-    assert_eq!(p.format.format, FileFormat::Epoc);
+    // image header, which the EPOC parser keeps and rejects as damaged.
+    assert_eq!(
+        error_text(&read("arm_bad_huffman.epoc")),
+        "Symbian E32 image parse error: Invalid E32 export description: 738 B end the header at \
+         0x380, but iCodeOffset is 0xA3D4AC56"
+    );
 }
