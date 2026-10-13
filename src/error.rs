@@ -62,6 +62,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Microsoft cabinet file (`MSCF`).
+    #[error("Cabinet parse error: {message}")]
+    CabParseError {
+        /// What is wrong with the cabinet.
+        message: String,
+    },
+
     /// Error parsing a Symbian E32 image (EPOC executable or library).
     #[error("Symbian E32 image parse error: {message}")]
     EpocParseError {

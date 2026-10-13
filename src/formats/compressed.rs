@@ -43,6 +43,9 @@
 //!   Plus files): framed as one `bvxn` block for the LZFSE decoder, as
 //!   `complzvn` payloads are (see [`lzss`]). No magic; decoded only where a
 //!   container names them.
+//! - LZX as Microsoft cabinet folders store it (`typeCompress` 3): see
+//!   [`lzx`]. No magic; decoded only where a cabinet names it, with the
+//!   window size the cabinet gives.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -63,6 +66,7 @@ mod jffs2;
 mod lz4_block;
 mod lzo;
 mod lzss;
+mod lzx;
 mod microlzma;
 mod xz;
 
@@ -177,6 +181,13 @@ pub enum Codec {
     /// [`decode_limited`] decodes exactly `limit` bytes, the size its
     /// container states.
     Lzvn,
+    /// LZX in 32 KiB frames, as Microsoft cabinet folders store it; no
+    /// magic. [`decode_limited`] decodes exactly `limit` bytes, the folder
+    /// size its cabinet states.
+    Lzx {
+        /// Window size in bits: 15 to 21 (32 KiB to 2 MiB).
+        window_bits: u8,
+    },
 }
 
 impl Codec {
@@ -207,6 +218,9 @@ impl Codec {
         Self::MicroLzma,
         Self::Adc,
         Self::Lzvn,
+        Self::Lzx {
+            window_bits: lzx::MAX_WINDOW_BITS,
+        },
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -237,6 +251,7 @@ impl Codec {
             Self::MicroLzma => "MicroLZMA",
             Self::Adc => "ADC",
             Self::Lzvn => "LZVN",
+            Self::Lzx { .. } => "LZX",
         }
     }
 
@@ -270,6 +285,8 @@ impl Codec {
             Self::Adc => FileFormat::Raw,
             // Raw LZVN has no magic; only HFS Plus decmpfs names it.
             Self::Lzvn => FileFormat::Raw,
+            // LZX has no magic; only cabinet folders name it.
+            Self::Lzx { .. } => FileFormat::Raw,
         }
     }
 
@@ -301,6 +318,7 @@ impl Codec {
             Self::MicroLzma => "MicroLZMA stream",
             Self::Adc => "ADC stream",
             Self::Lzvn => "raw LZVN stream",
+            Self::Lzx { .. } => "LZX stream",
         }
     }
 
@@ -501,6 +519,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::MicroLzma => microlzma::decode(data, limit),
         Codec::Adc => adc::decode(data, limit),
         Codec::Lzvn => lzss::lzvn_raw(data, limit),
+        Codec::Lzx { window_bits } => lzx::decode(data, window_bits, limit),
     }
 }
 
@@ -606,6 +625,66 @@ fn inflate_until(input: &[u8], zlib: bool, limit: usize, at_limit: AtLimit) -> R
                 return Err(error(format!("Truncated {name} stream")));
             }
             _ => return Err(error(format!("Invalid {name} stream"))),
+        }
+    }
+}
+
+/// Inflate one raw DEFLATE stream (RFC 1951) through its final block and
+/// append its output to `out`, appending at most `limit` bytes. Matches may
+/// reach back into the bytes `out` already holds, as into a preset
+/// dictionary: the blocks of an MSZIP folder keep the history of the blocks
+/// before them ([MS-MCI] section 2: "Decoding trees MUST be discarded after
+/// each RFC 1951 block, but the history buffer MUST be maintained").
+///
+/// Returns the number of input bytes the stream used. On error, `out` holds
+/// its earlier contents again.
+///
+/// # Errors
+///
+/// A truncated or corrupt stream, a match that reaches before the start of
+/// `out`, or more than `limit` bytes of output.
+pub fn inflate_continuing(input: &[u8], out: &mut Vec<u8>, limit: usize) -> Result<usize> {
+    use miniz_oxide::inflate::core::{decompress, inflate_flags, DecompressorOxide};
+    use miniz_oxide::inflate::TINFLStatus;
+
+    let flags = inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+    let start = out.len();
+    let end = start
+        .checked_add(limit)
+        .ok_or_else(|| error("Invalid DEFLATE output limit"))?;
+    let mut decompressor = Box::<DecompressorOxide>::default();
+    let initial = input.len().saturating_mul(2).clamp(4096, limit.max(4096));
+    out.resize(start + initial.min(limit), 0);
+    let mut in_pos = 0;
+    let mut out_pos = start;
+    let outcome = loop {
+        let (status, used, written) =
+            decompress(&mut decompressor, &input[in_pos..], out, out_pos, flags);
+        in_pos += used;
+        out_pos += written;
+        match status {
+            TINFLStatus::Done => break Ok(in_pos),
+            TINFLStatus::HasMoreOutput => {
+                if out.len() >= end {
+                    break Err(exceeds(limit));
+                }
+                let grown = start + (out.len() - start).saturating_mul(2).min(limit);
+                out.resize(grown.max(out.len() + 1).min(end), 0);
+            }
+            TINFLStatus::NeedsMoreInput | TINFLStatus::FailedCannotMakeProgress => {
+                break Err(error("Truncated DEFLATE stream"));
+            }
+            _ => break Err(error("Invalid DEFLATE stream")),
+        }
+    };
+    match outcome {
+        Ok(used) => {
+            out.truncate(out_pos);
+            Ok(used)
+        }
+        Err(e) => {
+            out.truncate(start);
+            Err(e)
         }
     }
 }
@@ -1227,6 +1306,77 @@ mod tests {
         trailing.extend_from_slice(b"junk");
         assert_eq!(detect_weak(&trailing), None);
         assert_eq!(detect_weak(&zlib[..zlib.len() - 1]), None);
+    }
+
+    /// Writes DEFLATE bits, least significant first (RFC 1951, 3.1.1).
+    #[derive(Default)]
+    struct DeflateBits {
+        bytes: Vec<u8>,
+        bit: usize,
+    }
+
+    impl DeflateBits {
+        fn put(&mut self, value: u32, count: u32) {
+            for i in 0..count {
+                if self.bit % 8 == 0 {
+                    self.bytes.push(0);
+                }
+                if (value >> i) & 1 == 1 {
+                    let last = self.bytes.len() - 1;
+                    self.bytes[last] |= 1 << (self.bit % 8);
+                }
+                self.bit += 1;
+            }
+        }
+
+        /// A Huffman code, most significant bit first.
+        fn code(&mut self, code: u32, length: u32) {
+            for i in (0..length).rev() {
+                self.put((code >> i) & 1, 1);
+            }
+        }
+    }
+
+    /// A final fixed-Huffman block (RFC 1951, 3.2.6) holding one match:
+    /// length 10 (code 264, 7 bits), distance 20 (code 8, 5 bits, then 3
+    /// extra bits of value 3), then end of block (code 256).
+    fn fixed_match_block() -> Vec<u8> {
+        let mut w = DeflateBits::default();
+        w.put(1, 1);
+        w.put(1, 2);
+        w.code(264 - 256, 7);
+        w.code(8, 5);
+        w.put(3, 3);
+        w.code(0, 7);
+        w.bytes
+    }
+
+    #[test]
+    fn inflate_continuing_reaches_back_into_earlier_output() {
+        let history = b"0123456789abcdefghijklmnopqrstuvwxyz";
+        let block = fixed_match_block();
+        let mut out = history.to_vec();
+        assert_eq!(
+            inflate_continuing(&block, &mut out, 32).unwrap(),
+            block.len()
+        );
+        assert_eq!(&out[history.len()..], b"ghijklmnop");
+
+        let mut short = b"abc".to_vec();
+        assert!(inflate_continuing(&block, &mut short, 32).is_err());
+        assert_eq!(short, b"abc");
+        let mut limited = history.to_vec();
+        assert!(inflate_continuing(&block, &mut limited, 9).is_err());
+        assert_eq!(limited, history);
+        assert!(inflate_continuing(&block[..1], &mut history.to_vec(), 32).is_err());
+
+        let stream = miniz_oxide::deflate::compress_to_vec(b"payload payload", 6);
+        let mut out = vec![1, 2, 3];
+        assert_eq!(
+            inflate_continuing(&stream, &mut out, 15).unwrap(),
+            stream.len()
+        );
+        assert_eq!(out, b"\x01\x02\x03payload payload");
     }
 
     #[test]

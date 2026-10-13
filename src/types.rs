@@ -1228,6 +1228,9 @@ pub enum FileFormat {
     // APFS
     /// APFS container (`NXSB` container superblock) and its volumes
     Apfs,
+    // Microsoft cabinets
+    /// Microsoft cabinet file (`MSCF`)
+    MsCab,
 }
 
 impl fmt::Display for FileFormat {
@@ -1552,6 +1555,8 @@ impl fmt::Display for FileFormat {
             FileFormat::ChromeOsKernel => write!(f, "ChromeOS kernel partition"),
             // APFS
             FileFormat::Apfs => write!(f, "APFS container"),
+            // Microsoft cabinets
+            FileFormat::MsCab => write!(f, "Microsoft cabinet"),
         }
     }
 }

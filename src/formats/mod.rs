@@ -37,6 +37,7 @@ pub mod bflt;
 pub mod blackfin_ldr;
 pub mod bitstream;
 pub mod bootmisc;
+pub mod cab;
 pub mod capsule;
 pub mod cbm;
 pub mod checksum;
@@ -533,6 +534,19 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = adf::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Adf(layout),
+        };
+    }
+
+    // Microsoft cabinets: `MSCF`, three zero reserved fields and a file
+    // table offset between the folder table and `cbCabinet`, all in the
+    // first 36 bytes. Before the families that probe offsets inside the
+    // input (SNDH at 12, headers at 0x100, the tar magic at 257,
+    // superblocks at 0x400 and 0x438, descriptors at 0x8000, trailers at
+    // the end), whose keys a stored folder's file data may hold; no format
+    // that those checks claim starts with this header.
+    if let Some(layout) = cab::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Cab(layout),
         };
     }
 

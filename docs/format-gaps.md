@@ -80,7 +80,10 @@ xz members decoded with CRC-32 verified; Deflate64 and encrypted members
 opaque; APK, JAR, IPA, Nordic DFU and PDX are labels), tar (ustar, pax and
 GNU; header checksums verified) and CPIO (newc, crc, odc and old binary in
 both byte orders; concatenated initramfs) are implemented; see
-[archives](archives.md). SquashFS 4.0 (compressor IDs 1-6; regular files
+[archives](archives.md). Microsoft cabinets followed (stored, MSZIP and
+LZX folders; CFDATA checksums verified; files listed by name; Quantum
+folders, joining cabinet sets and signature verification not implemented);
+see [Microsoft cabinets](cab.md). SquashFS 4.0 (compressor IDs 1-6; regular files
 listed by path), CramFS (both byte orders, CRC-32 verified) and romfs are
 implemented; SquashFS 1.x-3.x, big-endian and streamed images are recognized
 but not enumerated; see [read-only filesystems](rofs.md). UBI (PEB size

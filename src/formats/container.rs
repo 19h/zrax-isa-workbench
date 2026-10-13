@@ -167,6 +167,8 @@ pub enum Kind {
     FwPack(super::fwpack::Layout),
     /// An APFS container.
     Apfs(super::apfs::Layout),
+    /// A Microsoft cabinet file.
+    Cab(super::cab::Layout),
 }
 
 impl Kind {
@@ -227,6 +229,7 @@ impl Kind {
             Self::Stfs(layout) => layout.format(),
             Self::FwPack(layout) => layout.format(),
             Self::Apfs(layout) => layout.format(),
+            Self::Cab(layout) => layout.format(),
         }
     }
 
@@ -287,6 +290,7 @@ impl Kind {
             Self::Stfs(layout) => layout.label(),
             Self::FwPack(layout) => layout.label(),
             Self::Apfs(layout) => layout.label(),
+            Self::Cab(layout) => layout.label(),
         }
     }
 
@@ -347,6 +351,7 @@ impl Kind {
             Self::Stfs(layout) => layout.is_weak(),
             Self::FwPack(layout) => layout.is_weak(),
             Self::Apfs(layout) => layout.is_weak(),
+            Self::Cab(layout) => layout.is_weak(),
         }
     }
 }
@@ -412,6 +417,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Stfs(layout) => super::stfs::parse_container(data, layout),
         Kind::FwPack(layout) => super::fwpack::parse_container(data, layout),
         Kind::Apfs(layout) => super::apfs::parse_container(data, layout),
+        Kind::Cab(layout) => super::cab::parse_container(data, layout),
     }
 }
 

@@ -133,6 +133,7 @@ const FORMAT_NAMES = {
   xboxstfs: 'Xbox 360 STFS package',
   mikrotiknpk: 'MikroTik NPK package', ubiquitifw: 'Ubiquiti firmware image', chromeoskernel: 'ChromeOS kernel partition',
   apfs: 'APFS container',
+  mscab: 'Microsoft cabinet',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }
