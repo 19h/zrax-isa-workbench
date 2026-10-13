@@ -22,8 +22,8 @@ classified from its own bytes. The container names no processor.
 | `apfs/btree.rs` | `btree_node_phys_t` and `btree_info_t`, fixed and variable tables of contents, node checks, seek and leaf cursor |
 | `apfs/volume.rs` | `apfs_superblock_t`: name, role, flags, features, counts |
 | `apfs/records.rs` | `j_key_t`, inode, directory entry, extended attribute and file extent records, extended fields |
-| `apfs/decmpfs.rs` | decmpfs header, chunk tables, decoding through `compressed::decode_limited` |
-| `apfs/walk.rs` | Volume lookup, directory walk, data stream reads, member extraction and limits, notes |
+| `apfs/walk.rs` | Volume lookup, directory walk, data stream reads, the `com.apple.decmpfs` and `com.apple.ResourceFork` attributes, member extraction and limits, notes |
+| `formats/decmpfs.rs` (shared with HFS+) | decmpfs header, compression types, chunk tables of the resource fork, decoding through `compressed::decode_limited`; APFS supplies its error variant, reads and checks through `decmpfs::Family` |
 
 ## Implemented layouts
 
@@ -40,7 +40,10 @@ open-source readers, which agree where both cover them:
 | libyal/libfsapfs | commit `cc122619a0fa5cecf7c077742ac62251fb85fb6c`: `libfsapfs/libfsapfs_checksum.c`, `fsapfs_container_superblock.h`, `fsapfs_volume_superblock.h`, `fsapfs_object_map.h`, `libfsapfs_container_superblock.c` | Fletcher-64 (same result), the structure offsets, the container superblock type `0x80000001` |
 | apple-oss-distributions/xnu | tag `xnu-11215.1.10`: `bsd/sys/decmpfs.h`, `bsd/sys/xattr.h`, `bsd/sys/stat.h` | `decmpfs_disk_header`, `DECMPFS_XATTR_NAME`, `CMP_Type1`, the dataless types, `XATTR_RESOURCEFORK_NAME`, `UF_COMPRESSED` |
 
-decmpfs types:
+decmpfs types, decoded by `src/formats/decmpfs.rs`, which the HFS+ family
+uses too (see [HFS+ and HFSX volumes, "The shared decmpfs
+decoder"](hfsplus.md#the-shared-decmpfs-decoder) for the checks in which the
+two families still differ):
 
 | Type | Stored | Codec | Decoded |
 | --- | --- | --- | --- |
@@ -237,6 +240,7 @@ verified.
 | Fusion containers | Noted; blocks on the second device are not available |
 | Non-contiguous checkpoint areas; ephemeral objects (space manager, reaper) | Not read; block 0 is used for a non-contiguous area |
 | decmpfs types other than 1, 3, 4, 7, 8, 9, 11, 12; dataless files | Not decoded; counted |
+| A `com.apple.decmpfs` attribute larger than 3,802 B (`MAX_DECMPFS_XATTR_SIZE`, which xnu applies on every file system) | Read, as before the decoder was shared with HFS+, which refuses it; not changed by the refactor |
 | Extended attributes other than the two decmpfs ones, firmlinks, volume groups | Not read |
 | B-tree nodes larger than one block | Not supported (noted) |
 | Files over 64 MiB | Not extracted |
@@ -315,5 +319,21 @@ HFS+, ext, FAT and ISO 9660 families), the native suite passed 2,471
 tests with 6 ignored, and IDA's corpus (4,621 files) classified as
 before. Through the DMG family, the watchOS developer disk image
 `022-22632-017.dmg` classified as AArch64 from the Mach-O files of its
-APFS volume; the images whose volumes are sealed cryptexes still name no
-ISA.
+volume (an HFS+ volume, as above, not an APFS one); the images whose
+volumes are sealed cryptexes still name no ISA.
+
+Shared decmpfs decoder, on 2026-10-13 (macOS 27.2 AArch64, build 26B5101f,
+rustc 1.100.0-nightly `f248f4038`): `src/formats/apfs/decmpfs.rs` was
+replaced by `src/formats/decmpfs.rs`, which HFS+ shares; APFS keeps its own
+checks through `decmpfs::Family` (no attribute limit of its own, short
+resource forks refused first, empty type 1 data reported as truncated).
+`cargo test --all-features --locked` passed 2,628 tests with 6 ignored,
+among them `tests/apfs.rs` (30 tests; the two sample scans returned early
+without `APFS_SAMPLE_DIR` and `IDA_INPUT_DIR`, so they were skipped), the
+13 unit tests in `src/formats/apfs/` and the 8 in `src/formats/decmpfs.rs`;
+`web/tests/apfs.test.mjs` (4 tests) passed after `./build-web.sh`. The
+differential snapshot recorded in [HFS+ and HFSX volumes](hfsplus.md)
+("Verification") covered the three APFS fixtures, 36 containers from the
+`tests/apfs.rs` builders and the developer disk images' seven APFS
+containers: no APFS outcome changed, including the iOS image's notes
+counting 64 type 9 ("raw") and 50 zlib files.

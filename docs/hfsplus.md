@@ -17,8 +17,9 @@ own bytes. The volume names no processor.
 | `hfsplus/fork.rs` | Fork extents from the fork data record and the extents overflow B-tree, reads of fork bytes (borrowed from one run or reassembled) |
 | `hfsplus/btree.rs` | Header node, node descriptor and record offset checks, keyed records, the `SearchTree` descent, leaf-chain cursor, extent key lookup |
 | `hfsplus/catalog.rs` | Catalog keys, folder, file and thread records, exported names, enumeration of a folder's children |
-| `hfsplus/decmpfs.rs` | `com.apple.decmpfs` attribute lookup, decmpfs header, chunk tables, decoding through `compressed::decode_limited` |
+| `hfsplus/attributes.rs` | `com.apple.decmpfs` attribute lookup in the attributes B-tree |
 | `hfsplus/walk.rs` | Catalog walk, metadata folders, hard and directory links, member extraction and limits, startup file, notes |
+| `formats/decmpfs.rs` (shared with APFS) | decmpfs header, compression types, chunk tables of the resource fork, decoding through `compressed::decode_limited`; HFS+ supplies its error variant, reads and checks through `decmpfs::Family` (see [The shared decmpfs decoder](#the-shared-decmpfs-decoder)) |
 
 ## Implemented layouts
 
@@ -34,8 +35,11 @@ taken from xnu tag `xnu-11215.1.10` (`bsd/sys/decmpfs.h`,
 from three open-source readers that agree on the other types: The Sleuth Kit
 `sleuthkit-4.12.1` (`tsk/fs/decmpfs.h`, `tsk/fs/decmpfs.c`), libyal/libfshfs
 commit `78321de1eda54b30261adf59b938781128591b2e` ("Hierarchical File System
-(HFS).asciidoc") and sgan81/apfs-fuse commit
-`66b86bd525e8cb90f9012543be89b1f092b75cf3` (`ApfsLib/Decmpfs.cpp`).
+(HFS).asciidoc": "Compression method", "Raw compressed data") and
+sgan81/apfs-fuse commit `66b86bd525e8cb90f9012543be89b1f092b75cf3`
+(`ApfsLib/Decmpfs.cpp`, SHA-256
+`f9b16053d9bc095af35fd022fd51b04c794144ca726fd913538db7fcc1bed58b`). The
+decoder is `formats::decmpfs`, which the APFS family uses too.
 
 | decmpfs type | Stored | Codec | Decoded |
 | --- | --- | --- | --- |
@@ -44,9 +48,10 @@ commit `78321de1eda54b30261adf59b938781128591b2e` ("Hierarchical File System
 | 4 | Resource fork: block table at the Resource Manager `dataOffset` + 4 | zlib per 64 KiB chunk; the same stored marker | Yes |
 | 7 | After the header in the attribute | LZVN; a first byte `0x06` marks stored data | Yes |
 | 8 | Resource fork: little-endian offset table at 0 | LZVN per 64 KiB chunk; the same stored marker | Yes |
+| 9 | After the header in the attribute | None: a `0xCC` marker byte, then the data itself (libfshfs `kAFSCTypeRawChunk`; apfs-fuse "Uncompressed, Attr") | Yes |
 | 11 | After the header in the attribute | LZFSE | Yes |
 | 12 | Resource fork: offset table at 0 | LZFSE per 64 KiB chunk | Yes |
-| 5, 9, 10, 13, 14, `0x80000001`, `0x80000002` | | sparse, raw (`0xCC`), LZBITMAP, dataless | No; counted in a note |
+| 5, 10, 13, 14, `0x80000001`, `0x80000002` | | sparse, raw resource fork chunks, LZBITMAP, dataless | No; counted in a note |
 
 zlib and LZFSE use the existing codecs. Raw LZVN streams (no block header)
 are decoded by `compressed::Codec::Lzvn`, added for this family: the stream
@@ -102,7 +107,8 @@ the whole file, with the transform `HFS+ extents`. A decmpfs member's slice
 gives the stored compressed bytes (the data after the header in the
 attribute, or the resource fork's first run) and its decoded range the
 decoded file, with the transform `decmpfs zlib`, `decmpfs LZVN`, `decmpfs
-LZFSE` or `decmpfs attribute data` (type 1).
+LZFSE`, `decmpfs raw` (type 9; the stored bytes include the `0xCC` marker)
+or `decmpfs attribute data` (type 1).
 
 ## Members
 
@@ -176,10 +182,10 @@ size decmpfs states.
   fork at the block count covered so far and must add blocks; a missing record
   skips the file with a note.
 - decmpfs: the attribute is 16 B to 3,802 B (`MAX_DECMPFS_XATTR_SIZE`) with
-  the `cmpf` magic; the chunk count must be the size in 64 KiB units; chunk
-  tables must lie in the fork; chunks are at most 65,537 B; each unit must
-  decode to exactly its size. An attribute stored in extents
-  (`kHFSPlusAttrForkData`) is not supported.
+  the `cmpf` magic; type 9 data starts with its `0xCC` marker; the chunk
+  count must be the size in 64 KiB units; chunk tables must lie in the fork;
+  chunks are at most 65,537 B; each unit must decode to exactly its size. An
+  attribute stored in extents (`kHFSPlusAttrForkData`) is not supported.
 - B-tree node reads are limited to 64 times the volume size (for a truncated
   volume, 64 times the bytes present), because every search reads one node
   per level; when the limit is reached the walk stops and a note counts the
@@ -233,6 +239,30 @@ present is read as a truncated volume:
   when all of their data is present", with X and Y in B, KiB or MiB.
 - The whole input belongs to the volume (`consumed`).
 
+## The shared decmpfs decoder
+
+`src/formats/decmpfs.rs` decodes decmpfs data for HFS+ and APFS: the
+header, the compression types, the chunk tables of a resource fork and each
+unit through `compressed::decode_limited`. Each family locates the data its
+own way. HFS+ looks up `com.apple.decmpfs` in the attributes B-tree
+(`hfsplus/attributes.rs`) and reads the file's resource fork through its
+extents; APFS reads the `com.apple.decmpfs` and `com.apple.ResourceFork`
+extended attributes. A family implements `decmpfs::Family`, which supplies
+its parse error (`HFS+ volume parse error: ...`), its bounds-checked reads
+(so a read past the end of an attribute or fork is "Truncated volume at
+0x... + N B" on HFS+ and "Truncated structure at ..." on APFS), and three
+checks in which the two readers differed before they shared the decoder.
+Each family keeps its own (AGENTS.md section 6, step 6):
+
+| Check | HFS+ | APFS |
+| --- | --- | --- |
+| Largest `com.apple.decmpfs` attribute | 3,802 B, xnu's `MAX_DECMPFS_XATTR_SIZE` | No limit of its own; a data stream is read up to 64 MiB |
+| A resource fork smaller than 4 B per chunk | The chunk table read reports what it finds, for example "Invalid decmpfs chunk table: 12 B, 4100 B expected" | Refused first: "Invalid decmpfs resource fork: N B cannot hold C chunks" |
+| Empty type 1 data for a file that is not empty | "Invalid decmpfs data: 0 B decoded, N B expected" | "Truncated decmpfs data: an empty compression unit" |
+
+Before the decoders were merged, only the APFS one read type 9; HFS+ now
+decodes it too.
+
 ## Assumption register
 
 | ID | Assumption | Falsification probe |
@@ -241,7 +271,7 @@ present is read as a truncated volume:
 | H2 | An empty name sorts before every other name, so the search needs no Unicode comparison | TN1150 "Catalog Tree Usage" and the binary order of HFSX; both fixtures (case-folding and binary) find every folder's records |
 | H3 | Attribute keys sort by `fileID` first | TN1150 marks the attributes key "not finalized"; `hfs_format.h` defines the layout read here, and the fixtures' attributes are found |
 | H4 | `UF_COMPRESSED` marks a decmpfs file | xnu `decmpfs_file_is_compressed`; the fixtures' compressed files have it (`ownerFlags` 0x20) and the others do not |
-| H5 | decmpfs types 3, 4, 11 and 12 are laid out as TSK, libfshfs and apfs-fuse read them | Only types 7 and 8 come from macOS (`ditto --hfsCompression` on macOS 27.2 writes LZVN); 1, 3, 4, 11 and 12 are synthetic in `tests/hfsplus.rs`. Not verified against files macOS wrote |
+| H5 | decmpfs types 3, 4, 9, 11 and 12 are laid out as TSK, libfshfs and apfs-fuse read them | Types 7 and 8 come from macOS (`ditto --hfsCompression` on macOS 27.2 writes LZVN). Type 9 and zlib files come from Apple-built disk images (see Verification): every type 9 file and every zlib file decoded from the Xcode tools DMG (408 and 93; its zlib files are type 4) and from the watchOS developer disk image (61 and 52) equals the file the kernel returns from the image mounted read-only. Types 1, 3, 11 and 12 are synthetic only (`tests/hfsplus.rs`) |
 | H6 | An LZFSE unit has no stored-data marker | apfs-fuse says it does not know; libfshfs describes a `0xFF` marker for resource fork chunks. Not implemented: such a chunk fails to decode and the file is skipped with a note |
 | H7 | Hard links resolve only with the root's or a metadata folder's creation date | `cat_lookupbykey`; the fixture's links carry the metadata folder's date |
 | H8 | The first 4 KiB decide whether a file is a recognized format | As for the other filesystem families; a weak format that needs its whole input is not listed |
@@ -257,7 +287,7 @@ present is read as a truncated volume:
 | A truncated volume whose catalog or attributes file continues in extents overflow nodes past the end of the input | The extents cannot be resolved: the "Truncated volume" parse error |
 | The wrapper's own HFS files | Not read; noted |
 | Journal | Located and its header read; never replayed. Transactions are noted as possibly stale metadata |
-| decmpfs types 5, 9, 10, 13, 14 and dataless files | Not decoded; counted in a note |
+| decmpfs types 5, 10, 13, 14 and dataless files | Not decoded; counted in a note. No sample of type 10 (raw resource fork chunks) was available, and there is no LZBITMAP codec |
 | decmpfs attribute stored in extents | Not supported; the file is skipped with a note |
 | Resource forks of uncompressed files, named forks, other extended attributes | Not read |
 | Alternate volume header | Not read or compared |
@@ -342,3 +372,60 @@ at 0x8139000 or later. The test
 `a_local_dmg_lists_the_files_in_the_first_64_mib_of_its_cut_volume` runs on
 it when `ZRAX_LOCAL_DMG` names the file (skipped otherwise). The IDA Pro
 test inputs hold no HFS+ volume (not verified on third-party volumes).
+
+Shared decmpfs decoder and type 9, on 2026-10-13 (macOS 27.2 AArch64,
+build 26B5101f, rustc 1.100.0-nightly `f248f4038`, wasm-pack 0.14.0, Node
+25.8.1): the HFS+ and APFS decoders were merged into `formats::decmpfs`, and
+HFS+ now decodes type 9. `cargo test --all-features --locked` passed 2,628
+tests with 6 ignored (the repository's existing ignores); among them the 8
+unit tests in `src/formats/decmpfs.rs`, the 7 in `src/formats/hfsplus/`, the
+13 in `src/formats/apfs/` and `tests/hfsplus.rs` (30 tests, one of them the
+new synthetic type 9 volume). The two `ZRAX_LOCAL_DMG` tests return early
+without the variable and so were skipped in that run; run with it they
+passed on `Additional_Tools_for_Xcode_26.2.dmg`, and the type 9 test also on
+the watchOS developer disk image `022-22632-017.dmg`. After `./build-web.sh`,
+`web/tests/hfsplus.test.mjs`, `apfs.test.mjs` and `dmg.test.mjs` (14 tests)
+passed; the rest of the browser suite was not run, as no browser code or
+format ID changed.
+
+A differential snapshot (AGENTS.md section 6) compared the previous commit
+with the change on 140 inputs: the two HFS+ and three APFS macOS fixtures,
+the ten DMG fixtures and the six HFS+ volumes they hold, 101 volumes and
+containers that the `tests/hfsplus.rs` and `tests/apfs.rs` builders produce,
+and, whole, the Xcode tools DMG and the eight Xcode developer disk images
+with the nine volumes they hold (read in place). For the inputs that hold
+decmpfs files (`hfsplus.img`, `hfsx.img`, `apfs.img`, the builders' decmpfs
+and member-listing volumes) and the DMG fixtures' HFS+ volumes it parsed
+every prefix of the first 64 KiB, every 61st prefix and each 512 B boundary
+and its neighbours, `0x00`, `0xFF` and a bit flip of every byte of each
+non-zero sector, and, for APFS, `0x00`, `0xFF` and a bit flip of every third
+byte of each checksummed block with the checksum recomputed; the other
+fixtures and builder volumes more sparsely (4 KiB boundaries, a bit flip of
+every 31st byte of non-zero sectors, every 13th byte of checksummed blocks),
+and the disk images whole. Of 4,868,266
+outcomes (the parser's container or error, and for whole inputs and
+64 KiB prefixes the classifier's JSON payload), 3 changed, all of them HFS+
+volumes with type 9 files: the Xcode tools volume and the watchOS volume,
+whose notes now count their type 9 files as decoded ("raw") instead of
+"not implemented" (no member changed), and one bit flip of the synthetic
+unsupported-types volume that turns the LZBITMAP file's type 13 into 9,
+now "Invalid decmpfs type 9 data: marker 0x7F, 0xCC expected". No APFS
+outcome changed.
+
+`Additional_Tools_for_Xcode_26.2.dmg` (87,179,210 B, read in place, not
+committed) lists 4 members before and after the change: its 408 type 9
+files (property lists, TIFF, GIF, PNG and SVG images, strings files and
+scripts of at most 2,046 B) are decoded but none is a recognized format.
+The note changed from "94 decmpfs-compressed files were decoded for
+examination (zlib: 94)" and "408 files use decmpfs compression type 9, which
+is not implemented; not read" to "502 decmpfs-compressed files were decoded
+for examination (raw: 408, zlib: 94)". The watchOS developer disk image
+`022-22632-017.dmg` (an HFS+ volume of 115 regular files) lists 39 members
+before and after; its 61 type 9 files are now decoded. With the walk
+temporarily made to list every decmpfs file it decodes, and both images
+mounted read-only (`hdiutil attach -readonly`), every decoded file was byte
+for byte the file the kernel returns: 408 type 9 and 93 zlib files of the
+Xcode tools volume (the 94th exceeds 64 MiB), 61 type 9 and 52 zlib files
+of the watchOS volume. Not
+verified: type 10 (raw chunks in the resource fork), of which no sample was
+available.

@@ -17,16 +17,18 @@
 //!   `66b86bd525e8cb90f9012543be89b1f092b75cf3`: `ApfsLib/Util.cpp`
 //!   (`Fletcher64`, `VerifyBlock`), `ApfsLib/ApfsContainer.cpp` (the
 //!   checkpoint scan), `ApfsLib/ApfsVolume.cpp`, `ApfsLib/BTree.cpp`,
-//!   `ApfsLib/ApfsDir.cpp` (directory record keys, file extents) and
-//!   `ApfsLib/Decmpfs.cpp` (decmpfs types and chunk tables), for what [REF]
-//!   leaves open.
+//!   `ApfsLib/ApfsDir.cpp` (directory record keys, file extents), for what
+//!   [REF] leaves open.
 //! - [LIBFS] libyal/libfsapfs commit
 //!   `cc122619a0fa5cecf7c077742ac62251fb85fb6c`: `libfsapfs_checksum.c`
 //!   (Fletcher-64) and the `fsapfs_*.h` structure layouts, as a cross-check.
 //! - [XNU] apple-oss-distributions/xnu tag `xnu-11215.1.10`:
-//!   `bsd/sys/decmpfs.h` (`decmpfs_disk_header`, `DECMPFS_XATTR_NAME`,
-//!   `CMP_Type1`), `bsd/sys/xattr.h` (`XATTR_RESOURCEFORK_NAME`) and
-//!   `bsd/sys/stat.h` (`UF_COMPRESSED`).
+//!   `bsd/sys/xattr.h` (`XATTR_RESOURCEFORK_NAME`) and `bsd/sys/stat.h`
+//!   (`UF_COMPRESSED`).
+//! - decmpfs data (the attribute's header, the compression types and the
+//!   resource fork's chunk tables) is decoded by `formats::decmpfs`, shared
+//!   with HFS+, which cites its sources (xnu `bsd/sys/decmpfs.h`,
+//!   apfs-fuse `ApfsLib/Decmpfs.cpp`, libfshfs and The Sleuth Kit).
 //!
 //! Every integer is little-endian ([REF] "About Apple File System").
 //! Addresses count blocks of the container's `nx_block_size`; offsets in
@@ -36,10 +38,10 @@
 use crate::error::{ClassifierError, Result};
 use crate::formats::compressed::size_text;
 use crate::formats::container::{Child, Container};
+use crate::formats::decmpfs;
 use crate::types::FileFormat;
 
 mod btree;
-mod decmpfs;
 mod object;
 mod omap;
 mod records;
@@ -173,6 +175,27 @@ fn le_u64(data: &[u8], at: usize) -> Result<u64> {
         .try_into()
         .expect("slice has exactly 8 bytes");
     Ok(u64::from_le_bytes(bytes))
+}
+
+/// APFS as the family of the shared decmpfs decoder: its error variant and
+/// reads, and, as this reader did before the decoder was shared, no
+/// attribute limit of its own (a `com.apple.decmpfs` data stream is read up
+/// to `MAX_PAYLOAD`), short resource forks refused before their chunk
+/// table, and empty type 1 data reported as truncated.
+struct ApfsFamily;
+
+impl decmpfs::Family for ApfsFamily {
+    const MAX_ATTRIBUTE_SIZE: usize = usize::MAX;
+    const REFUSES_SHORT_FORKS: bool = true;
+    const EMPTY_TYPE1_IS_TRUNCATED: bool = true;
+
+    fn error(message: impl Into<String>) -> ClassifierError {
+        error(message)
+    }
+
+    fn slice(data: &[u8], start: usize, len: usize) -> Result<&[u8]> {
+        slice(data, start, len)
+    }
 }
 
 /// Stored bytes in the input: a file offset and a size.

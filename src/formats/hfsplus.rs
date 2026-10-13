@@ -18,15 +18,12 @@
 //!   (`cat_lookupbykey`, `cat_resolvelink`, the `':'` slash substitute) and
 //!   `core/hfs_catalog.h` (`kHFSAliasType`, `kHFSAliasCreator`).
 //! - [XNU] apple-oss-distributions/xnu, tag `xnu-11215.1.10`:
-//!   `bsd/sys/decmpfs.h` and `bsd/kern/decmpfs.c` (the decmpfs header and
-//!   type 1), `bsd/vfs/vfs_utfconv.c` (`UCS_ALT_NULL`); the macOS SDK
-//!   `sys/stat.h` (`UF_COMPRESSED`).
-//! - decmpfs compression types, which `AppleFSCompression` (closed source)
-//!   defines: The Sleuth Kit `sleuthkit-4.12.1` `tsk/fs/decmpfs.h` and
-//!   `decmpfs.c`; libyal/libfshfs commit
-//!   `78321de1eda54b30261adf59b938781128591b2e`, "Hierarchical File System
-//!   (HFS).asciidoc"; sgan81/apfs-fuse commit
-//!   `66b86bd525e8cb90f9012543be89b1f092b75cf3`, `ApfsLib/Decmpfs.cpp`.
+//!   `bsd/vfs/vfs_utfconv.c` (`UCS_ALT_NULL`); the macOS SDK `sys/stat.h`
+//!   (`UF_COMPRESSED`).
+//! - decmpfs data (the attribute's header, the compression types and the
+//!   resource fork's chunk tables) is decoded by `formats::decmpfs`, shared
+//!   with APFS, which cites its sources (xnu `bsd/sys/decmpfs.h` and
+//!   `bsd/kern/decmpfs.c`, The Sleuth Kit, libfshfs and apfs-fuse).
 //!
 //! Volume structures are big-endian; decmpfs headers and chunk tables are
 //! little-endian. Block numbers count allocation blocks of the volume's
@@ -44,12 +41,13 @@
 use crate::error::{ClassifierError, Result};
 use crate::formats::compressed::size_text;
 use crate::formats::container::Container;
+use crate::formats::decmpfs;
 use crate::types::FileFormat;
 use std::cell::Cell;
 
+mod attributes;
 mod btree;
 mod catalog;
-mod decmpfs;
 mod fork;
 mod header;
 mod walk;
@@ -240,6 +238,26 @@ fn le_u64(data: &[u8], at: usize) -> Result<u64> {
         .try_into()
         .expect("slice has exactly 8 bytes");
     Ok(u64::from_le_bytes(bytes))
+}
+
+/// HFS+ as the family of the shared decmpfs decoder: its error variant and
+/// reads, xnu's attribute limit (`MAX_DECMPFS_XATTR_SIZE`; the attribute is
+/// stored inline in the attributes B-tree), and the chunk table's and type 1
+/// size errors as this reader reported them before the decoder was shared.
+struct HfsPlusFamily;
+
+impl decmpfs::Family for HfsPlusFamily {
+    const MAX_ATTRIBUTE_SIZE: usize = decmpfs::MAX_DECMPFS_XATTR_SIZE;
+    const REFUSES_SHORT_FORKS: bool = false;
+    const EMPTY_TYPE1_IS_TRUNCATED: bool = false;
+
+    fn error(message: impl Into<String>) -> ClassifierError {
+        error(message)
+    }
+
+    fn slice(data: &[u8], start: usize, len: usize) -> Result<&[u8]> {
+        slice(data, start, len)
+    }
 }
 
 /// Erased flash or zero fill.

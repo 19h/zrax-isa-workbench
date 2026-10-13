@@ -118,7 +118,8 @@ hashes verified up to 64 MiB; catalog signature not verified); compressed
 FFUs, `DISK_SEQ` and partial-update validation entries are not
 implemented; see [Full Flash Update images](ffu.md).
 HFS+ and HFSX volumes followed (catalog, extents overflow and attributes
-B-trees; decmpfs zlib/LZVN/LZFSE decoded); classic HFS without an embedded
+B-trees; decmpfs zlib/LZVN/LZFSE and raw (type 9) decoded, through a
+decoder shared with APFS); classic HFS without an embedded
 volume and journal replay are not handled; see [HFS+ volumes](hfsplus.md).
 HFS+, ext, FAT/exFAT and ISO 9660 volumes larger than the bytes given (for
 example cut at the 64 MiB extraction limit) are read as truncated volumes:

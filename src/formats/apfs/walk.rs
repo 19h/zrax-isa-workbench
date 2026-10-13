@@ -9,7 +9,6 @@
 //! volumes and snapshots noted.
 
 use super::btree::{Lookup, Tree};
-use super::decmpfs::{self, Header, Storage, DECMPFS_HEADER_SIZE, UF_COMPRESSED};
 use super::omap::Omap;
 use super::records::{
     is_before, DirEntry, Extent, Inode, KeyHeader, Xattr, XattrData, APFS_TYPE_DIR_REC,
@@ -19,12 +18,20 @@ use super::records::{
 use super::volume::VolumeSuperblock;
 use super::*;
 use crate::formats::container::{self, MAX_COMPONENTS, MAX_EXTRACTED};
+use crate::formats::decmpfs::{Header, Storage, DECMPFS_HEADER_SIZE, DECMPFS_XATTR_NAME};
 use crate::formats::MAX_PAYLOAD;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 
 /// `ROOT_DIR_INO_NUM`.
 const ROOT_DIR_INO_NUM: u64 = 2;
+
+/// `UF_COMPRESSED` in `bsd_flags`: a decmpfs file ([XNU] `sys/stat.h`).
+const UF_COMPRESSED: u32 = 0x0000_0020;
+
+/// `XATTR_RESOURCEFORK_NAME`: the attribute that holds a decmpfs file's
+/// resource fork ([XNU] `sys/xattr.h`).
+const RESOURCE_FORK_XATTR_NAME: &[u8] = b"com.apple.ResourceFork";
 
 /// Deepest directory level below the root that the walk enters.
 const MAX_DEPTH: usize = 64;
@@ -557,9 +564,9 @@ impl<'a> Walker<'_, 'a> {
                 APFS_TYPE_INODE => found.inode = Some(Inode::parse(value)?),
                 APFS_TYPE_XATTR => {
                     let xattr = Xattr::parse(record.key, value, record.value_offset)?;
-                    if xattr.name == decmpfs::DECMPFS_XATTR_NAME {
+                    if xattr.name == DECMPFS_XATTR_NAME.as_bytes() {
                         found.decmpfs = Some(xattr);
-                    } else if xattr.name == decmpfs::RESOURCE_FORK_XATTR_NAME {
+                    } else if xattr.name == RESOURCE_FORK_XATTR_NAME {
                         found.resource_fork = Some(xattr);
                     }
                 }
@@ -753,7 +760,7 @@ impl<'a> Walker<'_, 'a> {
             error("Missing com.apple.decmpfs attribute of a compressed file (UF_COMPRESSED)")
         })?;
         let attribute = self.attribute(&xattr, MAX_PAYLOAD)?;
-        let header = Header::parse(&attribute.bytes)?;
+        let header = Header::parse::<ApfsFamily>(&attribute.bytes)?;
         let Some(method) = header.method() else {
             *self
                 .census
@@ -777,8 +784,11 @@ impl<'a> Walker<'_, 'a> {
         let transform = method.compression.transform();
         match method.storage {
             Storage::Attribute => {
-                let decoded =
-                    decmpfs::decode_attribute(method.compression, &attribute.bytes, size)?;
+                let decoded = decmpfs::decode_attribute::<ApfsFamily>(
+                    method.compression,
+                    &attribute.bytes,
+                    size,
+                )?;
                 let prefix = &decoded[..decoded.len().min(RECOGNITION_PREFIX)];
                 if !container::is_recognized(prefix) || !self.may_extract(size, totals) {
                     return Ok(None);
@@ -790,7 +800,7 @@ impl<'a> Walker<'_, 'a> {
                 Ok(Some(Child::decoded(
                     path,
                     run.offset + DECMPFS_HEADER_SIZE,
-                    attribute.bytes.len() - DECMPFS_HEADER_SIZE,
+                    decmpfs::attribute_payload_size(&attribute.bytes),
                     Cow::Owned(decoded),
                     transform,
                 )))
@@ -803,7 +813,7 @@ impl<'a> Walker<'_, 'a> {
                     ))
                 })?;
                 let fork = self.attribute(&fork_xattr, MAX_PAYLOAD)?;
-                let prefix = decmpfs::decode_resource_fork(
+                let prefix = decmpfs::decode_resource_fork::<ApfsFamily>(
                     method.compression,
                     &fork.bytes,
                     size,
@@ -813,8 +823,12 @@ impl<'a> Walker<'_, 'a> {
                 if !container::is_recognized(prefix) || !self.may_extract(size, totals) {
                     return Ok(None);
                 }
-                let decoded =
-                    decmpfs::decode_resource_fork(method.compression, &fork.bytes, size, size)?;
+                let decoded = decmpfs::decode_resource_fork::<ApfsFamily>(
+                    method.compression,
+                    &fork.bytes,
+                    size,
+                    size,
+                )?;
                 let run = fork
                     .first_run
                     .ok_or_else(|| error("Invalid com.apple.ResourceFork attribute location"))?;

@@ -50,6 +50,7 @@ pub mod container;
 pub mod coreboot;
 pub mod cpcdsk;
 pub mod d10;
+pub(crate) mod decmpfs;
 pub mod dex;
 pub mod discimg;
 pub mod discs;

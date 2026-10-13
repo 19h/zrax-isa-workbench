@@ -6,13 +6,14 @@
 //! regular files that start with a recognized format become members
 //! labeled by their path. decmpfs files are decoded first.
 
+use super::attributes::Attribute;
 use super::catalog::{
     self, Children, Entry, File, Folder, HAS_LINK_CHAIN, S_IFLNK, S_IFREG, UF_COMPRESSED,
 };
-use super::decmpfs::{self, Header, Storage};
 use super::fork::{self, ForkBytes};
 use super::*;
 use crate::formats::container::{self, Child, MAX_COMPONENTS, MAX_EXTRACTED};
+use crate::formats::decmpfs::{Header, Method, Storage};
 use crate::formats::MAX_PAYLOAD;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -584,7 +585,7 @@ impl<'a> Walker<'_, 'a> {
         let attribute = fs.decmpfs_attribute(file.id)?.ok_or_else(|| {
             error("Missing com.apple.decmpfs attribute of a compressed file (UF_COMPRESSED)")
         })?;
-        let header = Header::parse(&attribute.bytes)?;
+        let header = Header::parse::<HfsPlusFamily>(&attribute.bytes)?;
         let Some(method) = header.method() else {
             *self
                 .census
@@ -612,9 +613,9 @@ impl<'a> Walker<'_, 'a> {
         &mut self,
         file: &File,
         path: &str,
-        attribute: &decmpfs::Attribute,
+        attribute: &Attribute,
         header: Header,
-        method: decmpfs::Method,
+        method: Method,
     ) -> ReadResult<Option<Child<'a>>> {
         let fs = self.fs;
         let size = usize::try_from(header.size).unwrap_or(usize::MAX);
@@ -628,8 +629,11 @@ impl<'a> Walker<'_, 'a> {
                     self.census.too_large += 1;
                     return Ok(None);
                 }
-                let decoded =
-                    decmpfs::decode_attribute(method.compression, &attribute.bytes, size)?;
+                let decoded = decmpfs::decode_attribute::<HfsPlusFamily>(
+                    method.compression,
+                    &attribute.bytes,
+                    size,
+                )?;
                 if !container::is_recognized(&decoded[..decoded.len().min(RECOGNITION_PREFIX)])
                     || !self.may_extract(size)
                 {
@@ -665,7 +669,7 @@ impl<'a> Walker<'_, 'a> {
                     fork_size as u64,
                 )?;
                 let stored = fs.vol.read_fork(&fork, 0, fork_size)?;
-                let prefix = decmpfs::decode_resource_fork(
+                let prefix = decmpfs::decode_resource_fork::<HfsPlusFamily>(
                     method.compression,
                     &stored.bytes,
                     size,
@@ -676,8 +680,12 @@ impl<'a> Walker<'_, 'a> {
                 {
                     return Ok(None);
                 }
-                let decoded =
-                    decmpfs::decode_resource_fork(method.compression, &stored.bytes, size, size)?;
+                let decoded = decmpfs::decode_resource_fork::<HfsPlusFamily>(
+                    method.compression,
+                    &stored.bytes,
+                    size,
+                    size,
+                )?;
                 let Some(run) = stored.first_run else {
                     return Ok(None);
                 };

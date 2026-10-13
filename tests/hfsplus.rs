@@ -2,8 +2,9 @@
 //! links, decmpfs LZVN in the attribute and the resource fork, extents
 //! overflow, case-sensitive HFSX with 512 B blocks), synthetic volumes built
 //! from the TN1150 layouts for what the fixtures do not cover (HFS wrapper,
-//! zlib, LZFSE and stored decmpfs files, unsupported types, damaged B-trees,
-//! depth limits), corrupted fields, and truncation and mutation sweeps.
+//! zlib, LZFSE, stored and raw decmpfs files, unsupported types, damaged
+//! B-trees, depth limits), corrupted fields, truncation and mutation sweeps,
+//! and local disk images gated on `ZRAX_LOCAL_DMG`.
 
 #[path = "support/truncated_volume.rs"]
 mod truncated_volume;
@@ -1364,6 +1365,55 @@ fn unsupported_or_damaged_decmpfs_files_are_counted_or_noted() {
     ));
 }
 
+/// Type 9 (raw) decmpfs files, as the Xcode tools DMG and the watchOS
+/// developer disk image hold them: after the header in the attribute, a
+/// `0xCC` marker byte and then the data itself.
+#[test]
+fn raw_decmpfs_files_decode_from_the_attribute() {
+    let elf = payload_elf();
+    let mut raw = vec![0xcc];
+    raw.extend(&elf);
+    let size = elf.len() as u64;
+    let mut s = Synthetic::new(64);
+    s.compressed(2, "raw.elf", 9, size, &raw, &[]);
+    // The data without its marker, and a stated size one byte larger.
+    s.compressed(2, "unmarked.elf", 9, size, &elf, &[]);
+    s.compressed(2, "short.elf", 9, size + 1, &raw, &[]);
+    let image = s.build();
+    let c = parse(&image);
+    assert_eq!(labels(&c), ["/raw.elf"]);
+    let member = child(&c, "/raw.elf");
+    assert_eq!(member.transform, Some("decmpfs raw"));
+    assert_eq!(&member.data[..], &elf[..]);
+    // The slice is the attribute after its 16-byte header: the marker and
+    // the data.
+    assert_eq!(member.stored_size, raw.len());
+    assert_eq!(
+        &image[member.offset..member.offset + member.stored_size],
+        &raw[..]
+    );
+    assert!(has_note(
+        &c,
+        "3 decmpfs-compressed files were decoded for examination (raw: 3)"
+    ));
+    assert!(has_note(
+        &c,
+        "Skipped /unmarked.elf: Invalid decmpfs type 9 data: marker 0x7F, 0xCC expected"
+    ));
+    assert!(has_note(
+        &c,
+        "Skipped /short.elf: Invalid decmpfs data: 256 B decoded, 257 B expected"
+    ));
+    assert!(!has_note(&c, "compression type 9"));
+    let p = classify(&image);
+    let slice = p
+        .slices
+        .iter()
+        .find(|s| s.label.as_deref() == Some("/raw.elf"))
+        .expect("the raw file is a slice");
+    assert_eq!(slice.isa, Isa::X86_64);
+}
+
 #[test]
 fn catalogs_with_index_nodes_are_searched_and_damage_is_noted() {
     let mut s = Synthetic::new(64);
@@ -1687,5 +1737,62 @@ fn a_local_dmg_lists_the_files_in_the_first_64_mib_of_its_cut_volume() {
     let p = classify(&data);
     assert_eq!(p.format.format, FileFormat::AppleDmg);
     assert!(!matches!(p.primary.isa, Isa::Unknown(_)), "{:?}", p.primary);
+    eprintln!("{} members; notes: {:#?}", c.children.len(), c.notes);
+}
+
+/// The Xcode tools disk image of the verification in `docs/hfsplus.md`
+/// (87,179,210 B): the first 64 MiB of its HFS+ volume hold 408 decmpfs
+/// type 9 files and 94 zlib files.
+const XCODE_TOOLS_DMG: &str = "Additional_Tools_for_Xcode_26.2.dmg";
+
+#[test]
+fn a_local_dmg_decodes_its_raw_decmpfs_files() {
+    // As above, ZRAX_LOCAL_DMG names a disk image with an HFS+ partition.
+    // Its type 9 (raw) decmpfs files are decoded, not counted as
+    // unsupported; for the Xcode tools image the counts are checked too.
+    let Some(path) = std::env::var_os("ZRAX_LOCAL_DMG") else {
+        eprintln!("ZRAX_LOCAL_DMG is not set; skipped");
+        return;
+    };
+    let data = std::fs::read(&path).expect("ZRAX_LOCAL_DMG is readable");
+    let layout = dmg::detect(&data).expect("an Apple disk image");
+    let image = dmg::parse_container(&data, layout).expect("the disk image parses");
+    let partition = image
+        .children
+        .iter()
+        .find(|child| hfsplus::detect(&child.data).is_some())
+        .expect("an HFS+ partition");
+    let volume = &partition.data[..];
+    let c = parse(volume);
+    assert!(
+        !has_note(&c, "decmpfs compression type 9,"),
+        "{:?}",
+        c.notes
+    );
+    // A listed raw file is stored after its 0xCC marker.
+    for member in c
+        .children
+        .iter()
+        .filter(|member| member.transform == Some("decmpfs raw"))
+    {
+        let stored = &volume[member.offset..member.offset + member.stored_size];
+        assert_eq!(stored[0], 0xcc, "{}", member.label);
+        assert_eq!(&stored[1..], &member.data[..], "{}", member.label);
+    }
+    let name = std::path::Path::new(&path).file_name();
+    if name == Some(std::ffi::OsStr::new(XCODE_TOOLS_DMG)) {
+        assert!(
+            has_note(
+                &c,
+                "502 decmpfs-compressed files were decoded for examination (raw: 408, zlib: 94)"
+            ),
+            "{:?}",
+            c.notes
+        );
+        // None of the raw files (property lists, images, scripts) is a
+        // recognized format, so the members are those listed before type 9
+        // was decoded.
+        assert_eq!(c.children.len(), 4, "{:?}", labels(&c));
+    }
     eprintln!("{} members; notes: {:#?}", c.children.len(), c.notes);
 }
