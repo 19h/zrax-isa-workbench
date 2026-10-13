@@ -127,9 +127,9 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
         .then_some(Layout::Iso9660)
 }
 
-/// Parse an ISO 9660 image into the shared container model. El Torito boot
-/// images are the first children; regular files that start with a
-/// recognized format follow, labeled by their path.
+/// Parse an ISO 9660 image into the shared container model. Regular files
+/// that start with a recognized format are the first children, labeled by
+/// their path; El Torito boot images follow.
 ///
 /// # Errors
 ///
