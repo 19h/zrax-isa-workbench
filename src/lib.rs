@@ -1173,7 +1173,25 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                 {
                     continue;
                 }
-                let inner = classify_depth(member.data, options, depth + 1)?;
+                let inner = match classify_depth(member.data, options, depth + 1) {
+                    Ok(inner) => inner,
+                    Err(e) => {
+                        // A recognized member that cannot be classified (a
+                        // damaged member, such as a compressed stream whose
+                        // check fails) is listed with an unknown ISA instead
+                        // of failing the whole archive.
+                        notes.push(Note::warning(format!("{}: ISA unknown ({e})", member.name)));
+                        let unknown = unknown_component(r.format).result;
+                        slices.push(component_slice(
+                            member.name,
+                            &unknown,
+                            member.offset,
+                            member.data.len(),
+                            Vec::new(),
+                        ));
+                        continue;
+                    }
+                };
                 if matches!(r.isa, Isa::Unknown(_)) && !matches!(inner.result.isa, Isa::Unknown(_))
                 {
                     contained_extensions = Some(inner.extensions.clone());

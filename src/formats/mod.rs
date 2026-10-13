@@ -99,6 +99,7 @@ pub mod retro;
 pub mod retro2;
 pub mod rofs;
 pub mod router;
+pub mod rpm;
 pub mod sgo;
 pub mod sis;
 pub mod socboot2;
@@ -1066,6 +1067,18 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = ffu::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Ffu(layout),
+        };
+    }
+
+    // RPM packages: the lead magic `ED AB EE DB` at 0 and the header
+    // structure magic `8E AD E8 01 00 00 00 00` at 96. No format above starts
+    // with them; the families above that probe later offsets would need their
+    // structures inside the package's signature or header store, and the
+    // payload starts after both headers, so a compressed payload cannot be
+    // claimed by the codec check below.
+    if let Some(layout) = rpm::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Rpm(layout),
         };
     }
 

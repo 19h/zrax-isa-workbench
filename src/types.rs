@@ -1234,6 +1234,9 @@ pub enum FileFormat {
     // Full Flash Update images
     /// Microsoft Full Flash Update image (FFU, `SignedImage ` security header)
     Ffu,
+    // RPM packages
+    /// RPM package: lead, signature header, main header and payload
+    Rpm,
 }
 
 impl fmt::Display for FileFormat {
@@ -1562,6 +1565,8 @@ impl fmt::Display for FileFormat {
             FileFormat::MsCab => write!(f, "Microsoft cabinet"),
             // Full Flash Update images
             FileFormat::Ffu => write!(f, "Full Flash Update image"),
+            // RPM packages
+            FileFormat::Rpm => write!(f, "RPM package"),
         }
     }
 }

@@ -525,8 +525,8 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
 
 /// The first `limit` bytes (at most [`MAX_PAYLOAD`]) of a stream too long
 /// to decode whole. Codecs that decode as a stream stop at the limit:
-/// gzip, zlib, raw DEFLATE, Zstandard, bzip2, LZ4 frames, raw LZ4 blocks
-/// and LZMA-alone. Other codecs decode as [`decode_limited`] does. The
+/// gzip, zlib, raw DEFLATE, Zstandard, bzip2, LZ4 frames, raw LZ4 blocks,
+/// LZMA-alone and xz. Other codecs decode as [`decode_limited`] does. The
 /// integrity checks cover the whole output, so a prefix verifies none.
 ///
 /// # Errors
@@ -550,6 +550,7 @@ pub fn decode_prefix(codec: Codec, data: &[u8], limit: usize) -> Result<Vec<u8>>
             read_until(decoder, limit, "LZ4", AtLimit::Stop)
         }
         Codec::Lzma => Ok(xz::lzma_until(data, limit, AtLimit::Stop)?.data),
+        Codec::Xz => Ok(xz::xz_until(data, limit, AtLimit::Stop)?.data),
         Codec::Lz4Block => Ok(lz4_block::decode_until(data, limit, AtLimit::Stop)?.data),
         _ => Ok(decode_limited(codec, data, limit)?.data),
     }

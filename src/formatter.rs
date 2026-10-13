@@ -841,6 +841,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Apfs => "APFS container",
         FileFormat::MsCab => "Microsoft cabinet",
         FileFormat::Ffu => "Full Flash Update image",
+        FileFormat::Rpm => "RPM package",
     }
 }
 

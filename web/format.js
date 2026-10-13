@@ -135,6 +135,7 @@ const FORMAT_NAMES = {
   apfs: 'APFS container',
   mscab: 'Microsoft cabinet',
   ffu: 'Full Flash Update image',
+  rpm: 'RPM package',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

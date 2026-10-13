@@ -171,6 +171,8 @@ pub enum Kind {
     Cab(super::cab::Layout),
     /// A Microsoft Full Flash Update (FFU) image.
     Ffu(super::ffu::Layout),
+    /// An RPM package.
+    Rpm(super::rpm::Layout),
 }
 
 impl Kind {
@@ -233,6 +235,7 @@ impl Kind {
             Self::Apfs(layout) => layout.format(),
             Self::Cab(layout) => layout.format(),
             Self::Ffu(layout) => layout.format(),
+            Self::Rpm(layout) => layout.format(),
         }
     }
 
@@ -295,6 +298,7 @@ impl Kind {
             Self::Apfs(layout) => layout.label(),
             Self::Cab(layout) => layout.label(),
             Self::Ffu(layout) => layout.label(),
+            Self::Rpm(layout) => layout.label(),
         }
     }
 
@@ -357,6 +361,7 @@ impl Kind {
             Self::Apfs(layout) => layout.is_weak(),
             Self::Cab(layout) => layout.is_weak(),
             Self::Ffu(layout) => layout.is_weak(),
+            Self::Rpm(layout) => layout.is_weak(),
         }
     }
 }
@@ -424,6 +429,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Apfs(layout) => super::apfs::parse_container(data, layout),
         Kind::Cab(layout) => super::cab::parse_container(data, layout),
         Kind::Ffu(layout) => super::ffu::parse_container(data, layout),
+        Kind::Rpm(layout) => super::rpm::parse_container(data, layout),
     }
 }
 

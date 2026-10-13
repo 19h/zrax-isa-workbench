@@ -215,8 +215,14 @@ fn bcj_start(filter: &Filter) -> Result<usize> {
 
 /// Decode a block's compressed data from `input` through its filter chain.
 /// Filters are listed in encoding order, so the last (LZMA2) reads the
-/// compressed bytes and the first produces the output.
-fn decode_block(filters: &[Filter], input: &mut &[u8], limit: usize) -> Result<Vec<u8>> {
+/// compressed bytes and the first produces the output. Output beyond
+/// `limit` is an error or ends the read, as `at_limit` says.
+fn decode_block(
+    filters: &[Filter],
+    input: &mut &[u8],
+    limit: usize,
+    at_limit: AtLimit,
+) -> Result<Vec<u8>> {
     let (last, rest) = filters
         .split_last()
         .ok_or_else(|| error("Missing xz filter"))?;
@@ -244,7 +250,7 @@ fn decode_block(filters: &[Filter], input: &mut &[u8], limit: usize) -> Result<V
             other => return Err(error(format!("Unsupported xz filter 0x{other:X}"))),
         };
     }
-    read_capped(reader, limit, "xz")
+    read_until(reader, limit, "xz", at_limit)
 }
 
 /// Where a decoded stream ends and how its blocks are checked.
@@ -256,8 +262,17 @@ struct StreamEnd {
 }
 
 /// Decode one stream starting at `start`, appending to `out`. Returns the
-/// stream's end offset and its check type.
-fn stream(data: &[u8], start: usize, out: &mut Vec<u8>, limit: usize) -> Result<StreamEnd> {
+/// stream's end offset and its check type, or `None` when `at_limit` is
+/// [`AtLimit::Stop`] and the output reached `limit`: the sizes and check of
+/// that block, and the index, cover bytes that were not decoded, so none of
+/// them is verified.
+fn stream(
+    data: &[u8],
+    start: usize,
+    out: &mut Vec<u8>,
+    limit: usize,
+    at_limit: AtLimit,
+) -> Result<Option<StreamEnd>> {
     let header = slice(data, start, STREAM_HEADER_SIZE)?;
     if header[..6] != XZ_MAGIC {
         return Err(error(format!("Missing xz stream header at 0x{start:X}")));
@@ -285,7 +300,11 @@ fn stream(data: &[u8], start: usize, out: &mut Vec<u8>, limit: usize) -> Result<
             .ok_or_else(|| error("Truncated xz block"))?;
         let available = input.len();
         let remaining = limit.saturating_sub(out.len());
-        let decoded = decode_block(&block.filters, &mut input, remaining)?;
+        let decoded = decode_block(&block.filters, &mut input, remaining, at_limit)?;
+        if at_limit == AtLimit::Stop && decoded.len() == remaining {
+            out.extend_from_slice(&decoded);
+            return Ok(None);
+        }
         let compressed = (available - input.len()) as u64;
         if block.compressed.is_some_and(|size| size != compressed)
             || block
@@ -319,10 +338,10 @@ fn stream(data: &[u8], start: usize, out: &mut Vec<u8>, limit: usize) -> Result<
     if backward != index_size as u64 {
         return Err(error("Invalid xz backward size"));
     }
-    Ok(StreamEnd {
+    Ok(Some(StreamEnd {
         end: footer_start + STREAM_HEADER_SIZE,
         check,
-    })
+    }))
 }
 
 /// Validate the index at `start` against the decoded blocks; returns its
@@ -350,11 +369,23 @@ fn index(data: &[u8], start: usize, records: &[(u64, u64)]) -> Result<usize> {
 
 /// Decode concatenated xz streams with optional four-byte zero padding.
 pub(super) fn xz(data: &[u8], limit: usize) -> Result<Decoded> {
+    xz_until(data, limit, AtLimit::Fail)
+}
+
+/// [`xz`], stopping at the limit when `at_limit` says so; a stopped
+/// stream's block check, sizes and index are not verified.
+pub(super) fn xz_until(data: &[u8], limit: usize, at_limit: AtLimit) -> Result<Decoded> {
     let mut out = Vec::new();
     let mut pos = 0;
     let mut checks = Vec::new();
     loop {
-        let StreamEnd { end, check } = stream(data, pos, &mut out, limit)?;
+        let Some(StreamEnd { end, check }) = stream(data, pos, &mut out, limit, at_limit)? else {
+            return Ok(Decoded {
+                data: out,
+                consumed: None,
+                check: None,
+            });
+        };
         checks.push(check);
         pos = end;
         while data.get(pos..pos + 4).is_some_and(is_zero) {

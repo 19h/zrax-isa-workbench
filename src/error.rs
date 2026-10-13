@@ -76,6 +76,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an RPM package: its lead, signature header, main
+    /// header, digests or package extent.
+    #[error("RPM package parse error: {message}")]
+    RpmParseError {
+        /// What is wrong with the package.
+        message: String,
+    },
+
     /// Error parsing a Symbian E32 image (EPOC executable or library).
     #[error("Symbian E32 image parse error: {message}")]
     EpocParseError {

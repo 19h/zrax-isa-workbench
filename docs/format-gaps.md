@@ -83,7 +83,12 @@ both byte orders; concatenated initramfs) are implemented; see
 [archives](archives.md). Microsoft cabinets followed (stored, MSZIP and
 LZX folders; CFDATA checksums verified; files listed by name; Quantum
 folders, joining cabinet sets and signature verification not implemented);
-see [Microsoft cabinets](cab.md). SquashFS 4.0 (compressor IDs 1-6; regular files
+see [Microsoft cabinets](cab.md). RPM packages followed (lead, signature
+and main headers, digests and the newc or stripped cpio payload in all five
+rpm codecs); Debian `.deb` packages were already classified through `ar`,
+the codec family and tar. With them, ar members that fail to classify no
+longer fail the archive, and `decode_prefix` stops xz streams at the
+limit; see [RPM packages](rpm.md). SquashFS 4.0 (compressor IDs 1-6; regular files
 listed by path), CramFS (both byte orders, CRC-32 verified) and romfs are
 implemented; SquashFS 1.x-3.x, big-endian and streamed images are recognized
 but not enumerated; see [read-only filesystems](rofs.md). UBI (PEB size
