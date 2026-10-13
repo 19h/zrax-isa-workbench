@@ -391,10 +391,16 @@ pub(super) fn lzma_header(data: &[u8]) -> Result<LzmaHeader> {
 
 /// Decode an LZMA-alone stream.
 pub(super) fn lzma(data: &[u8], limit: usize) -> Result<Decoded> {
+    lzma_until(data, limit, AtLimit::Fail)
+}
+
+/// [`lzma`], stopping at the limit when `at_limit` says so; a stopped
+/// stream's declared size is not checked.
+pub(super) fn lzma_until(data: &[u8], limit: usize, at_limit: AtLimit) -> Result<Decoded> {
     let header = lzma_header(data)?;
-    if header.decoded_size != LZMA_SIZE_UNKNOWN
-        && header.decoded_size > u64::try_from(limit).unwrap_or(u64::MAX)
-    {
+    let declared_over_limit = header.decoded_size != LZMA_SIZE_UNKNOWN
+        && header.decoded_size > u64::try_from(limit).unwrap_or(u64::MAX);
+    if declared_over_limit && at_limit == AtLimit::Fail {
         return Err(exceeds(limit));
     }
     let dict = bounded_dict(u64::from(header.dict_size), limit);
@@ -408,7 +414,14 @@ pub(super) fn lzma(data: &[u8], limit: usize) -> Result<Decoded> {
         None,
     )
     .map_err(|e| error(format!("Invalid LZMA stream: {e}")))?;
-    let out = read_capped(reader, limit, "LZMA")?;
+    let out = read_until(reader, limit, "LZMA", at_limit)?;
+    if at_limit == AtLimit::Stop && out.len() == limit {
+        return Ok(Decoded {
+            data: out,
+            consumed: None,
+            check: None,
+        });
+    }
     if header.decoded_size != LZMA_SIZE_UNKNOWN && out.len() as u64 != header.decoded_size {
         return Err(error("Truncated LZMA stream"));
     }

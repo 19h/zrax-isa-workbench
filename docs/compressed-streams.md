@@ -56,6 +56,15 @@ header or code.
 
 - Output is capped at 64 MiB (67,108,864 B) per extraction (`MAX_PAYLOAD`).
   Decoders stop at the cap instead of allocating a declared size.
+- A standalone stream that decodes to more than the cap is classified from
+  its first 64 MiB when the codec decodes as a stream (gzip, zlib, raw
+  DEFLATE, Zstandard, bzip2, LZ4 frames, LZMA-alone; `decode_prefix`). A
+  note says decoding stopped at the limit, the rest of the stream was not
+  decoded and no integrity check was verified, and
+  `compressed_decode_stopped_at` records the limit. Such a prefix is
+  accepted only when the stream really reaches the cap, so a short stream
+  with a bad checksum stays an error. Streams inside other containers still
+  fail at the cap.
 - LZMA and LZMA2 dictionaries are clamped to the output cap before
   allocation: a match cannot reach further back than the bytes decoded, so a
   larger declared dictionary is never needed.
@@ -78,6 +87,7 @@ Decoding time is linear in stored plus decoded bytes for every codec.
 | C1 | A two-byte zlib header or an LZMA properties byte is not enough to recognize a file | Random data and raw firmware starting with `78 9C` or `5D 00 00` must stay raw unless the whole input decodes |
 | C2 | Integrity is claimed only when a check was computed and compared | Corrupt one byte of every fixture (`corrupt_strong_streams_are_errors`); a codec without a check reports "no integrity check verified" |
 | C3 | Decoders cannot be driven past the output cap | Highly compressible input with a 1,000 B limit (`decoders_stop_at_the_output_limit`) |
+| C4 | The first 64 MiB of a kernel cache or disk image identify its content | `streams_past_the_extraction_limit_are_classified_from_their_prefix`; on 2026-10-13 the Zstandard-compressed `arm_kernelcache_1600_full_64.macho` and `pc_kernelcache_osx_10_14_64.macho` from IDA's test corpus classified as AArch64 and x86-64, where they were parse errors before |
 | C4 | Truncation is detected | Every prefix of every fixture (`truncated_streams_never_claim_the_payload`). LZMA-alone may decode without the last flush bytes of its range coder; the decoded data is then complete |
 
 ## Known boundaries

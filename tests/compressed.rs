@@ -1,6 +1,7 @@
 //! Standalone compressed streams: every codec decodes the synthetic ELF
-//! fixture, the decoded content supplies the ISA, and corrupt or truncated
-//! streams are errors rather than raw-code guesses.
+//! fixture, the decoded content supplies the ISA, corrupt or truncated
+//! streams are errors rather than raw-code guesses, and streams that
+//! decode past the extraction limit are classified from their prefix.
 
 use zrax::formats::compressed::{self, Codec};
 use zrax::{detect_payload, ClassifierOptions, Endianness, FileFormat, Isa, MetadataValue};
@@ -197,6 +198,61 @@ fn nested_compression_is_bounded_by_the_nesting_limit() {
         .notes
         .iter()
         .any(|n| n.message.contains("nesting limit")));
+}
+
+/// Codecs that can stop at a limit, with their fixture.
+const PREFIX_STREAMS: &[(&str, Codec)] = &[
+    ("payload.elf.gz", Codec::Gzip),
+    ("payload.elf.lzma", Codec::Lzma),
+    ("payload.elf.lz4", Codec::Lz4),
+    ("payload.elf.zst", Codec::Zstd),
+    ("payload.elf.bz2", Codec::Bzip2),
+];
+
+#[test]
+fn stream_prefixes_stop_at_the_limit() {
+    let expected = fixture("payload.elf");
+    for &(name, codec) in PREFIX_STREAMS {
+        let prefix = compressed::decode_prefix(codec, &fixture(name), 100).unwrap();
+        assert_eq!(prefix, expected[..100], "{name}");
+        // A limit beyond the stream gives the whole payload.
+        let whole = compressed::decode_prefix(codec, &fixture(name), 1 << 20).unwrap();
+        assert_eq!(whole, expected, "{name}");
+    }
+    let zlib = miniz_oxide::deflate::compress_to_vec_zlib(&expected, 6);
+    assert_eq!(
+        compressed::decode_prefix(Codec::Zlib, &zlib, 100).unwrap(),
+        expected[..100]
+    );
+}
+
+/// A gzip file of `members` members, each 1 MiB of zeros.
+fn zero_gzip(members: usize) -> Vec<u8> {
+    let zeros = vec![0u8; 1 << 20];
+    let mut member = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3];
+    member.extend_from_slice(&miniz_oxide::deflate::compress_to_vec(&zeros, 6));
+    member.extend_from_slice(&zrax::formats::checksum::crc32(&zeros).to_le_bytes());
+    member.extend_from_slice(&(zeros.len() as u32).to_le_bytes());
+    member.repeat(members)
+}
+
+#[test]
+fn streams_past_the_extraction_limit_are_classified_from_their_prefix() {
+    let limit = zrax::formats::MAX_PAYLOAD;
+    let stream = zero_gzip(limit / (1 << 20) + 1);
+    let c = compressed::parse_container(&stream, Codec::Gzip).unwrap();
+    assert_eq!(c.children.len(), 1);
+    assert_eq!(c.children[0].data.len(), limit);
+    assert!(c
+        .notes
+        .iter()
+        .any(|n| n.contains("decoding stopped at the 64 MiB extraction limit")));
+
+    // A stream within the limit with a bad CRC stays an error.
+    let mut corrupt = zero_gzip(1);
+    let crc_at = corrupt.len() - 8;
+    corrupt[crc_at] ^= 1;
+    assert!(compressed::parse_container(&corrupt, Codec::Gzip).is_err());
 }
 
 #[test]

@@ -350,6 +350,21 @@ fn align4(n: usize) -> Result<usize> {
 
 /// Read a decoder's whole output, failing once it passes `limit`.
 fn read_capped(reader: impl Read, limit: usize, codec: &str) -> Result<Vec<u8>> {
+    read_until(reader, limit, codec, AtLimit::Fail)
+}
+
+/// What a decoder does when its output reaches the limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AtLimit {
+    /// The whole stream must fit: more output is an error.
+    Fail,
+    /// Stop at the limit and keep the output so far.
+    Stop,
+}
+
+/// Read at most `limit` bytes from `reader`; more output is an error or
+/// ends the read, as `at_limit` says.
+fn read_until(reader: impl Read, limit: usize, codec: &str, at_limit: AtLimit) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     let bound = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
     reader
@@ -357,6 +372,10 @@ fn read_capped(reader: impl Read, limit: usize, codec: &str) -> Result<Vec<u8>> 
         .read_to_end(&mut out)
         .map_err(|e| error(format!("Invalid {codec} stream: {e}")))?;
     if out.len() > limit {
+        if at_limit == AtLimit::Stop {
+            out.truncate(limit);
+            return Ok(out);
+        }
         return Err(exceeds(limit));
     }
     Ok(out)
@@ -447,9 +466,50 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
     }
 }
 
+/// The first `limit` bytes (at most [`MAX_PAYLOAD`]) of a stream too long
+/// to decode whole. Codecs that decode as a stream stop at the limit:
+/// gzip, zlib, raw DEFLATE, Zstandard, bzip2, LZ4 frames and LZMA-alone.
+/// Other codecs decode as [`decode_limited`] does. The integrity checks
+/// cover the whole output, so a prefix verifies none.
+///
+/// # Errors
+///
+/// A truncated or corrupt stream within the prefix, or output beyond the
+/// limit for a codec that cannot stop early.
+pub fn decode_prefix(codec: Codec, data: &[u8], limit: usize) -> Result<Vec<u8>> {
+    let limit = limit.min(MAX_PAYLOAD);
+    match codec {
+        Codec::Gzip => Ok(gzip_until(data, limit, AtLimit::Stop)?.data),
+        Codec::Zlib => Ok(inflate_until(data, true, limit, AtLimit::Stop)?.0),
+        Codec::Deflate => Ok(inflate_until(data, false, limit, AtLimit::Stop)?.0),
+        Codec::Zstd => Ok(zstd_until(data, limit, AtLimit::Stop)?.data),
+        Codec::Bzip2 => {
+            let decoder = ::bzip2::bufread::MultiBzDecoder::new(data);
+            read_until(decoder, limit, "bzip2", AtLimit::Stop)
+        }
+        Codec::Lz4 => {
+            let (extent, _) = lz4_frames_extent(data)?;
+            let decoder = lz4_flex::frame::FrameDecoder::new(&data[..extent]);
+            read_until(decoder, limit, "LZ4", AtLimit::Stop)
+        }
+        Codec::Lzma => Ok(xz::lzma_until(data, limit, AtLimit::Stop)?.data),
+        _ => Ok(decode_limited(codec, data, limit)?.data),
+    }
+}
+
 /// Inflate a raw or zlib-wrapped DEFLATE stream. Returns the output and
 /// the number of input bytes the stream used.
 fn inflate(input: &[u8], zlib: bool, limit: usize) -> Result<(Vec<u8>, usize)> {
+    inflate_until(input, zlib, limit, AtLimit::Fail)
+}
+
+/// [`inflate`], stopping at the limit when `at_limit` says so.
+fn inflate_until(
+    input: &[u8],
+    zlib: bool,
+    limit: usize,
+    at_limit: AtLimit,
+) -> Result<(Vec<u8>, usize)> {
     use miniz_oxide::inflate::core::{decompress, inflate_flags, DecompressorOxide};
     use miniz_oxide::inflate::TINFLStatus;
 
@@ -475,13 +535,17 @@ fn inflate(input: &[u8], zlib: bool, limit: usize) -> Result<(Vec<u8>, usize)> {
         out_pos += written;
         match status {
             TINFLStatus::Done => {
-                if out_pos > limit {
+                if out_pos > limit && at_limit == AtLimit::Fail {
                     return Err(exceeds(limit));
                 }
-                out.truncate(out_pos);
+                out.truncate(out_pos.min(limit));
                 return Ok((out, in_pos));
             }
             TINFLStatus::HasMoreOutput => {
+                if out_pos >= limit && at_limit == AtLimit::Stop {
+                    out.truncate(limit);
+                    return Ok((out, in_pos));
+                }
                 if out.len() >= limit {
                     return Err(exceeds(limit));
                 }
@@ -539,12 +603,26 @@ fn gzip_header_size(data: &[u8]) -> Result<usize> {
 
 /// Decode concatenated gzip members, verifying each CRC-32 and size.
 fn gzip(data: &[u8], limit: usize) -> Result<Decoded> {
+    gzip_until(data, limit, AtLimit::Fail)
+}
+
+/// [`gzip`], stopping at the limit when `at_limit` says so. A stopped
+/// member's CRC-32 and size cover bytes not decoded, so nothing is checked.
+fn gzip_until(data: &[u8], limit: usize, at_limit: AtLimit) -> Result<Decoded> {
     let mut out = Vec::new();
     let mut pos = 0;
     loop {
         let member = &data[pos..];
         let start = gzip_header_size(member)?;
-        let (decoded, used) = inflate(&member[start..], false, limit - out.len())?;
+        let (decoded, used) = inflate_until(&member[start..], false, limit - out.len(), at_limit)?;
+        if at_limit == AtLimit::Stop && out.len() + decoded.len() == limit {
+            out.extend_from_slice(&decoded);
+            return Ok(Decoded {
+                data: out,
+                consumed: None,
+                check: None,
+            });
+        }
         let trailer = start + used;
         let crc = le_u32(member, trailer)?;
         let size = le_u32(member, trailer + 4)?;
@@ -696,6 +774,12 @@ fn lz4_legacy(data: &[u8], limit: usize) -> Result<Decoded> {
 /// Decode Zstandard frames, skipping skippable frames and verifying the
 /// optional content checksum of each frame.
 fn zstd(data: &[u8], limit: usize) -> Result<Decoded> {
+    zstd_until(data, limit, AtLimit::Fail)
+}
+
+/// [`zstd`], stopping at the limit when `at_limit` says so; a stopped
+/// frame's content checksum is not checked.
+fn zstd_until(data: &[u8], limit: usize, at_limit: AtLimit) -> Result<Decoded> {
     let mut pos = 0;
     let mut out = Vec::new();
     let mut all_checked = true;
@@ -716,7 +800,15 @@ fn zstd(data: &[u8], limit: usize) -> Result<Decoded> {
         let mut input = &data[pos..];
         let mut decoder = ruzstd::decoding::StreamingDecoder::new(&mut input)
             .map_err(|e| error(format!("Invalid Zstandard frame at 0x{pos:X}: {e}")))?;
-        let frame = read_capped(&mut decoder, limit - out.len(), "Zstandard")?;
+        let frame = read_until(&mut decoder, limit - out.len(), "Zstandard", at_limit)?;
+        if at_limit == AtLimit::Stop && out.len() + frame.len() == limit {
+            out.extend_from_slice(&frame);
+            return Ok(Decoded {
+                data: out,
+                consumed: None,
+                check: None,
+            });
+        }
         let frame_decoder = &decoder.decoder;
         match (
             frame_decoder.get_checksum_from_data(),
@@ -893,7 +985,10 @@ fn is_padding(bytes: &[u8]) -> bool {
 ///
 /// A stream that does not decode, or bytes other than padding after it.
 pub fn parse_container(data: &[u8], codec: Codec) -> Result<Container<'_>> {
-    let decoded = decode(codec, data)?;
+    let decoded = match decode(codec, data) {
+        Ok(decoded) => decoded,
+        Err(e) => return over_limit(data, codec).ok_or(e),
+    };
     let consumed = decoded.consumed.unwrap_or(data.len());
     let trailing = &data[consumed.min(data.len())..];
     if !is_padding(trailing) {
@@ -931,6 +1026,45 @@ pub fn parse_container(data: &[u8], codec: Codec) -> Result<Container<'_>> {
         codec.name(),
     ));
     Ok(c)
+}
+
+/// A stream that decodes to more than [`MAX_PAYLOAD`]: its first
+/// [`MAX_PAYLOAD`] bytes are classified, with a note that the rest was not
+/// decoded and no integrity check was verified. `None` when the stream does
+/// not reach the limit, so the failed decode was not about its size.
+fn over_limit(data: &[u8], codec: Codec) -> Option<Container<'_>> {
+    let prefix = decode_prefix(codec, data, MAX_PAYLOAD)
+        .ok()
+        .filter(|prefix| prefix.len() == MAX_PAYLOAD)?;
+    let mut c = Container::new(codec.format(), codec.label(), "compressed");
+    c.transparent = true;
+    c.consumed = data.len();
+    c.notes.push(format!(
+        "{} stream: {} stored; decoding stopped at the {} extraction limit, so the rest of the \
+         stream was not decoded and no integrity check was verified",
+        codec.name(),
+        size_text(data.len()),
+        size_text(MAX_PAYLOAD)
+    ));
+    c.push_metadata("compressed_codec", "Codec", codec.name());
+    c.push_metadata(
+        "compressed_decoded_size",
+        "Decoded size (B)",
+        prefix.len() as u64,
+    );
+    c.push_metadata(
+        "compressed_decode_stopped_at",
+        "Decoding stopped at (B)",
+        MAX_PAYLOAD as u64,
+    );
+    c.children.push(Child::decoded(
+        "Decoded payload",
+        0,
+        data.len(),
+        Cow::Owned(prefix),
+        codec.name(),
+    ));
+    Some(c)
 }
 
 #[cfg(test)]
