@@ -745,6 +745,21 @@ fn mbr_partition_holding_an_ext_filesystem_is_classified_on_its_own() {
 }
 
 #[test]
+fn partitions_supply_the_primary_isa_before_the_bootstrap_code() {
+    let mut disk = mbr_with_ext2();
+    let code = x86_bootstrap();
+    disk[..code.len()].copy_from_slice(&code);
+    let p = classify(&disk);
+    assert_eq!(p.primary.isa, Isa::X86_64, "from the ext members");
+    let labels: Vec<_> = p.slices.iter().filter_map(|s| s.label.as_deref()).collect();
+    assert_eq!(
+        labels,
+        ["Partition 1 (Linux, type 0x83)", "MBR bootstrap code"]
+    );
+    assert_eq!(p.slices[1].isa, Isa::X86);
+}
+
+#[test]
 fn mbr_bootstrap_code_is_classified_as_16_bit_x86() {
     let mbr = boot_sector(
         &x86_bootstrap(),
@@ -1310,8 +1325,10 @@ fn hybrid_mbr_and_missing_mbr_are_noted() {
         "{:?}",
         c.notes
     );
+    // The partitions come first, so they supply the primary ISA.
     assert_eq!(
-        c.children[0].label, "MBR bootstrap code",
+        c.children.last().map(|child| child.label.as_str()),
+        Some("MBR bootstrap code"),
         "the protective MBR's code is classified"
     );
     let (_, mut bare) = small_gpt();

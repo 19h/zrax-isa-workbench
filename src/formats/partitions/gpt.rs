@@ -491,7 +491,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         .and_then(|blocks| lba_offset(blocks, block_size))
         .and_then(|size| usize::try_from(size).ok())
         .map_or(data.len(), |size| size.min(data.len()));
-    describe(&mut c, data, &located, &entries);
+    let bootstrap = describe(&mut c, data, &located, &entries);
 
     let mut placement = Placement::default();
     let mut beyond_usable = Vec::new();
@@ -527,6 +527,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         ));
     }
     placement.push_notes(&mut c);
+    c.children.extend(bootstrap);
     Ok(c)
 }
 
@@ -541,7 +542,14 @@ fn label(entry: &Entry) -> String {
 }
 
 /// Summary notes, the protective MBR, the backup header and metadata.
-fn describe<'a>(c: &mut Container<'a>, data: &'a [u8], located: &Located<'_>, entries: &[Entry]) {
+/// Returns the protective MBR's bootstrap code child, for the caller to
+/// push after the partitions.
+fn describe<'a>(
+    c: &mut Container<'a>,
+    data: &'a [u8],
+    located: &Located<'_>,
+    entries: &[Entry],
+) -> Option<Child<'a>> {
     let header = &located.header;
     let block_size = located.block_size;
     c.notes.push(format!(
@@ -568,7 +576,7 @@ fn describe<'a>(c: &mut Container<'a>, data: &'a [u8], located: &Located<'_>, en
             header.revision
         ));
     }
-    describe_protective_mbr(c, data);
+    let bootstrap = describe_protective_mbr(c, data);
 
     c.push_metadata(
         "partitions_gpt_disk_guid",
@@ -622,6 +630,7 @@ fn describe<'a>(c: &mut Container<'a>, data: &'a [u8], located: &Located<'_>, en
             value,
         );
     }
+    bootstrap
 }
 
 /// What the backup header says: verified, beyond the file, or invalid.
@@ -672,23 +681,21 @@ fn backup_note(data: &[u8], primary: &Header, primary_array: &[u8], block_size: 
 
 /// The MBR at LBA 0 in front of the GPT: protective, hybrid or missing. A
 /// protective MBR's bootstrap code is classified like an MBR's.
-fn describe_protective_mbr<'a>(c: &mut Container<'a>, data: &'a [u8]) {
-    let Some(sector) = data.get(..SECTOR_SIZE) else {
-        return;
-    };
+fn describe_protective_mbr<'a>(c: &mut Container<'a>, data: &'a [u8]) -> Option<Child<'a>> {
+    let sector = data.get(..SECTOR_SIZE)?;
     let Some(records) = boot_records(sector) else {
         c.notes.push(
             "LBA 0 has no MBR boot signature, so no protective MBR (Linux and libblkid read such \
              a GPT only when forced)"
                 .to_string(),
         );
-        return;
+        return None;
     };
     if !records.iter().any(|r| r.is_protective()) {
         c.notes.push(
             "LBA 0 holds an MBR without a protective record (type 0xEE from LBA 1)".to_string(),
         );
-        return;
+        return None;
     }
     let others = records
         .iter()
@@ -708,7 +715,7 @@ fn describe_protective_mbr<'a>(c: &mut Container<'a>, data: &'a [u8]) {
             )
         ));
     }
-    push_bootstrap(c, sector);
+    bootstrap(c, sector)
 }
 
 #[cfg(test)]

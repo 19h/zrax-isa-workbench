@@ -423,30 +423,32 @@ fn is_volume_boot_record(sector: &[u8]) -> bool {
         && (media == BPB_MEDIA_REMOVABLE || media >= BPB_MEDIA_MIN_FIXED)
 }
 
-/// List the bootstrap code area of an MBR or protective MBR as x86
-/// real-mode code, unless it is all zeros.
-fn push_bootstrap<'a>(c: &mut Container<'a>, sector: &'a [u8]) {
-    let Some(code) = sector.get(..BOOTSTRAP_SIZE) else {
-        return;
-    };
+/// The bootstrap code area of an MBR or protective MBR as an x86
+/// real-mode child, unless it is all zeros; the note saying which goes to
+/// `c`. Callers push the child after the partitions, so that the disk's
+/// contents supply the primary ISA and the boot code only when no
+/// partition does (partitioning tools write x86 boot code onto disks for
+/// any device).
+fn bootstrap<'a>(c: &mut Container<'a>, sector: &'a [u8]) -> Option<Child<'a>> {
+    let code = sector.get(..BOOTSTRAP_SIZE)?;
     if code.iter().all(|&b| b == 0) {
         c.notes.push(
             "Bootstrap code area (440 B) is all zeros: no BIOS boot code, as on UEFI-only disks \
              and devices that are not PCs"
                 .to_string(),
         );
-        return;
+        return None;
     }
     c.notes.push(
         "Bootstrap code: 440 B at 0x0, classified as 16-bit x86 real-mode code because a PC \
          BIOS runs it; devices that are not PCs may leave other bytes there"
             .to_string(),
     );
-    c.children.push(
+    Some(
         Child::stored(BOOTSTRAP_LABEL, 0, code)
             .as_code()
             .with_target(BOOTSTRAP_TARGET),
-    );
+    )
 }
 
 /// How a partition's child is classified.

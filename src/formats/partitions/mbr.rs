@@ -221,7 +221,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let mut c = Container::new(FileFormat::Mbr, Layout::Mbr.label(), KEY_PREFIX);
     c.consumed = data.len();
     describe(&mut c, data, sector, &primaries, &partitions)?;
-    push_bootstrap(&mut c, sector);
+    let bootstrap = bootstrap(&mut c, sector);
     c.notes.append(&mut chain_notes);
     let mut placement = Placement::default();
     for p in &partitions {
@@ -235,6 +235,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         );
     }
     placement.push_notes(&mut c);
+    c.children.extend(bootstrap);
     Ok(c)
 }
 
