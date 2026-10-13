@@ -31,7 +31,9 @@
 //! An LE/LX header without an MZ stub has only a two-byte signature, so it is
 //! recognized only when the header and its object and page tables validate
 //! completely ([`detect_bare`]); its CPU type field remains the ISA
-//! evidence, as it is behind a stub.
+//! evidence, as it is behind a stub. Behind a stub and without one, the
+//! header is read in the byte order its `B-ORD` and `W-ORD` declare (LX
+//! specification, Figure 2).
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{magic, pe, read_bytes, read_u16, read_u32};
@@ -339,23 +341,63 @@ pub fn detect(data: &[u8]) -> Option<ExtendedType> {
             return Some(ExtendedType::Ne { target_os });
         }
 
-        // Check for LE
-        if sig == LE_SIGNATURE && lfanew + 12 <= data.len() {
-            let cpu = read_u16(data, lfanew + 8, true).ok()?;
-            let os = read_u16(data, lfanew + 10, true).ok()?;
-            return Some(ExtendedType::Le { cpu, os });
-        }
-
-        // Check for LX
-        if sig == LX_SIGNATURE && lfanew + 12 <= data.len() {
-            let cpu = read_u16(data, lfanew + 8, true).ok()?;
-            let os = read_u16(data, lfanew + 10, true).ok()?;
-            return Some(ExtendedType::Lx { cpu, os });
+        // Check for LE and LX
+        if let Some(layout) = Linear::from_signature(sig) {
+            if lfanew + 12 <= data.len() {
+                return stubbed_linear_type(data, lfanew, layout);
+            }
         }
     }
 
     // Pure MZ executable
     Some(ExtendedType::Mz)
+}
+
+/// The detected type of a linear header at `header` behind a stub, with its
+/// CPU and OS types read in the byte order that `B-ORD` and `W-ORD` declare.
+/// The caller checks that the first 12 header bytes are present. An order
+/// that [`header_order`] does not accept is read little-endian here, and
+/// [`parse`] rejects it.
+fn stubbed_linear_type(data: &[u8], header: usize, layout: Linear) -> Option<ExtendedType> {
+    let orders = read_bytes(data, header + 2, 2).ok()?;
+    let le = header_order(orders[0], orders[1]).unwrap_or(true);
+    let cpu = read_u16(data, header + 8, le).ok()?;
+    let os = read_u16(data, header + 10, le).ok()?;
+    Some(match layout {
+        Linear::Le => ExtendedType::Le { cpu, os },
+        Linear::Lx => ExtendedType::Lx { cpu, os },
+    })
+}
+
+/// Whether `B-ORD` and `W-ORD` declare a little-endian header (both 0,
+/// `Some(true)`) or a big-endian one (both 1, `Some(false)`). The LX
+/// specification defines the two bytes separately but not a header that
+/// mixes the orders, and no other values, so those are `None`.
+fn header_order(byte_order: u8, word_order: u8) -> Option<bool> {
+    match (byte_order, word_order) {
+        (ORDER_LITTLE_ENDIAN, ORDER_LITTLE_ENDIAN) => Some(true),
+        (ORDER_BIG_ENDIAN, ORDER_BIG_ENDIAN) => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether the linear header at `header` is little-endian, from its `B-ORD`
+/// and `W-ORD` (`02h`, `03h`).
+///
+/// # Errors
+///
+/// A truncation error if the two bytes are missing, and an
+/// [`ClassifierError::MzParseError`] for an order [`header_order`] does not
+/// accept.
+fn expect_header_order(data: &[u8], header: usize, layout: Linear) -> Result<bool> {
+    let orders = read_bytes(data, header + 2, 2)?;
+    let (byte_order, word_order) = (orders[0], orders[1]);
+    header_order(byte_order, word_order).ok_or_else(|| {
+        error(format!(
+            "Invalid {} byte and word order 0x{byte_order:X}/0x{word_order:X}",
+            layout.name()
+        ))
+    })
 }
 
 /// Parse pure MZ (DOS) executable.
@@ -511,8 +553,9 @@ fn parse_le_lx(data: &[u8], layout: Linear, cpu: u16, os: u16) -> Result<Classif
         });
     }
 
-    // Headers behind a stub are read little-endian whatever `B-ORD` says.
-    linear_result(data, lfanew, layout, cpu, os, true)
+    // In the order the header declares, as without a stub.
+    let le = expect_header_order(data, lfanew, layout)?;
+    linear_result(data, lfanew, layout, cpu, os, le)
 }
 
 /// Parse an LE/LX header at offset 0 without an MZ stub; the header must
@@ -697,15 +740,7 @@ fn bare_header(data: &[u8]) -> Result<LinearHeader> {
             data.len()
         )));
     }
-    let le = match (data[2], data[3]) {
-        (ORDER_LITTLE_ENDIAN, ORDER_LITTLE_ENDIAN) => true,
-        (ORDER_BIG_ENDIAN, ORDER_BIG_ENDIAN) => false,
-        (byte_order, word_order) => {
-            return Err(error(format!(
-                "Invalid {name} byte and word order 0x{byte_order:X}/0x{word_order:X}"
-            )))
-        }
-    };
+    let le = expect_header_order(data, 0, layout)?;
     let level = read_u32(data, 0x04, le)?;
     if level != LINEAR_FORMAT_LEVEL {
         return Err(error(format!("Unsupported {name} format level {level}")));
@@ -1154,6 +1189,47 @@ mod tests {
             assert_eq!((result.isa, result.bitwidth), (isa, bitwidth), "{cpu:#x}");
             assert_eq!(result.confidence, 1.0);
         }
+    }
+
+    #[test]
+    fn only_matching_byte_and_word_orders_declare_a_header_order() {
+        assert_eq!(
+            header_order(ORDER_LITTLE_ENDIAN, ORDER_LITTLE_ENDIAN),
+            Some(true)
+        );
+        assert_eq!(
+            header_order(ORDER_BIG_ENDIAN, ORDER_BIG_ENDIAN),
+            Some(false)
+        );
+        for (byte_order, word_order) in [(0, 1), (1, 0), (2, 2), (0, 2), (0xFF, 0xFF)] {
+            assert_eq!(header_order(byte_order, word_order), None);
+        }
+    }
+
+    #[test]
+    fn stubbed_big_endian_headers_are_detected_and_parsed_in_their_order() {
+        let mut data = make_le_header(0, 0);
+        let header = 0x80;
+        data[header + 2] = ORDER_BIG_ENDIAN;
+        data[header + 3] = ORDER_BIG_ENDIAN;
+        data[header + 8..header + 10].copy_from_slice(&le_cpu::I386.to_be_bytes());
+        data[header + 10..header + 12].copy_from_slice(&le_os::OS2.to_be_bytes());
+        // Module pages, EIP object and EIP.
+        data[header + 0x14..header + 0x18].copy_from_slice(&10u32.to_be_bytes());
+        data[header + 0x18..header + 0x1C].copy_from_slice(&1u32.to_be_bytes());
+        data[header + 0x1C..header + 0x20].copy_from_slice(&0x1000u32.to_be_bytes());
+        let variant = detect(&data).expect("an LE header behind a stub");
+        assert_eq!(
+            variant,
+            ExtendedType::Le {
+                cpu: le_cpu::I386,
+                os: le_os::OS2
+            }
+        );
+        let result = parse(&data, variant).expect("parses");
+        assert_eq!((result.isa, result.bitwidth), (Isa::X86, 32));
+        assert_eq!(result.metadata.entry_point, Some(0x1000));
+        assert_eq!(result.metadata.section_count, Some(10));
     }
 
     #[test]

@@ -581,8 +581,15 @@ fn is_mapped_cpu(cpu: u16) -> bool {
 
 #[test]
 fn stubbed_header_sweeps_never_panic_and_name_an_isa_only_for_mapped_cpus() {
-    for signature in [Signature::Le, Signature::Lx] {
-        let data = stubbed(&program(signature));
+    for (signature, big_endian) in [
+        (Signature::Le, false),
+        (Signature::Lx, false),
+        (Signature::Le, true),
+        (Signature::Lx, true),
+    ] {
+        let mut image = program(signature);
+        image.big_endian = big_endian;
+        let data = stubbed(&image);
         for end in 0..data.len() {
             let _ = detect_payload(&data[..end], &ClassifierOptions::new());
         }
@@ -622,6 +629,77 @@ fn big_endian_headers_are_read_in_their_declared_order() {
         assert_eq!(p.primary.endianness, Endianness::Little);
         assert!(has_note(&p, "Byte order: BE, Word order: BE"));
         assert!(has_note(&p, "Entry: object 1:0x00000000"));
+    }
+}
+
+#[test]
+fn stubbed_big_endian_headers_are_read_in_their_declared_order() {
+    for signature in [Signature::Le, Signature::Lx] {
+        let mut image = program(signature);
+        image.big_endian = true;
+        image.os = OS_WINDOWS_386;
+        image.module_flags = MODULE_VIRTUAL_DRIVER;
+        image.eip = 0x10;
+        let p = classify(&stubbed(&image));
+        assert_eq!(p.format.format, FileFormat::Mz);
+        let name = format!("{signature:?}");
+        assert_eq!(
+            p.format.variant_name,
+            Some(format!("{name} {{ cpu: 2, os: 4 }}"))
+        );
+        // The CPU type names x86, whose code is little-endian.
+        assert_eq!(
+            (p.primary.isa, p.primary.bitwidth, p.primary.endianness),
+            (Isa::X86, 32, Endianness::Little)
+        );
+        assert_eq!(p.primary.source, ClassificationSource::FileFormat);
+        let first = format!("{} (Linear Executable)", name.to_uppercase());
+        assert_eq!(
+            notes(&p),
+            [
+                first.as_str(),
+                "Target OS: Windows 386",
+                "CPU: 80386",
+                "Type: Virtual device driver",
+                "Pages: 1",
+                "Entry: object 1:0x00000010",
+                "Byte order: BE, Word order: BE",
+            ]
+        );
+
+        // The same classification as without a stub.
+        let bare = classify(&bare(&image));
+        let no_stub = format!(
+            "No MZ stub; the {} header starts at offset 0x0",
+            name.to_uppercase()
+        );
+        let mut expected = notes(&p);
+        expected.push(&no_stub);
+        assert_eq!(notes(&bare), expected);
+        assert_eq!(bare.primary.variant, p.primary.variant);
+    }
+}
+
+#[test]
+fn stubbed_headers_with_mixed_or_undefined_orders_do_not_parse() {
+    for (byte_order, word_order) in [(0, 1), (1, 0), (2, 2), (0, 0xFF)] {
+        let mut data = stubbed(&program(Signature::Lx));
+        data[STUB_SIZE + field::BYTE_ORDER] = byte_order;
+        data[STUB_SIZE + field::WORD_ORDER] = word_order;
+        // The DOS header keeps the detection strong; the fields are read
+        // little-endian for it.
+        let variant = mz::detect(&data).expect("an LX header behind a stub");
+        assert_eq!(variant, ExtendedType::Lx { cpu: 2, os: 1 });
+        let message = format!(
+            "MZ/NE/LE/LX parse error: Invalid LX byte and word order \
+             0x{byte_order:X}/0x{word_order:X}"
+        );
+        let error = mz::parse(&data, variant).expect_err("must not parse");
+        assert_eq!(error.to_string(), message);
+        match detect_payload(&data, &ClassifierOptions::new()) {
+            Err(e) => assert_eq!(e.to_string(), message),
+            Ok(p) => assert_eq!(p.primary.source, ClassificationSource::Heuristic),
+        }
     }
 }
 

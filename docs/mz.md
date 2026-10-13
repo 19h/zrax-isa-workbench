@@ -10,7 +10,9 @@ extensions and fixes of that family:
 - the module type that LE and LX headers report, behind a stub or not
   ([Module type](#module-type));
 - the ISA of an LE or LX header behind a stub whose CPU type has no
-  mapping ([CPU type](#cpu-type)).
+  mapping ([CPU type](#cpu-type));
+- the byte order in which an LE or LX header behind a stub is read
+  ([Wire units and byte order](#wire-units-and-byte-order)).
 
 None adds a format ID: a header without a stub reports the existing
 `le` and `lx` IDs, a `ZM` image the existing `pe` ID.
@@ -123,11 +125,24 @@ otherwise the ISA stays unknown.
   offsets are relative to the file. With the header at offset 0 both are
   file offsets.
 - `B-ORD` (`02h`) and `W-ORD` (`03h`) give the byte and word order of the
-  format: 0 little-endian, 1 big-endian. A header without a stub must have
-  both 0 or both 1 and is read in that order. Behind a stub the existing
-  parser reads the header little-endian whatever these bytes say, and that
-  behaviour is kept. The ISA's byte order does not come from these fields:
-  every accepted CPU type is x86, which is little-endian.
+  format: 0 little-endian, 1 big-endian (LX specification; `exe386.h`
+  `E32LEBO`, `E32BEBO`, `E32LEWO`, `E32BEWO`). No source defines how a
+  header that mixes the two orders lays out a 32-bit field, and other
+  values are undefined. Behind a stub and without one, a header with both
+  0 is read little-endian and one with both 1 big-endian: the CPU and OS
+  types of the detection variant (`Lx { cpu: 2, os: 1 }`) and every field
+  the parser reads, with the note `Byte order: BE, Word order: BE`.
+- Any other combination is not recognized without a stub. Behind a stub
+  the DOS header keeps the detection strong (its variant then carries the
+  CPU and OS types read little-endian), and `mz::parse` fails with
+  `Invalid LX byte and word order 0x0/0x1`, so the classifier falls back to
+  the code model or reports that error.
+- `e_lfanew` (`3Ch`) belongs to the DOS header and is always
+  little-endian.
+- The ISA's byte order does not come from `B-ORD` or `W-ORD`: they describe
+  the format's fields. The x86 CPU types report little-endian code; the
+  MIPS CPU types behind a stub (A5) also report little-endian whatever the
+  header order, which is not verified.
 - LX object page table entries are 8 bytes: page data offset (shifted left
   by the page offset shift at `2Ch`, relative to the data pages), data size
   and flags. LE entries are 4 bytes: a 24-bit page number, most significant
@@ -193,6 +208,7 @@ in `mz::detect`.
 | A6 | Text starting with `LE` or `LX` is not recognized | `ascii_text_starting_with_le_or_lx_is_not_an_executable`: the order bytes rule out ASCII text |
 | A7 | A `ZM` header alone is not evidence of an executable | Without `PE\0\0` at `e_lfanew` a `ZM` file is not reported as MZ, NE, LE or LX (`zm_without_a_pe_signature_is_not_a_dos_executable`); only the PE signature makes it strong |
 | A8 | The module type is the masked value, not a set of bits | `module_types_are_the_whole_type_field_behind_and_without_a_stub`; with `IDA_INPUT_DIR`, `ida_stubbed_samples_report_the_module_type_of_their_type_field`: `pc_vxd.le` (`28000h`) is a virtual device driver. A file of a documented type whose masked value differs would falsify it |
+| A9 | Headers do not mix byte and word order | All 16 LE/LX samples in IDA's corpus have both 0; `stubbed_headers_with_mixed_or_undefined_orders_do_not_parse` pins the rejection. A producer that writes mixed orders, with a reader that defines them, would falsify it |
 
 ## Known boundaries
 
@@ -200,7 +216,8 @@ in `mz::detect`.
 | --- | --- |
 | Windows PE loaders and `ZM` | Not verified; the note says so. MS-DOS acceptance is from the MS-DOS 2.0 source |
 | `ZM` DOS, NE, LE or LX files (no PE signature) | Not recognized, as before; only the PE signature was in scope |
-| Big-endian LE/LX behind a stub | Read little-endian, as before (kept; see `linear_result`) |
+| Mixed or undefined `B-ORD`/`W-ORD` behind a stub | `mz::parse` fails with `Invalid … byte and word order`: no source defines the layout of such a header |
+| Code byte order of the MIPS CPU types behind a stub | Reported little-endian whatever the header order; not verified (no sample, no primary source) |
 | LE/LX members of archives and filesystems | Recognized only when the prefix the container checks holds every page (weak detection needs the whole input) |
 | Fixups, imports, entry tables, resources, iterated and compressed page data | Not parsed or decoded; the ISA comes from the CPU type field |
 | LE/LX headers at an offset other than 0 without an MZ stub (bound DOS extenders that append the header after their own image) | Not recognized: nothing points at the header |
@@ -265,3 +282,45 @@ IDA's corpus (4,621 files), `pc_bad_fixups.lx`, `pc_huge_imports.lx`,
 `pc_huge_obj.lx`, `pc_nomz.le` and `pc_import_samedll.pe` went from
 inconclusive to x86 and `pc_bad_iterate2.lx` from wrong (C166) to x86; no
 other file changed.
+
+### Module type, CPU type and byte order fixes
+
+On 2026-10-13 (macOS AArch64, rustc 1.100.0-nightly), for the three fixes
+of the stubbed LE/LX path (module type, unmapped CPU types, byte order),
+against base `439823c`:
+
+- `tests/mz.rs`: 26 tests passed with `IDA_INPUT_DIR` set to IDA's
+  `tests/input` (without it the five IDA tests return early); the 17 unit
+  tests in `src/formats/mz.rs` passed.
+- `cargo test --all-features --locked`: 2,255 passed, 6 ignored (base:
+  2,242 passed, 6 ignored), without `IDA_INPUT_DIR`.
+- `./build-web.sh`, then `npm test`: 260 tests, 256 passed and 4 skipped
+  (they need D10 and RX113 firmware that is not in the repository).
+- Differential snapshot (AGENTS.md section 6), base against the third fix:
+  2,283,943 inputs (2,277,705 distinct) from 856 files: the 777 files in
+  IDA's `tests/input` (with subdirectories) that start with `MZ`, `ZM`,
+  `NE`, `LE` or `LX`, `testbins/ia64_le_ftpm-efi.bin`, and 78 synthetic
+  MZ, NE, PE, `ZM` PE and stubbed and bare LE/LX fixtures. Files up to
+  8 KiB with every truncation and every byte set to `0x00`, `0xFF` and one
+  bit flip; larger files with the truncations up to 512 B and around the
+  extended header, those mutations in the DOS header and the 256 B from
+  `e_lfanew`, and 32 spread lengths and positions. Per input, the
+  `detect_format`, `mz::detect`, `mz::detect_bare` and `mz::parse` results
+  and the `detect_payload` JSON were hashed. 38,496 inputs changed, all
+  derived from LE/LX headers: 14,333 module type notes, 8,734 unmapped CPU
+  types behind a stub and 15,429 stubbed headers whose `B-ORD` or `W-ORD`
+  is not 0. No PE, NE or plain MZ input changed. Of IDA's files, only
+  `pc_vxd.le` changed whole (`Type: DLL` to `Type: Virtual device
+  driver`); the other changes are mutations of the order bytes, the CPU
+  type or the module flags of the ten recognized LE/LX samples.
+- The same snapshot after each fix, over IDA's 16 LE/LX samples and the
+  synthetic fixtures: the first fix changed only `Type:` notes (14,427
+  inputs), the second only inputs with an unmapped CPU type (15,303,
+  among them 6,569 big-endian or mixed-order headers whose CPU type read
+  little-endian was unmapped), the third only stubbed headers with
+  nonzero `B-ORD` or `W-ORD` (15,429).
+- `tests/idaref.rs` with `IDAREF_DIR` set to IDA's `tests/input` passed
+  before and after with the same report (`pc_`: 1,646 correct, 2 wrong,
+  143 inconclusive, 8 errors; overall 88.2% correct and 0.2% wrong of
+  4,618 supported files). Per file, only the payload of `pc_vxd.le`
+  changed (its `Type:` note); its ISA did not.
