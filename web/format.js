@@ -101,6 +101,7 @@ const FORMAT_NAMES = {
   trx: 'Broadcom TRX', netgearchk: 'Netgear CHK', seama: 'D-Link SEAMA', tplink: 'TP-Link firmware',
   espflash: 'ESP flash dump',
   qnxifs: 'QNX IFS',
+  winceimage: 'Windows CE image',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

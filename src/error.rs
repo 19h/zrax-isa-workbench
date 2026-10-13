@@ -70,6 +70,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Windows CE BIN file or raw ROM image.
+    #[error("Windows CE image parse error: {message}")]
+    WinCeParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an FPGA configuration bitstream (Xilinx, Lattice,
     /// Intel).
     #[error("FPGA bitstream parse error: {message}")]

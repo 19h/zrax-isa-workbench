@@ -84,6 +84,7 @@ pub mod tmobj;
 pub mod uefi;
 pub mod vbf;
 pub mod wasm;
+pub mod wince;
 pub mod xcoff;
 pub mod zxtape;
 
@@ -681,6 +682,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Windows CE BIN files: the seven sync bytes `B000FF\n` at offset 0.
+    if let Some(layout) = wince::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::WinCe(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -918,6 +926,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = esp::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Esp(layout),
+        };
+    }
+
+    // Raw Windows CE ROM images have no header: `ECEC` at 0x40 must lead to
+    // one ROMHDR consistent with its own position and complete tables.
+    if let Some(layout) = wince::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::WinCe(layout),
         };
     }
 

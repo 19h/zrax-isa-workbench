@@ -1002,6 +1002,10 @@ pub enum FileFormat {
     /// QNX Neutrino image filesystem: a bootable IFS (startup header,
     /// startup program, image filesystem) or a bare `imagefs`
     QnxIfs,
+
+    // Windows CE
+    /// Windows CE ROM image: a `B000FF` BIN file or a raw `.nb0` image
+    WinCeImage,
 }
 
 impl fmt::Display for FileFormat {
@@ -1201,6 +1205,8 @@ impl fmt::Display for FileFormat {
             FileFormat::EspFlash => write!(f, "ESP flash dump"),
             // QNX
             FileFormat::QnxIfs => write!(f, "QNX IFS"),
+            // Windows CE
+            FileFormat::WinCeImage => write!(f, "Windows CE image"),
         }
     }
 }

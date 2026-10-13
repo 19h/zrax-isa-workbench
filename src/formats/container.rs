@@ -14,8 +14,9 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
-    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, coreboot, ext, huawei, mcu,
-    mtd, nintendo, optionrom, rofs, router, socboot, socboot2, uefi, zxtape, MAX_PAYLOAD,
+    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, coreboot, ext, huawei,
+    mcu, mtd, nintendo, optionrom, rofs, router, socboot, socboot2, uefi, wince, zxtape,
+    MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -96,6 +97,8 @@ pub enum Kind {
     Esp(super::esp::Layout),
     /// A QNX Neutrino bootable image or image filesystem.
     Qnx(super::qnx::Layout),
+    /// A Windows CE BIN file or raw ROM image.
+    WinCe(wince::Layout),
 }
 
 impl Kind {
@@ -126,6 +129,7 @@ impl Kind {
             Self::Router(layout) => layout.format(),
             Self::Esp(layout) => layout.format(),
             Self::Qnx(layout) => layout.format(),
+            Self::WinCe(layout) => layout.format(),
         }
     }
 
@@ -156,6 +160,7 @@ impl Kind {
             Self::Router(layout) => layout.label(),
             Self::Esp(layout) => layout.label(),
             Self::Qnx(layout) => layout.label(),
+            Self::WinCe(layout) => layout.label(),
         }
     }
 
@@ -186,6 +191,7 @@ impl Kind {
             Self::Router(layout) => layout.is_weak(),
             Self::Esp(layout) => layout.is_weak(),
             Self::Qnx(layout) => layout.is_weak(),
+            Self::WinCe(layout) => layout.is_weak(),
         }
     }
 }
@@ -221,6 +227,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Router(layout) => router::parse_container(data, layout),
         Kind::Esp(layout) => super::esp::parse_container(data, layout),
         Kind::Qnx(layout) => super::qnx::parse_container(data, layout),
+        Kind::WinCe(layout) => wince::parse_container(data, layout),
     }
 }
 
