@@ -94,6 +94,8 @@ pub enum Kind {
     Router(router::Layout),
     /// An Espressif image or flash dump.
     Esp(super::esp::Layout),
+    /// A QNX Neutrino bootable image or image filesystem.
+    Qnx(super::qnx::Layout),
 }
 
 impl Kind {
@@ -123,6 +125,7 @@ impl Kind {
             Self::Coreboot(layout) => layout.format(),
             Self::Router(layout) => layout.format(),
             Self::Esp(layout) => layout.format(),
+            Self::Qnx(layout) => layout.format(),
         }
     }
 
@@ -152,6 +155,7 @@ impl Kind {
             Self::Coreboot(layout) => layout.label(),
             Self::Router(layout) => layout.label(),
             Self::Esp(layout) => layout.label(),
+            Self::Qnx(layout) => layout.label(),
         }
     }
 
@@ -181,6 +185,7 @@ impl Kind {
             Self::Coreboot(layout) => layout.is_weak(),
             Self::Router(layout) => layout.is_weak(),
             Self::Esp(layout) => layout.is_weak(),
+            Self::Qnx(layout) => layout.is_weak(),
         }
     }
 }
@@ -215,6 +220,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Coreboot(layout) => coreboot::parse_container(data, layout),
         Kind::Router(layout) => router::parse_container(data, layout),
         Kind::Esp(layout) => super::esp::parse_container(data, layout),
+        Kind::Qnx(layout) => super::qnx::parse_container(data, layout),
     }
 }
 

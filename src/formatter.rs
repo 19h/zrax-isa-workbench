@@ -747,6 +747,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Seama => "D-Link SEAMA",
         FileFormat::TpLink => "TP-Link firmware",
         FileFormat::EspFlash => "ESP flash dump",
+        FileFormat::QnxIfs => "QNX IFS",
     }
 }
 

@@ -62,6 +62,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a QNX Neutrino image filesystem (bootable IFS or bare
+    /// `imagefs`).
+    #[error("QNX image parse error: {message}")]
+    QnxParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an FPGA configuration bitstream (Xilinx, Lattice,
     /// Intel).
     #[error("FPGA bitstream parse error: {message}")]

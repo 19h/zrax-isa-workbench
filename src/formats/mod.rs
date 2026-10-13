@@ -67,6 +67,7 @@ pub mod os9;
 pub mod palm;
 pub mod pe;
 pub mod pef;
+pub mod qnx;
 pub mod retro;
 pub mod rofs;
 pub mod router;
@@ -669,6 +670,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = esp::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Esp(layout),
+        };
+    }
+
+    // QNX images: `imagefs` at offset 0, or the startup header signature at
+    // offset 0 or after a boot prefix that its `preboot_size` names.
+    if let Some(layout) = qnx::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Qnx(layout),
         };
     }
 

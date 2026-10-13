@@ -998,6 +998,10 @@ pub enum FileFormat {
     /// Espressif flash dump: bootloader, ESP-IDF partition table and
     /// partitions
     EspFlash,
+    // QNX
+    /// QNX Neutrino image filesystem: a bootable IFS (startup header,
+    /// startup program, image filesystem) or a bare `imagefs`
+    QnxIfs,
 }
 
 impl fmt::Display for FileFormat {
@@ -1195,6 +1199,8 @@ impl fmt::Display for FileFormat {
             FileFormat::TpLink => write!(f, "TP-Link firmware"),
             // Espressif
             FileFormat::EspFlash => write!(f, "ESP flash dump"),
+            // QNX
+            FileFormat::QnxIfs => write!(f, "QNX IFS"),
         }
     }
 }
