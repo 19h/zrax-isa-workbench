@@ -228,7 +228,12 @@ with `ZM` (only with the PE signature at `e_lfanew`) followed; see
 from its whole type field (VxDs are reported as such), reports unmapped
 CPU types behind a stub as an unknown ISA, and reads stubbed headers in
 their declared byte and word order (mixed or undefined orders are parse
-errors). UEFI capsules (FMP, nested FMP,
+errors). Mach-O load commands are read (segments and sections, platforms,
+entry points, UUID, code-signature, encryption and chained-fixup records);
+extension detection scans instruction sections only, per fat slice;
+`MH_FILESET` kernel collections list their entries as slices classified on
+their own; prelinked kernels' `__PRELINK_TEXT` kexts are not parsed; see
+[Mach-O load commands](macho.md). UEFI capsules (FMP, nested FMP,
 `EFI_CAPSULE_GUID`, JSON, Windows UX, Intel, Lenovo, Toshiba and AMI Aptio;
 signatures not verified, Framework split capsules not supported) followed;
 see [UEFI capsules](capsule.md).

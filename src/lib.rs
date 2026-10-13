@@ -1077,7 +1077,29 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                 "Universal binary containing {} architectures",
                 entries.len()
             )));
-            first.classification.clone()
+            let mut r = first.classification.clone();
+            let commands = read_fat_slices(data, &entries, &mut slices, &mut r, options);
+            notes.extend(commands.notes);
+            metadata = commands.metadata;
+            code_payload = commands.code;
+            r
+        }
+        formats::DetectedFormat::MachO { bits, big_endian } => {
+            match formats::macho::parse(data, bits, big_endian) {
+                Ok(header) => {
+                    let mut r = named_or_code_model(data, header, options, &mut candidates);
+                    let commands = read_macho_commands(data, &mut r, options);
+                    notes.extend(commands.notes);
+                    metadata = commands.metadata;
+                    slices = commands.slices;
+                    code_payload = commands.code;
+                    contained_extensions = commands.extensions;
+                    r
+                }
+                Err(e) => {
+                    fallback_to_heuristics(data, options, &format, e, &mut candidates, &mut notes)?
+                }
+            }
         }
         formats::DetectedFormat::TiC55xBoot => {
             let container = formats::ti_c55x::parse_container(data)?;
@@ -1348,19 +1370,7 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
             }
         }
         other => match formats::parse_detected(data, &other) {
-            Ok(r) if matches!(r.isa, Isa::Unknown(_)) => {
-                // The container does not name the ISA (or names one we cannot
-                // map): the code may still tell.
-                let (h, c) = heuristic(data, options);
-                match h {
-                    Ok(h) => {
-                        candidates = c;
-                        adopt_heuristic(&r, h)
-                    }
-                    Err(_) => r,
-                }
-            }
-            Ok(r) => r,
+            Ok(r) => named_or_code_model(data, r, options, &mut candidates),
             Err(e) => fallback_to_heuristics(data, options, &format, e, &mut candidates, &mut notes)?,
         },
     };
@@ -1490,6 +1500,284 @@ fn fallback_to_heuristics(
         }
         Err(_) => Err(error),
     }
+}
+
+/// A header result that names its ISA, or the code model's answer when the
+/// header does not name one (or names one the classifier cannot map).
+fn named_or_code_model(
+    data: &[u8],
+    result: ClassificationResult,
+    options: &ClassifierOptions,
+    candidates: &mut Vec<IsaCandidate>,
+) -> ClassificationResult {
+    if !is_unknown(result.isa) {
+        return result;
+    }
+    let (h, c) = heuristic(data, options);
+    match h {
+        Ok(h) => {
+            *candidates = c;
+            adopt_heuristic(&result, h)
+        }
+        Err(_) => result,
+    }
+}
+
+/// What Mach-O load commands add to a header classification.
+struct MachoCommands<'a> {
+    /// Warnings about load commands or fileset entries that were not read.
+    notes: Vec<Note>,
+    /// The image's metadata entries.
+    metadata: Vec<MetadataEntry>,
+    /// Fileset entries, each classified on its own.
+    slices: Vec<ContainedArch>,
+    /// Bytes scanned for extensions of the primary ISA; `None` scans the
+    /// whole input, as for an image whose load commands were not read.
+    code: Option<std::borrow::Cow<'a, [u8]>>,
+    /// Extensions of the fileset entry that supplies the primary ISA's code
+    /// evidence.
+    extensions: Option<Vec<ExtensionDetection>>,
+}
+
+impl MachoCommands<'_> {
+    fn new() -> Self {
+        Self {
+            notes: Vec::new(),
+            metadata: Vec::new(),
+            slices: Vec::new(),
+            code: None,
+            extensions: None,
+        }
+    }
+}
+
+/// Read a thin Mach-O image's load commands. The header result keeps its
+/// ISA and gains the commands' notes, entry point, section count and
+/// flags. Extension detection scans the instruction sections only; the
+/// entries of an `MH_FILESET` are classified on their own instead.
+fn read_macho_commands<'a>(
+    data: &'a [u8],
+    result: &mut ClassificationResult,
+    options: &ClassifierOptions,
+) -> MachoCommands<'a> {
+    let mut out = MachoCommands::new();
+    let image = match formats::macho::parse_image(data) {
+        Ok(image) => image,
+        Err(e) => {
+            out.notes.push(Note::warning(format!(
+                "Mach-O load commands not read ({e}); extensions are scanned in the whole file"
+            )));
+            return out;
+        }
+    };
+    image.annotate(&mut result.metadata);
+    result.metadata.notes.extend(image.notes(data.len()));
+    out.metadata = image.metadata();
+    if image.header.is_fileset() && !image.fileset.is_empty() {
+        // The fileset's own sections overlap its entries' sections; each
+        // entry supplies its own evidence.
+        let fileset = classify_fileset(data, &image, result, options);
+        result.metadata.notes.push(
+            "Fileset entries are classified from their own headers and instruction sections; \
+             the primary extensions come from the first entry of the primary ISA's family"
+                .to_string(),
+        );
+        out.slices = fileset.slices;
+        out.notes = fileset.notes;
+        out.extensions = fileset.extensions;
+        out.code = Some(std::borrow::Cow::Borrowed(&[]));
+        return out;
+    }
+    if let Some(code) = image.code(data) {
+        result.metadata.code_size = Some(code.bytes.len() as u64);
+        result.metadata.notes.push(code.note());
+        out.code = Some(code.bytes);
+    }
+    out
+}
+
+/// Read each fat slice's load commands. A slice's own instruction sections
+/// supply its code-pattern extensions; the first slice, which supplies the
+/// primary result, also adds its notes and metadata and its code for the
+/// primary extension scan.
+fn read_fat_slices<'a>(
+    data: &'a [u8],
+    entries: &[formats::macho::FatArchEntry],
+    slices: &mut [ContainedArch],
+    result: &mut ClassificationResult,
+    options: &ClassifierOptions,
+) -> MachoCommands<'a> {
+    let mut out = MachoCommands::new();
+    for (index, (entry, slice)) in entries.iter().zip(slices.iter_mut()).enumerate() {
+        let start = usize::try_from(entry.offset).ok();
+        let end = start
+            .zip(usize::try_from(entry.size).ok())
+            .and_then(|(s, n)| s.checked_add(n));
+        let Some(bytes) = start.zip(end).and_then(|(start, end)| data.get(start..end)) else {
+            continue;
+        };
+        // Slices that are not Mach-O images (archives of a fat static
+        // library) have no load commands.
+        if formats::macho::Header::read(bytes, 0).is_err() {
+            continue;
+        }
+        let image = match formats::macho::parse_image(bytes) {
+            Ok(image) => image,
+            Err(e) => {
+                out.notes.push(Note::warning(format!(
+                    "Slice {index} ({}): Mach-O load commands not read ({e})",
+                    slice.isa
+                )));
+                continue;
+            }
+        };
+        let code = image.code(bytes);
+        if let Some(code) = &code {
+            for found in code_extensions(&code.bytes, slice.isa, slice.endianness, options) {
+                if !slice.extensions.iter().any(|e| e.name == found.name) {
+                    slice.extensions.push(found);
+                }
+            }
+        }
+        if index > 0 {
+            continue;
+        }
+        image.annotate(&mut result.metadata);
+        let first = image.notes(bytes.len()).into_iter();
+        result
+            .metadata
+            .notes
+            .extend(first.map(|note| format!("First slice: {note}")));
+        out.metadata = image.metadata();
+        if let Some(code) = code {
+            result.metadata.code_size = Some(code.bytes.len() as u64);
+            result
+                .metadata
+                .notes
+                .push(format!("First slice: {}", code.note()));
+            out.code = Some(code.bytes);
+        }
+    }
+    out
+}
+
+/// Fileset entries classified on their own, and the extensions of the
+/// first entry in the primary ISA's family.
+struct FilesetOutcome {
+    slices: Vec<ContainedArch>,
+    notes: Vec<Note>,
+    extensions: Option<Vec<ExtensionDetection>>,
+}
+
+/// Classify the entries of an `MH_FILESET`, at most
+/// [`formats::container::MAX_COMPONENTS`] of them.
+fn classify_fileset(
+    data: &[u8],
+    image: &formats::macho::Image,
+    primary: &ClassificationResult,
+    options: &ClassifierOptions,
+) -> FilesetOutcome {
+    let mut out = FilesetOutcome {
+        slices: Vec::new(),
+        notes: Vec::new(),
+        extensions: None,
+    };
+    let limit = formats::container::MAX_COMPONENTS;
+    // Entries of a truncated fileset that start past its end, reported once.
+    let mut beyond = Vec::new();
+    for entry in image.fileset.iter().take(limit) {
+        if entry.file_offset >= data.len() as u64 {
+            beyond.push(entry);
+            continue;
+        }
+        let component = match classify_fileset_entry(data, entry, options) {
+            Ok(component) => component,
+            Err(e) => {
+                out.notes
+                    .push(Note::warning(format!("{}: ISA unknown ({e})", entry.id)));
+                continue;
+            }
+        };
+        let isa = component.result.isa;
+        if out.extensions.is_none() && !is_unknown(isa) && same_family(isa, primary.isa) {
+            out.extensions = Some(component.extensions.clone());
+        }
+        out.slices.push(component_slice(
+            entry.id.clone(),
+            &component.result,
+            component.offset,
+            component.size,
+            component.extensions,
+        ));
+    }
+    if let Some(first) = beyond.first() {
+        out.notes.push(Note::warning(format!(
+            "{} of {} fileset entries start past the end of the input ({} B) and are not \
+             classified; the first is {} at 0x{:X}",
+            beyond.len(),
+            image.fileset.len(),
+            data.len(),
+            first.id,
+            first.file_offset
+        )));
+    }
+    if image.fileset.len() > limit {
+        out.notes.push(Note::warning(format!(
+            "{} further fileset entries were not classified (limit {limit})",
+            image.fileset.len() - limit
+        )));
+    }
+    out
+}
+
+/// A fileset entry classified from its own bytes.
+struct FilesetComponent {
+    result: ClassificationResult,
+    extensions: Vec<ExtensionDetection>,
+    /// File offset of the entry's header.
+    offset: usize,
+    /// The entry's header and load commands, in bytes.
+    size: usize,
+}
+
+/// Classify one fileset entry: its header names the ISA, and its
+/// instruction sections, located in the fileset's file coordinates,
+/// supply the code-pattern extensions (and the ISA, through the code
+/// model, when the header names none).
+fn classify_fileset_entry(
+    data: &[u8],
+    entry: &formats::macho::FilesetEntry,
+    options: &ClassifierOptions,
+) -> Result<FilesetComponent> {
+    let image = formats::macho::parse_fileset_entry(data, entry)?;
+    let header = image.header;
+    let bits = if header.is_64 { 64 } else { 32 };
+    let mut result = formats::macho::parse(&data[header.offset..], bits, !header.little_endian)?;
+    let code = image.code(data);
+    let code_bytes: &[u8] = code.as_ref().map_or(&[], |c| &c.bytes);
+    if is_unknown(result.isa) && !code_bytes.is_empty() {
+        if let (Ok(h), _) = heuristic(code_bytes, options) {
+            result = adopt_heuristic(&result, h);
+        }
+    }
+    let mut extensions: Vec<ExtensionDetection> = result
+        .extensions
+        .iter()
+        .map(|e| ExtensionDetection::from_format(&e.name, e.category))
+        .collect();
+    for found in code_extensions(code_bytes, result.isa, result.endianness, options) {
+        if !extensions.iter().any(|e| e.name == found.name) {
+            extensions.push(found);
+        }
+    }
+    let size = usize::try_from(header.size_with_commands())
+        .expect("parse_fileset_entry checked that the load commands lie in the input");
+    Ok(FilesetComponent {
+        result,
+        extensions,
+        offset: header.offset,
+        size,
+    })
 }
 
 /// Convert internal DetectedFormat to public FormatDetection.
