@@ -1,0 +1,30 @@
+# Synthetic unsigned nRF DFU init packet (protobuf text format, dfu.Packet)
+# for a combined SoftDevice and bootloader update, as pc-nrfutil v6.1.7
+# writes one without a signing key: sd_req 0xFFFE (pc-nrfutil's default),
+# sd_size and bl_size set, a SHA-256 hash of 32 bytes of 0x11 (not the hash
+# of any file) and a CRC boot validation per image.
+command {
+  op_code: INIT
+  init {
+    fw_version: 4294967295
+    hw_version: 52
+    sd_req: 65534
+    type: SOFTDEVICE_BOOTLOADER
+    sd_size: 152864
+    bl_size: 24576
+    app_size: 0
+    hash {
+      hash_type: SHA256
+      hash: "\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11"
+    }
+    is_debug: true
+    boot_validation {
+      type: VALIDATE_GENERATED_CRC
+      bytes: ""
+    }
+    boot_validation {
+      type: NO_VALIDATION
+      bytes: ""
+    }
+  }
+}

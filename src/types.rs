@@ -1112,6 +1112,13 @@ pub enum FileFormat {
     Jimage,
     /// JMOD module file
     Jmod,
+    // MCU update wrappers
+    /// USB DFU 1.1 file: firmware followed by the DFU suffix
+    DfuSuffix,
+    /// Silicon Labs Ember bootloader (EBL) file
+    SilabsEbl,
+    /// Nordic nRF5 DFU init packet (`.dat`)
+    NordicInitPacket,
 }
 
 impl fmt::Display for FileFormat {
@@ -1369,6 +1376,10 @@ impl fmt::Display for FileFormat {
             // Java runtime images
             FileFormat::Jimage => write!(f, "Java jimage"),
             FileFormat::Jmod => write!(f, "JMOD"),
+            // MCU update wrappers
+            FileFormat::DfuSuffix => write!(f, "USB DFU file"),
+            FileFormat::SilabsEbl => write!(f, "Silicon Labs EBL"),
+            FileFormat::NordicInitPacket => write!(f, "Nordic DFU init packet"),
         }
     }
 }

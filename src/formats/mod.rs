@@ -549,8 +549,10 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
-    // MCU update images: UF2 block magics, the DfuSe signature or the GBL
-    // header tag at offset 0.
+    // MCU update images: the DfuSe signature, a DFU suffix whose signature
+    // and CRC-32 match at the end of the file, UF2 block magics, or the GBL
+    // or EBL header tag at offset 0. Formats checked above keep claiming
+    // their files when a DFU suffix is appended.
     if let Some(layout) = mcu::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Mcu(layout),
@@ -954,8 +956,10 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
-    // Cypress .cyacd/.cyacd2 text has no magic: the header and every row
-    // must parse, and every .cyacd row checksum must match.
+    // Cypress .cyacd/.cyacd2 text and Nordic DFU init packets have no magic:
+    // the header and every row must parse, and every .cyacd row checksum
+    // must match; an init packet must parse completely as the documented
+    // protocol buffer.
     if let Some(layout) = mcu::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Mcu(layout),

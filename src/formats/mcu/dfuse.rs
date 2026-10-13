@@ -9,14 +9,15 @@
 //! Suffix". ST UM0391 itself was not available, so its wording is not
 //! relied on.
 //!
-//! The suffix CRC is the DFU convention: the reflected IEEE CRC-32 register
-//! (initial value `0xFFFFFFFF`) over every byte but the last four, stored
-//! without the final inversion (DFU 1.1 sample code, `_filecrc`). The file
-//! names no ISA: `idVendor`/`idProduct` are USB IDs, and element addresses
-//! are byte addresses in a memory the alternate setting selects.
+//! The suffix is read by [`super::dfu_suffix`]: its CRC is the DFU
+//! convention, the reflected IEEE CRC-32 register (initial value
+//! `0xFFFFFFFF`) over every byte but the last four, stored without the final
+//! inversion (DFU 1.1 sample code, `_filecrc`). The file names no ISA:
+//! `idVendor`/`idProduct` are USB IDs, and element addresses are byte
+//! addresses in a memory the alternate setting selects.
 
+use super::dfu_suffix::{self, Suffix, BCD_DFU_DFUSE, SUFFIX_SIZE};
 use super::*;
-use crate::formats::checksum;
 
 /// `szSignature` of the `DfuSe` prefix.
 const DFUSE_SIGNATURE: &[u8; 5] = b"DfuSe";
@@ -39,36 +40,13 @@ const TARGET_NAME_SIZE: usize = 255;
 /// Image element header: `dwElementAddress`, `dwElementSize`.
 const ELEMENT_HEADER_SIZE: usize = 8;
 
-/// DFU suffix: `bcdDevice`, `idProduct` (2), `idVendor` (4), `bcdDFU` (6),
-/// `ucDfuSignature` (8), `bLength` (11), `dwCRC` (12).
-const SUFFIX_SIZE: usize = 16;
-
-/// `ucDfuSignature` in file order (the specification's `44h 46h 55h`,
-/// stored reversed).
-const DFU_SIGNATURE: &[u8; 3] = b"UFD";
-
-/// `bcdDFU` of `DfuSe` 1.1a files; dfu-util parses only these.
-const BCD_DFU_DFUSE: u16 = 0x011a;
-
 /// Whether the file starts with the `DfuSe` signature.
 pub(super) fn has_magic(data: &[u8]) -> bool {
     data.starts_with(DFUSE_SIGNATURE)
 }
 
-/// The DFU suffix fields.
-struct Suffix {
-    /// `bcdDevice`.
-    device: u16,
-    /// `idProduct`.
-    product: u16,
-    /// `idVendor`.
-    vendor: u16,
-    /// `bLength`: suffix size in bytes, at least 16. A longer suffix holds
-    /// vendor fields before the standard ones.
-    size: usize,
-}
-
-/// Read the suffix at the end of the file and verify its CRC-32.
+/// Read the suffix at the end of the file, verify its CRC-32 and require
+/// the `DfuSe` `bcdDFU`; the prefix must fit before it.
 fn suffix(data: &[u8]) -> Result<Suffix> {
     if data.len() < PREFIX_SIZE + SUFFIX_SIZE {
         return Err(error(format!(
@@ -76,43 +54,16 @@ fn suffix(data: &[u8]) -> Result<Suffix> {
             data.len()
         )));
     }
-    let start = data.len() - SUFFIX_SIZE;
-    let fields = &data[start..];
-    if &fields[8..11] != DFU_SIGNATURE {
+    let suffix = dfu_suffix::read(data, data.len() - PREFIX_SIZE)?;
+    if suffix.bcd_dfu != BCD_DFU_DFUSE {
         return Err(error(format!(
-            "Missing DFU suffix signature at 0x{:X}",
-            start + 8
-        )));
-    }
-    let size = usize::from(fields[11]);
-    if size < SUFFIX_SIZE || size > data.len() - PREFIX_SIZE {
-        return Err(error(format!(
-            "Invalid DFU suffix bLength {size} B at 0x{:X}",
-            start + 11
-        )));
-    }
-    let crc_at = data.len() - 4;
-    let stored = le_u32(data, crc_at)?;
-    let computed = checksum::crc32_update(!0, &data[..crc_at]);
-    if stored != computed {
-        return Err(error(format!(
-            "Invalid DFU suffix CRC-32 0x{stored:08X} at 0x{crc_at:X}; computed 0x{computed:08X}"
-        )));
-    }
-    let bcd_dfu = le_u16(fields, 6)?;
-    if bcd_dfu != BCD_DFU_DFUSE {
-        return Err(error(format!(
-            "Unsupported DFU suffix bcdDFU 0x{bcd_dfu:04X} at 0x{:X}; DfuSe files use \
+            "Unsupported DFU suffix bcdDFU 0x{:04X} at 0x{:X}; DfuSe files use \
              0x{BCD_DFU_DFUSE:04X}",
-            start + 6
+            suffix.bcd_dfu,
+            suffix.bcd_dfu_offset()
         )));
     }
-    Ok(Suffix {
-        device: le_u16(fields, 0)?,
-        product: le_u16(fields, 2)?,
-        vendor: le_u16(fields, 4)?,
-        size,
-    })
+    Ok(suffix)
 }
 
 /// Parse a `DfuSe` file: each element is a load section at its address.
@@ -297,6 +248,7 @@ mod tests {
     /// zlib CRC-32 (CRC-32/JAMCRC check value).
     #[test]
     fn suffix_crc_is_the_uninverted_register() {
+        use crate::formats::checksum;
         assert_eq!(checksum::crc32_update(!0, b"123456789"), 0x340b_c6d9);
         assert_eq!(
             checksum::crc32_update(!0, b"123456789"),

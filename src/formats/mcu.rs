@@ -1,6 +1,8 @@
 //! MCU update images: UF2 block files, STM32 `DfuSe` files, Silicon Labs
-//! Gecko Bootloader (GBL v3) files and Cypress/Infineon `.cyacd`/`.cyacd2`
-//! bootloader text files.
+//! Gecko Bootloader (GBL v3) files, Cypress/Infineon `.cyacd`/`.cyacd2`
+//! bootloader text files, USB DFU files (firmware plus the DFU suffix),
+//! Silicon Labs Ember bootloader (EBL) files and Nordic nRF5 DFU init
+//! packets.
 //!
 //! Sources, by layout (details and pinned revisions in `docs/mcu.md`):
 //! - UF2: microsoft/uf2 `README.md` and `utils/uf2families.json` at commit
@@ -18,12 +20,22 @@
 //!   cyflash `cyacd.py`; `.cyacd2`: Infineon AN213924 rev *H, ".cyacd2 file
 //!   format", and `mtb-example-psoc4-dfu-host` `source/cybtldr_parse.c`
 //!   (see [`cyacd`]).
+//! - DFU suffix: USB DFU 1.1, Appendix B, and dfu-util v0.11
+//!   `src/dfu_file.c` (see [`dfu_suffix`]).
+//! - EBL: Silicon Labs UG103.6 rev. 1.6, chapter 5; Gecko SDK Suite v2.6
+//!   `ebl.h` and `micro-types.h`; `gecko_sdk` v4.5.1 legacy bootloader headers
+//!   (see [`ebl`]).
+//! - Nordic init packets: pc-nrfutil v6.1.7 `dfu-cc.proto`; nRF5 SDK 17.1.0
+//!   `dfu-cc.options` and `nrf_dfu_validation.c` (see [`nordic`]).
 //!
-//! Only UF2 names a target: its family ID (flag `0x2000`, the README's
+//! UF2 and EBL name a target. The UF2 family ID (flag `0x2000`, the README's
 //! "board family ID") is the format's own target field, mapped to the ISA of
-//! the family's application core. `DfuSe`, GBL and the Cypress formats carry no
-//! architecture field; USB IDs, silicon IDs and vendor names are reported as
-//! metadata and never become an ISA, so their payloads go to the code model.
+//! the family's application core; the EBL header's application address
+//! table names its platform, and platform 4 (`CortexM3`) is an Arm Cortex-M.
+//! `DfuSe`, GBL, the Cypress formats and DFU suffixes carry no architecture
+//! field; USB IDs, silicon IDs and vendor names are reported as metadata and
+//! never become an ISA, so their payloads go to the code model. Nordic init
+//! packets hold metadata only.
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::container::{Child, Container, Section, Target, MAX_COMPONENTS};
@@ -32,8 +44,11 @@ use crate::types::{Endianness, FileFormat, Isa};
 use std::borrow::Cow;
 
 mod cyacd;
+mod dfu_suffix;
 mod dfuse;
+mod ebl;
 mod gbl;
+mod nordic;
 mod uf2;
 
 /// A recognized MCU update image layout.
@@ -49,12 +64,27 @@ pub enum Layout {
     Cyacd,
     /// Infineon DFU SDK `.cyacd2` text (little-endian rows).
     Cyacd2,
+    /// USB DFU 1.1 file: firmware followed by the 16-byte DFU suffix.
+    DfuSuffix,
+    /// Silicon Labs Ember bootloader (EBL) file: a big-endian tag stream.
+    Ebl,
+    /// Nordic nRF5 DFU init packet (`.dat`): one `dfu.Packet` protocol
+    /// buffer.
+    NordicInitPacket,
 }
 
 impl Layout {
     /// Every layout, for exhaustive tests.
-    pub const ALL: &'static [Self] =
-        &[Self::Uf2, Self::Dfuse, Self::Gbl, Self::Cyacd, Self::Cyacd2];
+    pub const ALL: &'static [Self] = &[
+        Self::Uf2,
+        Self::Dfuse,
+        Self::Gbl,
+        Self::Cyacd,
+        Self::Cyacd2,
+        Self::DfuSuffix,
+        Self::Ebl,
+        Self::NordicInitPacket,
+    ];
 
     /// The reported file format.
     pub fn format(self) -> FileFormat {
@@ -63,6 +93,9 @@ impl Layout {
             Self::Dfuse => FileFormat::Dfuse,
             Self::Gbl => FileFormat::Gbl,
             Self::Cyacd | Self::Cyacd2 => FileFormat::Cyacd,
+            Self::DfuSuffix => FileFormat::DfuSuffix,
+            Self::Ebl => FileFormat::SilabsEbl,
+            Self::NordicInitPacket => FileFormat::NordicInitPacket,
         }
     }
 
@@ -74,13 +107,16 @@ impl Layout {
             Self::Gbl => "GBL v3 file",
             Self::Cyacd => ".cyacd bootloadable",
             Self::Cyacd2 => ".cyacd2 DFU image",
+            Self::DfuSuffix => "DFU 1.1 file",
+            Self::Ebl => "EBL v2 file",
+            Self::NordicInitPacket => "nRF DFU init packet",
         }
     }
 
-    /// The Cypress text layouts have no magic and are recognized from
-    /// complete structure.
+    /// The Cypress text layouts and Nordic init packets have no magic and
+    /// are recognized from complete structure.
     pub fn is_weak(self) -> bool {
-        matches!(self, Self::Cyacd | Self::Cyacd2)
+        matches!(self, Self::Cyacd | Self::Cyacd2 | Self::NordicInitPacket)
     }
 
     /// Prefix of the layout's metadata keys.
@@ -90,30 +126,42 @@ impl Layout {
             Self::Dfuse => "dfuse",
             Self::Gbl => "gbl",
             Self::Cyacd | Self::Cyacd2 => "cyacd",
+            Self::DfuSuffix => "dfu",
+            Self::Ebl => "ebl",
+            Self::NordicInitPacket => "nordic",
         }
     }
 }
 
-/// Strong recognition: the UF2 start magics, the `DfuSe` signature, or the
-/// GBL header tag at offset 0. A damaged file with one of these is a parse
-/// error, not raw code.
+/// Strong recognition: the `DfuSe` signature, a DFU suffix whose signature
+/// and CRC-32 match, the UF2 start magics, the GBL header tag, or an EBL
+/// header or encryption header tag with its signature. A damaged file with
+/// one of these is a parse error, not raw code.
 pub fn detect(data: &[u8]) -> Option<Layout> {
-    if uf2::has_magic(data) {
-        Some(Layout::Uf2)
-    } else if dfuse::has_magic(data) {
+    if dfuse::has_magic(data) {
         Some(Layout::Dfuse)
+    } else if dfu_suffix::is_valid(data) {
+        // After DfuSe, whose files end in the same suffix. The suffix sits at
+        // the end of any firmware, so it is checked before the magics at
+        // offset 0 that the firmware itself may start with.
+        Some(Layout::DfuSuffix)
+    } else if uf2::has_magic(data) {
+        Some(Layout::Uf2)
     } else if gbl::has_magic(data) {
         Some(Layout::Gbl)
+    } else if ebl::has_magic(data) {
+        Some(Layout::Ebl)
     } else {
         None
     }
 }
 
-/// Weak recognition of the magic-less `.cyacd` and `.cyacd2` text layouts:
-/// the header and every row must parse, and every `.cyacd` row checksum
-/// must match.
+/// Weak recognition of the magic-less layouts: `.cyacd` and `.cyacd2` text
+/// (the header and every row must parse, and every `.cyacd` row checksum
+/// must match) and Nordic init packets (the whole protocol buffer must
+/// parse with the documented fields and hold what the bootloader requires).
 pub fn detect_weak(data: &[u8]) -> Option<Layout> {
-    cyacd::detect(data)
+    cyacd::detect(data).or_else(|| nordic::detect(data).then_some(Layout::NordicInitPacket))
 }
 
 /// Parse `data` as the given layout.
@@ -121,14 +169,18 @@ pub fn detect_weak(data: &[u8]) -> Option<Layout> {
 /// # Errors
 ///
 /// [`ClassifierError::McuImageParseError`] for a truncated or inconsistent
-/// block, prefix, tag, row or checksum, and [`ClassifierError::PayloadLimit`]
-/// when the extracted bytes exceed [`MAX_PAYLOAD`].
+/// block, prefix, suffix, tag, row, protocol buffer field or checksum, and
+/// [`ClassifierError::PayloadLimit`] when the extracted bytes exceed
+/// [`MAX_PAYLOAD`].
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     match layout {
         Layout::Uf2 => uf2::parse(data),
         Layout::Dfuse => dfuse::parse(data),
         Layout::Gbl => gbl::parse(data),
         Layout::Cyacd | Layout::Cyacd2 => cyacd::parse(data, layout),
+        Layout::DfuSuffix => dfu_suffix::parse(data),
+        Layout::Ebl => ebl::parse(data),
+        Layout::NordicInitPacket => nordic::parse(data),
     }
 }
 
@@ -273,8 +325,12 @@ mod tests {
     #[test]
     fn layouts_report_their_formats_and_strength() {
         for &layout in Layout::ALL {
-            assert_eq!(layout.is_weak(), layout.format() == FileFormat::Cyacd);
-            assert!(!layout.label().is_empty());
+            let magic_less = matches!(
+                layout.format(),
+                FileFormat::Cyacd | FileFormat::NordicInitPacket
+            );
+            assert_eq!(layout.is_weak(), magic_less);
+            assert_ne!(layout.label(), "");
         }
         assert_eq!(detect(b"DfuSe\x01"), Some(Layout::Dfuse));
         assert_eq!(detect(&[0xeb, 0x17, 0xa6, 0x03]), Some(Layout::Gbl));

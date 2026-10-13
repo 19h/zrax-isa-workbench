@@ -793,6 +793,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::XboxDvd => "Xbox DVD (XDVDFS)",
         FileFormat::Jimage => "Java jimage",
         FileFormat::Jmod => "JMOD",
+        FileFormat::DfuSuffix => "USB DFU file",
+        FileFormat::SilabsEbl => "Silicon Labs EBL",
+        FileFormat::NordicInitPacket => "Nordic DFU init packet",
     }
 }
 

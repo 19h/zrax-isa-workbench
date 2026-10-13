@@ -112,6 +112,7 @@ const FORMAT_NAMES = {
   iso9660: 'ISO 9660',
   gamecubedisc: 'GameCube disc', wiidisc: 'Wii disc', xboxdvd: 'Xbox DVD (XDVDFS)',
   jimage: 'Java jimage', jmod: 'JMOD',
+  dfusuffix: 'USB DFU file', silabsebl: 'Silicon Labs EBL', nordicinitpacket: 'Nordic DFU init packet',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

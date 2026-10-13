@@ -1,0 +1,31 @@
+# Synthetic signed nRF DFU init packet (protobuf text format, dfu.Packet)
+# for thumbv7em.text.bin, with the fields pc-nrfutil v6.1.7 writes for an
+# application. The hash is the SHA-256 of thumbv7em.text.bin in reverse
+# byte order, as pc-nrfutil stores it. The signature is 64 bytes of 0x5A,
+# not a real ECDSA signature.
+signed_command {
+  command {
+    op_code: INIT
+    init {
+      fw_version: 1
+      hw_version: 52
+      sd_req: 256
+      sd_req: 257
+      type: APPLICATION
+      sd_size: 0
+      bl_size: 0
+      app_size: 5484
+      hash {
+        hash_type: SHA256
+        hash: "\xa1\x6a\x60\xa8\x1b\xcc\xb7\xf7\x80\xfb\xe4\x34\xf4\xa5\xdd\x04\xb6\x31\x3f\xa4\xe4\x91\x4b\x0f\xb3\xf6\xd7\x98\xf7\xc5\x77\x05"
+      }
+      is_debug: false
+      boot_validation {
+        type: VALIDATE_GENERATED_CRC
+        bytes: ""
+      }
+    }
+  }
+  signature_type: ECDSA_P256_SHA256
+  signature: "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+}

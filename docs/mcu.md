@@ -1,13 +1,16 @@
 # MCU update images
 
-`src/formats/mcu.rs` and its submodules parse four microcontroller update
+`src/formats/mcu.rs` and its submodules parse seven microcontroller update
 formats into the shared container model
 ([compressed streams and the container model](compressed-streams.md)): UF2
-block files, STM32 DfuSe files, Silicon Labs Gecko Bootloader (GBL v3) files
-and Cypress/Infineon `.cyacd`/`.cyacd2` text. Only UF2 names a target, through
-its family ID. The other three formats carry USB IDs, product IDs or silicon
-IDs, which identify a device, not an instruction set, so their payloads go to
-the code model.
+block files, STM32 DfuSe files, Silicon Labs Gecko Bootloader (GBL v3) files,
+Cypress/Infineon `.cyacd`/`.cyacd2` text, USB DFU files (any firmware followed
+by the DFU suffix), Silicon Labs Ember bootloader (EBL) files and Nordic nRF5
+DFU init packets. UF2 names a target through its family ID, and EBL through
+the platform field of the application address table in its header. The other
+formats carry USB IDs, product IDs, silicon IDs or hardware versions, which
+identify a device, not an instruction set, so their payloads go to the code
+model; Nordic init packets carry metadata only.
 
 ## Implemented layouts
 
@@ -18,6 +21,9 @@ the code model.
 | `gbl` | `GBL v3 file`: little-endian tag stream from the header tag to the end tag; tag order and single-occurrence rules of the reference parser; program, erase-and-program, program LZ4 and program LZMA tags are load sections | Strong: header tag `0x03A617EB` at 0 | None. Gecko bootloaders run on EFR32/EFM32 parts, but a vendor is not evidence (AGENTS.md 3.1); the code model decides | gecko_sdk v4.5.1 (`8a2efd2c`) `platform/bootloader/parser/gbl/btl_gbl_format.h`, `btl_gbl_format.c`, `btl_gbl_parser.c`; simplicity_sdk v2025.6.3 (`8ddb6e57`) for the delta tags; Silicon Labs "Gecko Bootloader File Format" (docs.silabs.com) |
 | `cyacd` | `.cyacd bootloadable`: 12-hex-digit header (silicon ID, revision, checksum type), `:` rows of array ID, row number, length, data and checksum | Weak: no magic. The header and every row must parse and every row checksum must match | None. The silicon ID names a device; the code model decides | Cypress Bootloader Host `cybtldr_parse.c`, `cybtldr_api2.c` (2011-2012, as mirrored in SCSI2SD `7ae322c1`); cyflash `cyacd.py` (`6d742d67`) |
 | `cyacd` | `.cyacd2 DFU image`: 24-hex-digit header starting with file version `01` (silicon ID, revision, checksum type, app ID, product ID), `@APPINFO`/`@EIV` rows, `:` rows of byte address and data | Weak: as above; rows carry no checksum | None. Silicon and product IDs are metadata | Infineon AN213924 rev *H, ".cyacd2 file format"; Infineon `mtb-example-psoc4-dfu-host` (`65115d86`) `source/cybtldr_parse.c` |
+| `dfusuffix` | `DFU 1.1 file`: firmware, optional vendor suffix fields, then `bcdDevice`, `idProduct`, `idVendor`, `bcdDFU` `0x0100`, `UFD`, `bLength`, `dwCRC`; the firmware is one child | Strong once valid: `UFD` at `len - 8` and a matching `dwCRC` (the two criteria Appendix B gives the host). Checked after the `DfuSe` prefix and before the UF2, GBL and EBL magics | None. USB IDs are metadata; the child is classified on its own bytes | [USB DFU 1.1](https://www.usb.org/sites/default/files/DFU_1.1.pdf) (2004-08-05), Appendix B and its sample program; dfu-util v0.11 `src/dfu_file.c`, `src/suffix.c`, `src/dfuse.c` |
+| `silabsebl` | `EBL v2 file`: big-endian tag stream; header tag `0x0000` (version, signature `0xE350`, `flashAddr`, `aatCrc`, up to 128 AAT bytes), program `0xFE01` and erase-then-program `0xFD03` tags as load sections, manufacturing program `0x02FE` and metadata `0xF608` tags as opaque children, end tag `0xFC04`; encrypted files: `0xFB05`, `0xFA06`, `0xF907` data, `0xF709` MAC, end | Strong: tag `0x0000` at 0 with a header length of 12-140 B, version major `0x02` and `0xE350` at 6, or tag `0xFB05` at 0 with length 6 and `0xE350` at 8. The header tag ID is zero, which many files start with, so the signature alone would be a 16-bit key | The AAT's `platInfo` byte (type `0x0AA7` tables only): platform 4 (`CortexM3`, also written by EFR32 builds) is `arm`, 32-bit, little-endian; any other platform names no ISA and the code model decides | Silicon Labs UG103.6 rev. 1.6, chapter 5; Gecko SDK Suite v2.6 `platform/base/hal/micro/cortexm3/common/ebl.h`, `bootloader-ccm.h`, `platform/base/hal/micro/micro-types.h` (vendor files read from the `tomyqg/gecko_sdk_suite` mirror at `095c3631`); gecko_sdk v4.5.1 (`8a2efd2c`) `platform/service/legacy_hal/inc/bootloader-common.h`, `platform/bootloader/api/ember_btl_interface.h`, `ember_btl_common.c`, `sl_legacy_bootloader_device_info.h.jinja`; Simplicity Commander "EBL Commands" |
+| `nordicinitpacket` | `nRF DFU init packet`: one `dfu.Packet` protocol buffer (proto2) with a `command` or `signed_command`, the `InitCommand` (firmware and hardware versions, `sd_req`, type, sizes, hash, debug flag, boot validations) and the signature | Weak: no magic. At most 512 B, first byte `0x0A` or `0x12`, and the whole buffer must parse with the documented field numbers and wire types within the bootloader's field limits, with exactly one command, an `InitCommand`, a hash and the size its type requires | None; metadata only (`hw_version` names a device family) | pc-nrfutil v6.1.7 (`804bc0ff`) `nordicsemi/dfu/dfu-cc.proto`, `init_packet_pb.py`, `package.py`; nRF5 SDK 17.1.0 `components/libraries/bootloader/dfu/` `dfu-cc.proto`, `dfu-cc.options`, `nrf_dfu_types.h`, `nrf_dfu_validation.c` (read from the `bluerange-io/bluerange-mesh` mirror at `7131ad13`, `sdk/sdk17_1`) |
 
 ### UF2 family table
 
@@ -81,6 +87,25 @@ from the field alone.
   `.cyacd2` rows on consecutive lines with contiguous byte addresses merge
   into one section. Both carry the `ASCII hex` transform; stored ranges are
   the row text.
+- A DFU file has one child, `DFU firmware`: the file without its last
+  `bLength` bytes ("In no case is the DFU suffix ever sent to the device"),
+  at offset 0. It is classified on its own bytes, so a GBL, UF2 or EBL file
+  inside reports its own format and ISA, and raw code goes to the code model.
+  Vendor fields of a suffix longer than 16 B are noted, not interpreted. The
+  `DfuSe` layout reads its suffix through the same code
+  (`mcu::dfu_suffix::read`).
+- EBL program and erase-then-program tags are load sections at their
+  `flashAddr`, labelled `Load section <n>`. The header's AAT is not a section
+  (the bootloader writes it to `flashAddr` from the header); its reset vector
+  is reported as the entry point. Manufacturing program tags (customer
+  information block or user data) are opaque children labelled
+  `Manufacturing data at <address>`, metadata tags opaque `Metadata`
+  children, and in an encrypted file every encrypted data tag is an opaque
+  child and the container is opaque.
+- A Nordic init packet is a metadata-only container: no sections, no
+  children, unknown ISA with confidence 0. Inside an nRF DFU ZIP the `.dat`
+  member is recognized (the ZIP parser lists recognized members) while the
+  raw `.bin` is not.
 
 ## Wire units and byte order
 
@@ -92,9 +117,18 @@ GBL `flashStartAddress` is a byte address. `.cyacd` silicon ID, row number
 and data length are big-endian, and section addresses are flash row numbers
 within the array (the row size and array base are not encoded, so they are
 not converted to byte addresses). `.cyacd2` header fields and row addresses
-are little-endian, and row addresses are byte addresses. Header byte order is
+are little-endian, and row addresses are byte addresses. DFU suffix fields
+are little-endian in file order (the specification's "end-for-end swapped"
+suffix), and `bLength` counts bytes. EBL tag IDs, lengths and data fields are
+big-endian ("network (big) endian order", `ebl.h`), the AAT fields inside the
+header are little-endian ("native (little) endian order"), and the end tag's
+CRC is little-endian; `flashAddr` is a flash byte address. Nordic init
+packets are protocol buffers: varints in 7-bit groups, sizes in bytes; the
+SHA-256 hash is stored in reverse byte order (pc-nrfutil
+`calculate_sha256_hash`) and reported in file order. Header byte order is
 never reported as code byte order; a UF2 family target fixes the code byte
-order of the family's core.
+order of the family's core, and the EBL `CortexM3` platform fixes
+little-endian, the AAT's native order.
 
 ## Validation and resource bounds
 
@@ -111,7 +145,12 @@ order of the family's core.
 | GBL end tag | Length 4; `gblCrc` equals the zlib CRC-32 of every byte before it (the reference parser's residue `0xDEBB20E3`); only `0x00`/`0xFF` padding may follow |
 | `.cyacd` | Printable ASCII lines ending in LF or CRLF, no empty lines, even hex digit counts; header exactly 12 digits with checksum type 0 or 1; rows `N + 6` bytes, `N > 0`, checksum the two's complement of the 8-bit byte sum; no repeated (array, row) pair; at least one row |
 | `.cyacd2` | Header exactly 24 digits, file version 1, checksum type 0 or 1; rows more than 4 bytes; no overlapping byte ranges; `@APPINFO:0x<start>,0x<length>` (at most 8 digits each) and `@EIV:<hex>` at most once each; unknown `@` rows rejected |
-| Payload and components | Load sections and decoded data at most 64 MiB (`MAX_PAYLOAD`); load sections and UF2 per-family regions capped at 4096 (`MAX_COMPONENTS`), the rest counted in a note; GBL children capped at 4096 |
+| DFU suffix | Recognized only when `UFD` sits at `len - 8` and `dwCRC` (CRC-32 register, initial `0xFFFFFFFF`, no final inversion, over every byte but the last four) matches; then `bLength` from 16 B to `len - 1` B (at least one byte of firmware) and `bcdDFU` `0x0100`. `0x011A` without the `DfuSe` prefix is `Missing DfuSe prefix` (dfu-util refuses to send such a file raw); other values are `Unsupported`. A 16-byte file is `Truncated DFU file` |
+| EBL tags | First tag the header (or the encryption header); every tag inside the file; unknown IDs rejected; payload sizes as `ebl.h` lists them (header 12-140 B, program tags at least 6 B with an even data length, metadata at least 1 B, end exactly 4 B, encryption header exactly 6 B, encryption init at least 16 B, encrypted data at least 4 B, MAC exactly 16 B); order: header, then program, manufacturing, metadata tags, then end; or encryption header, encryption init, encrypted data, MAC, end |
+| EBL header | Signature `0xE350`; version major `0x02` (`EBL_MAJOR_VERSION`, mask `0xFF00`); encryption header signature `0xE350`; `aatCrc` reported, not verified |
+| EBL end tag | `eblCrc` equals the zlib CRC-32 of every byte before it (the residue `0xDEBB20E3` of UG103.6 Table 5.2); only `0x00`/`0xFF` padding may follow |
+| Nordic init packet | At most 512 B (`INIT_COMMAND_MAX_SIZE`); wire types 0 and 2 only; field number 0, unknown fields, wrong wire types, repeated singular fields, varints over 64 bits, `uint32` values over 32 bits, enum values outside the `.proto` and booleans other than 0/1 rejected; hash at most 32 B, signature at most 64 B, `sd_req` at most 16 values (packed or not), boot validations at most 3 with at most 64 B each (`dfu-cc.options`); required fields of `Hash`, `BootValidation`, `SignedCommand` and `ResetCommand` present; exactly one of `command` and `signed_command`; `op_code` `INIT` when present; an `InitCommand`, a hash and a non-zero firmware size for the type (`update_data_size_get`) |
+| Payload and components | Load sections and decoded data at most 64 MiB (`MAX_PAYLOAD`); load sections and UF2 per-family regions capped at 4096 (`MAX_COMPONENTS`), the rest counted in a note; GBL and EBL children capped at 4096 |
 
 The `.cyacd` header's checksum type selects the checksum of the bootloader's
 command packets (type 0: 16-bit two's complement of the byte sum; type 1:
@@ -135,6 +174,14 @@ checksum is the one-byte sum whatever the type.
 | M9 | GBL program LZ4 tags hold one standard LZ4 block stream | `btl_decompress_lz4.c` starts in the token state; a Commander LZ4 GBL that does not decode would be listed as opaque with a note |
 | M10 | A non-empty `@EIV` row means the `.cyacd2` data rows are encrypted | Generate `.cyacd2` with and without encryption in cymcuelftool |
 | M11 | `.cyacd` headers are exactly 6 bytes | cyflash requires 6; the Cypress host accepts 5; a 10-digit header would not be recognized |
+| M12 | Plain DFU files use `bcdDFU` `0x0100` | The specification gives `0100h` and dfu-suffix writes `0x0100` or `0x011A`; a tool writing `0x0110` would produce an `Unsupported` error. Run `dfu-suffix -a` on a binary (not available here) and parse it |
+| M13 | The DFU suffix may wrap any firmware, so it is checked before the MCU magics at offset 0 | A UF2 or GBL file with a valid suffix becomes a DFU file with that child; formats detected before the MCU block (ELF, PE, Mach-O and the other executable formats, automotive containers, option ROMs, FPGA bitstreams) keep claiming files that carry a suffix (`dfu_suffix_firmware_with_a_header_reports_its_own_format`) |
+| M14 | EBL platform 4 (`CortexM3`) means Arm Cortex-M code, and no other platform value has an established ISA | `micro-types.h` lists micros 1-34 under platform 4 (EM3xx and EFR32), and EFR32 builds set `SL_PLAT 4`; an EBL whose code disagrees produces the "Container names arm" warning |
+| M15 | The AAT fields are those of `HalAppAddressTableType` with 32-bit pointers, read only for type `0x0AA7` | Commander's `ebl print` shows the same fields (top of stack, reset vector, type `0x0AA7`); compare on a Commander-generated EBL (not available here) |
+| M16 | EBL program data length is even and tags have no padding between them | `eblProg3xx_t` says "must be multiple of 2"; Commander's example tags are 1924, 2052 and 1772 B long; an odd-length tag from a real tool would be rejected |
+| M17 | The EBL header holds 12 to 140 B | `ebl.h` minimum 12, `AAT_MAX_SIZE` 128; Commander and pygbl write 140; a longer header would be rejected |
+| M18 | Nordic init packets always carry a hash and the firmware size for their type | pc-nrfutil `_validate` and the nRF5 SDK bootloader require the size; the SDK always compares the hash. A packet from another generator without them is not recognized |
+| M19 | Unknown protobuf fields do not occur in init packets | Strict for weak recognition; a newer `dfu-cc.proto` with added fields would not be recognized until the field table is extended |
 
 ## Known boundaries
 
@@ -151,7 +198,16 @@ checksum is the one-byte sum whatever the type.
 | `.cyacd`/`.cyacd2` truncation at a line boundary | Undetectable (no row count or end record); `.cyacd` rows cut inside are rejected by their length and checksum, `.cyacd2` rows have neither |
 | `.cyacd`/`.cyacd2` comment lines (`#`) | Not accepted; support in the Infineon host is unclear |
 | `.cyacd` silicon ID to device family | Not mapped; the encodings are not established from a primary source |
-| Plain DFU 1.1 files (raw firmware plus suffix, no `DfuSe` prefix), TI Stellaris and NXP LPC DFU prefixes | Not recognized |
+| TI Stellaris and NXP LPC DFU prefixes (dfu-util `probe_prefix`) | Not split off; the DFU firmware child includes the prefix bytes |
+| DFU suffix on a file whose format is detected before the MCU block | That format claims the file (an ELF with a suffix is an ELF); the suffix is not reported |
+| DFU suffix `idVendor`/`idProduct` to device | Not mapped; reported as metadata |
+| DFU files inside archives | Archive members are first checked on their first 4 KiB (`RECOGNITION_PREFIX`), which a suffix at the end of a larger file is not part of; such a member is listed only when its firmware itself starts with a recognized format |
+| EBL `aatCrc` and the header's `imageCrc` | Reported (`aatCrc`) and not verified: UG103.6 describes them in words, and the exact byte ranges and storage order were not confirmed against a real file |
+| EBL AES-CCM encryption and MAC | Opaque; the MAC is reported as present and not verified |
+| EBL tag size limit `EBL_MAX_TAG_SIZE` (2080 B) | Not enforced; it bounds the bootloader's tag buffer, and the evidence that it bounds files was not established |
+| EBL platforms other than 4 (XAP2b, C8051, AVR test builds) | Reported by name; no ISA is mapped |
+| Nordic init packet signatures and the firmware hash | Reported as present and not verified; the image is a separate file, and the public key is in the bootloader |
+| Init packets of other Nordic DFU generations (legacy nRF5 SDK DFU, nRF Connect SDK packages) | Not recognized; their layouts were not researched here |
 | DfuSe alternate settings | The memory each alternate setting selects (flash, option bytes, OTP) is not encoded, so all elements are load sections |
 | Weak recognition from a prefix (`container::is_recognized`) | `.cyacd` text cut inside a row is not recognized, so archive members are only recognized whole |
 
@@ -187,9 +243,50 @@ On 2026-10-12 (macOS AArch64, rustc 1.100.0-nightly `f248f4038`
   recognized, their DFU CRC verified, and classified as `arm`, `risc_v32`
   and `xtensa` as the family IDs name.
 
+On 2026-10-13 (macOS AArch64, rustc 1.100.0-nightly `f248f4038`
+2026-09-05, Node 25.8.1), for the DFU suffix, EBL and Nordic init packet
+layouts:
+
+- `tests/mcu_wrappers.rs`: 16 tests passed. They cover DFU files around raw
+  Thumb code, a GBL file and an ELF (which stays an ELF), vendor suffix
+  fields and wildcard IDs, CRC, `bLength` and `bcdDFU` defects, `DfuSe`
+  files keeping their layout; EBL files with the `CortexM3` platform (target,
+  entry point, section offsets), other platforms and AAT types left to the
+  code model, a platform/code disagreement, manufacturing and metadata tags
+  as opaque children, encrypted files (opaque, MAC not verified, order),
+  CRC, order, unknown-tag, length, version and padding checks; the two
+  protoc-encoded init packets, init packets built from the wire layout
+  (field order, unpacked `sd_req`, every rejection rule), a stored nRF DFU
+  ZIP whose `.dat` member is listed; every-prefix truncation sweeps and
+  every-byte mutation sweeps (`0x00`, `0xFF`, bit flip) for each layout.
+- Unit tests: 8 new in `src/formats/mcu/dfu_suffix.rs`, `ebl.rs` and
+  `nordic.rs` (21 in `src/formats/mcu*` in all), passed.
+- `web/tests/mcu-wrappers.test.mjs`: 4 tests passed (classification through
+  `/pkg/zrax.js` and `/dist/zrax.js`; the workbench at `/web/` and
+  `/dist/`).
+- `DfuSe` now reads its suffix through `dfu_suffix::read`. A differential
+  snapshot over 8,044 inputs (`DfuSe` files with `bcdDFU` `0x011A` and
+  `0x0100`, a GBL and a UF2 file, every truncation and every single-byte
+  mutation; detection, parser `Debug` output and payload JSON, hashed)
+  was identical before and after the change.
+- The whole native suite passed (1,501 tests, 6 ignored), and the whole
+  browser suite passed (176 tests, 4 skipped for D10/RX113 firmware that is
+  not in the repository).
+- After integration with the partition table, FAT, ISO 9660, console disc
+  and Java image families on the same day, the whole native suite passed
+  (1,737 tests, 6 ignored). IDA's test corpus (4,621 files) classified as
+  before. A scan of 82,323 local files (macOS system, Homebrew and
+  toolchain files up to 8 MiB) found no EBL or init packet, and six USB
+  DFU files: the Broadcom BCM2070x Bluetooth firmware in
+  `/usr/share/firmware/bluetooth`, whose suffix CRC verified and whose
+  firmware child the code model classified as Arm Thumb.
+
 All committed fixtures are synthetic: `tests/fixtures/mcu` holds machine code
-compiled from `tests/fixtures/transforms/sample.c` (see its README), and the
-containers are built in the tests from the documented layouts. GBL files
-from Simplicity Commander, `.cyacd`/`.cyacd2` files from PSoC Creator or
-cymcuelftool, and esptool or picotool UF2 files were not available, so the
-behavior on those generators' output is not verified.
+compiled from `tests/fixtures/transforms/sample.c` and two init packets
+encoded by protoc from committed text inputs (see its README), and the other
+containers are built in the tests from the documented layouts. GBL and EBL
+files from Simplicity Commander, `.cyacd`/`.cyacd2` files from PSoC Creator
+or cymcuelftool, esptool or picotool UF2 files, dfu-suffix output and nrfutil
+packages were not available, so the behavior on those generators' output is
+not verified. The EBL layout in particular was built from vendor headers and
+documentation only; no real EBL file was parsed.

@@ -63,7 +63,8 @@ pub enum Kind {
     ZxTape(zxtape::Layout),
     /// An FPGA configuration bitstream.
     Bitstream(bitstream::Layout),
-    /// An MCU update image (UF2, `DfuSe`, GBL, `.cyacd`).
+    /// An MCU update image (UF2, `DfuSe`, GBL, `.cyacd`, DFU suffix, EBL,
+    /// Nordic init packet).
     Mcu(mcu::Layout),
     /// A system-on-chip boot ROM image (Allwinner, Rockchip, `MediaTek`,
     /// Qualcomm).

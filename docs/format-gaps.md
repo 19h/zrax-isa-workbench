@@ -120,7 +120,10 @@ of this section is now implemented.
 Status 2026-10-13: every row of this section is implemented: UF2 (family ID
 mapped to ISA, reassembly by `targetAddr`, one child per family), STM32 DfuSe
 (suffix CRC-32 verified), Silicon Labs GBL (CRC-32 verified; encryption opaque,
-signatures not verified) and Cypress `.cyacd`/`.cyacd2` (weak); see [MCU update
+signatures not verified) and Cypress `.cyacd`/`.cyacd2` (weak); USB DFU 1.1
+suffix files (CRC-32 verified, firmware child), Silicon Labs EBL (end CRC
+verified; AAT platform field; encryption opaque, MAC not verified) and Nordic
+nRF5 DFU init packets (weak, metadata only) followed; see [MCU update
 images](mcu.md); Allwinner eGON/TOC0, Rockchip RKFW/RKAF/RKBOOT and idbloader,
 MediaTek preloader headers and legacy Qualcomm MBN (SBL and 40-byte v3); see
 [SoC loaders](socboot2.md). Apple IMG4/IM4P (payloads decoded; KBAG payloads
