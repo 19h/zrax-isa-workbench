@@ -11,14 +11,40 @@
 //! - GBS (Game Boy Sound System): `gbsformat.txt` by Scott Worley (2001),
 //!   header `GBS`, version 1, 0x70 bytes, little-endian. CPU: the Game Boy's
 //!   Sharp SM83, modelled by the code model as a Z80-family variant.
+//! - PSF family (`PSF` plus a platform version byte): see [`psf`] and
+//!   [`psf2`]. Neill Corlett, "PSF specification v1.6" (16 March 2006), and
+//!   the per-platform documents for USF, GSF, SNSF, 2SF and NCSF.
+//! - HES (PC Engine): Mamiya, "HES Music Format Spec V1.00"; see [`hes`].
+//! - KSS (MSX, Sega Master System and Game Gear): Mamiya, "KSS Music Format
+//!   Spec V1.03", and libkss `kssxspec.md` for `KSSX`; see [`kss`].
+//! - SAP (Atari 8-bit): the ASAP project's "SAP file format
+//!   specification"; see [`sap`].
+//! - AY (`ZXAYEMUL`, ZX Spectrum and Amstrad CPC): the AY-3-8910/12
+//!   Emulator's "AY" format description by Sergey Bulba; see [`ay`].
+//! - SNDH (Atari ST) and Pack-Ice (`ICE!`) packed files: "SNDH file
+//!   structure, Revision 2.2"; see [`sndh`].
 //!
-//! The file format names the platform, and with it the CPU, so the target is
-//! explicit, as for SNES SPC files.
+//! Source revisions are pinned in `docs/chiptune.md` and
+//! `docs/chiptune-sound-programs.md`. The file format names
+//! the platform, and with it the CPU, so the target is explicit, as for SNES
+//! SPC files. The PSF version byte is such a platform field; PSF2 and NCSF
+//! name no CPU and leave the ISA to their members.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::container::{Container, Target};
+use crate::formats::checksum;
+use crate::formats::compressed::{self, Codec};
+use crate::formats::container::{self, Child, Container, Section, Target};
+use crate::formats::MAX_PAYLOAD;
 use crate::types::{Endianness, FileFormat, Isa};
 use std::borrow::Cow;
+
+mod ay;
+mod hes;
+mod kss;
+mod psf;
+mod psf2;
+mod sap;
+mod sndh;
 
 /// NSF header magic and size.
 const NSF_MAGIC: &[u8; 5] = b"NESM\x1a";
@@ -99,6 +125,22 @@ pub enum Layout {
     Sid,
     /// Game Boy Sound System tune.
     Gbs,
+    /// Portable Sound Format file for the platform its version byte names.
+    Psf(PsfPlatform),
+    /// PC Engine HES tune (`HESM`).
+    Hes,
+    /// KSS tune with the original `KSCC` header.
+    Kss,
+    /// KSS tune with the extended `KSSX` header.
+    Kssx,
+    /// Atari 8-bit SAP tune.
+    Sap,
+    /// ZX Spectrum or Amstrad CPC AY tune of type `EMUL` (`ZXAYEMUL`).
+    Ay,
+    /// Atari ST SNDH tune.
+    Sndh,
+    /// Pack-Ice (`ICE!`) packed file.
+    PackIce,
 }
 
 impl Layout {
@@ -108,6 +150,13 @@ impl Layout {
             Self::Nsf | Self::Nsfe => FileFormat::Nsf,
             Self::Sid => FileFormat::Sid,
             Self::Gbs => FileFormat::Gbs,
+            Self::Psf(_) => FileFormat::Psf,
+            Self::Hes => FileFormat::Hes,
+            Self::Kss | Self::Kssx => FileFormat::Kss,
+            Self::Sap => FileFormat::Sap,
+            Self::Ay => FileFormat::AyTune,
+            Self::Sndh => FileFormat::Sndh,
+            Self::PackIce => FileFormat::PackIce,
         }
     }
 
@@ -118,12 +167,94 @@ impl Layout {
             Self::Nsfe => "NES Sound Format (NSFe)",
             Self::Sid => "Commodore 64 SID tune",
             Self::Gbs => "Game Boy Sound System",
+            Self::Psf(platform) => platform.label(),
+            Self::Hes => "PC Engine HES (HuC6280)",
+            Self::Kss => "KSS (KSCC header)",
+            Self::Kssx => "KSS (KSSX header)",
+            Self::Sap => "Atari 8-bit SAP",
+            Self::Ay => "AY (ZXAYEMUL)",
+            Self::Sndh => "Atari ST SNDH",
+            Self::PackIce => "Pack-Ice packed file",
         }
     }
 
     /// Every layout carries a magic and is validated before recognition.
     pub fn is_weak(self) -> bool {
         false
+    }
+}
+
+/// The platform a PSF version byte names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PsfPlatform {
+    /// 0x01: `PlayStation` (PSF1).
+    PlayStation,
+    /// 0x02: `PlayStation` 2 (PSF2).
+    PlayStation2,
+    /// 0x11: Sega Saturn (SSF).
+    Saturn,
+    /// 0x12: Sega Dreamcast (DSF).
+    Dreamcast,
+    /// 0x13: Sega Genesis, reserved without a published layout.
+    Genesis,
+    /// 0x21: Nintendo 64 (USF).
+    Nintendo64,
+    /// 0x22: Game Boy Advance (GSF).
+    GameBoyAdvance,
+    /// 0x23: Super NES (SNSF).
+    SuperNes,
+    /// 0x24: Nintendo DS (2SF).
+    NintendoDs,
+    /// 0x25: Nintendo DS Nitro Composer sound data (NCSF).
+    NitroComposer,
+    /// 0x41: Capcom `QSound` (QSF).
+    QSound,
+}
+
+/// PSF version bytes: PSF v1.6 "Basic File Structure" (0x01, 0x02, 0x11,
+/// 0x12, 0x21, 0x22, 0x41), the PSF wiki's live specification (0x13,
+/// 0x23), the 2SF specification (0x24) and the NCSF specification (0x25).
+const PSF_VERSIONS: [(u8, PsfPlatform, &str); 11] = [
+    (0x01, PsfPlatform::PlayStation, "PSF1 (PlayStation)"),
+    (0x02, PsfPlatform::PlayStation2, "PSF2 (PlayStation 2)"),
+    (0x11, PsfPlatform::Saturn, "SSF (Sega Saturn)"),
+    (0x12, PsfPlatform::Dreamcast, "DSF (Sega Dreamcast)"),
+    (0x13, PsfPlatform::Genesis, "PSF (Sega Genesis)"),
+    (0x21, PsfPlatform::Nintendo64, "USF (Nintendo 64)"),
+    (0x22, PsfPlatform::GameBoyAdvance, "GSF (Game Boy Advance)"),
+    (0x23, PsfPlatform::SuperNes, "SNSF (Super NES)"),
+    (0x24, PsfPlatform::NintendoDs, "2SF (Nintendo DS)"),
+    (
+        0x25,
+        PsfPlatform::NitroComposer,
+        "NCSF (Nintendo DS sound data)",
+    ),
+    (0x41, PsfPlatform::QSound, "QSF (Capcom QSound)"),
+];
+
+impl PsfPlatform {
+    /// The platform a version byte names, if the byte is assigned.
+    pub fn from_version(version: u8) -> Option<Self> {
+        PSF_VERSIONS
+            .iter()
+            .find(|(byte, _, _)| *byte == version)
+            .map(|(_, platform, _)| *platform)
+    }
+
+    /// The version byte.
+    pub fn version(self) -> u8 {
+        PSF_VERSIONS
+            .iter()
+            .find(|(_, platform, _)| *platform == self)
+            .map_or(0, |(byte, _, _)| *byte)
+    }
+
+    /// Layout name, reported as the classification variant.
+    pub fn label(self) -> &'static str {
+        PSF_VERSIONS
+            .iter()
+            .find(|(_, platform, _)| *platform == self)
+            .map_or("PSF", |(_, _, label)| label)
     }
 }
 
@@ -161,6 +292,33 @@ fn le_u32(data: &[u8], at: usize) -> Result<u32> {
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
+fn be_u32(data: &[u8], at: usize) -> Result<u32> {
+    let bytes = slice(data, at, 4)?;
+    Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+/// Text of at most `limit` characters from untrusted bytes, for notes.
+fn bounded_text(bytes: &[u8], limit: usize) -> String {
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .take(limit)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// A section of `data` loaded at `address`, stored at `offset`.
+fn borrowed_section(label: String, address: u64, offset: usize, data: &[u8]) -> Section<'_> {
+    Section {
+        label,
+        address,
+        offset,
+        stored_size: data.len(),
+        data: Cow::Borrowed(data),
+        transform: None,
+    }
+}
+
 /// A NUL-padded header text field.
 fn text(data: &[u8], at: usize) -> String {
     let field = data.get(at..at + TEXT_FIELD).unwrap_or_default();
@@ -188,9 +346,34 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
     } else if data.starts_with(GBS_MAGIC) && data.get(3) == Some(&GBS_VERSION) {
         Layout::Gbs
     } else {
-        return None;
+        return detect_magic(data);
     };
     parse_container(data, layout).is_ok().then_some(layout)
+}
+
+/// The layouts added after NSF, SID and GBS are recognized from their magic,
+/// so a corrupt file is reported as a parse error instead of raw code:
+/// `PSF` and an assigned version byte (with areas that fit the file),
+/// `HESM`, `KSCC` or `KSSX`, `SAP` and CR/LF (then a defined tag),
+/// `ZXAYEMUL`, `SNDH` at offset 12 (then a header tag) and `ICE!`.
+fn detect_magic(data: &[u8]) -> Option<Layout> {
+    if let Some(platform) = psf::detect(data) {
+        Some(Layout::Psf(platform))
+    } else if hes::detect(data) {
+        Some(Layout::Hes)
+    } else if let Some(layout) = kss::detect(data) {
+        Some(layout)
+    } else if sap::detect(data) {
+        Some(Layout::Sap)
+    } else if ay::detect(data) {
+        Some(Layout::Ay)
+    } else if sndh::detect(data) {
+        Some(Layout::Sndh)
+    } else if sndh::detect_pack_ice(data) {
+        Some(Layout::PackIce)
+    } else {
+        None
+    }
 }
 
 /// Parse `data` as the given layout.
@@ -198,13 +381,21 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 /// # Errors
 ///
 /// [`ClassifierError::ChiptuneParseError`] for a truncated header, song
-/// numbers or addresses outside their ranges, or a missing program.
+/// numbers or addresses outside their ranges, or a missing program; for
+/// PSF files also a CRC-32 mismatch or a program that does not decode.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     match layout {
         Layout::Nsf => nsf(data),
         Layout::Nsfe => nsfe(data),
         Layout::Sid => sid(data),
         Layout::Gbs => gbs(data),
+        Layout::Psf(platform) => psf::parse(data, platform),
+        Layout::Hes => hes::parse(data),
+        Layout::Kss | Layout::Kssx => kss::parse(data, layout),
+        Layout::Sap => sap::parse(data),
+        Layout::Ay => ay::parse(data),
+        Layout::Sndh => sndh::parse(data),
+        Layout::PackIce => sndh::parse_pack_ice(data),
     }
 }
 

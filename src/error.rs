@@ -199,7 +199,8 @@ pub enum ClassifierError {
         message: String,
     },
 
-    /// Error parsing a chiptune program file (NSF, SID, GBS).
+    /// Error parsing a chiptune program file (NSF, SID, GBS, PSF, HES, KSS,
+    /// SAP, AY, SNDH, Pack-Ice).
     #[error("Chiptune parse error: {message}")]
     ChiptuneParseError {
         /// What is wrong with the file.

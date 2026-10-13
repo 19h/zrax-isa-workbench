@@ -749,6 +749,13 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::EspFlash => "ESP flash dump",
         FileFormat::QnxIfs => "QNX IFS",
         FileFormat::WinCeImage => "Windows CE image",
+        FileFormat::Psf => "PSF",
+        FileFormat::Hes => "HES",
+        FileFormat::Kss => "KSS",
+        FileFormat::Sap => "SAP",
+        FileFormat::AyTune => "AY tune",
+        FileFormat::Sndh => "SNDH",
+        FileFormat::PackIce => "Pack-Ice",
     }
 }
 

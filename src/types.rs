@@ -1006,6 +1006,22 @@ pub enum FileFormat {
     // Windows CE
     /// Windows CE ROM image: a `B000FF` BIN file or a raw `.nb0` image
     WinCeImage,
+    // More chiptune and sound-program formats
+    /// Portable Sound Format file (PSF1, PSF2, SSF, DSF, USF, GSF, SNSF, 2SF,
+    /// NCSF, QSF)
+    Psf,
+    /// PC Engine HES tune
+    Hes,
+    /// MSX / Sega KSS tune (`KSCC` or `KSSX`)
+    Kss,
+    /// Atari 8-bit SAP tune
+    Sap,
+    /// ZX Spectrum / Amstrad CPC AY tune (`ZXAYEMUL`)
+    AyTune,
+    /// Atari ST SNDH tune
+    Sndh,
+    /// Pack-Ice (`ICE!`) packed file
+    PackIce,
 }
 
 impl fmt::Display for FileFormat {
@@ -1207,6 +1223,14 @@ impl fmt::Display for FileFormat {
             FileFormat::QnxIfs => write!(f, "QNX IFS"),
             // Windows CE
             FileFormat::WinCeImage => write!(f, "Windows CE image"),
+            // More chiptune and sound-program formats
+            FileFormat::Psf => write!(f, "PSF"),
+            FileFormat::Hes => write!(f, "HES"),
+            FileFormat::Kss => write!(f, "KSS"),
+            FileFormat::Sap => write!(f, "SAP"),
+            FileFormat::AyTune => write!(f, "AY tune"),
+            FileFormat::Sndh => write!(f, "SNDH"),
+            FileFormat::PackIce => write!(f, "Pack-Ice"),
         }
     }
 }

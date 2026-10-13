@@ -102,6 +102,7 @@ const FORMAT_NAMES = {
   espflash: 'ESP flash dump',
   qnxifs: 'QNX IFS',
   winceimage: 'Windows CE image',
+  psf: 'PSF', hes: 'HES', kss: 'KSS', sap: 'SAP', aytune: 'AY tune', sndh: 'SNDH', packice: 'Pack-Ice',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

@@ -15,10 +15,10 @@ range, load, init and play addresses in the platform's program space, and a
 non-empty program. The program is one load section at the load address and
 goes straight to the code model; it is never treated as a nested container.
 
-Known boundaries: HES (PC Engine HuC6280) and KSS (MSX) are not recognized;
-the HuC6280 has no `Isa` variant, and the KSS layout was not checked against
-a primary source. Bank-switched NSF programs are analyzed as stored, without
-reconstructing the bank mapping.
+Known boundaries: bank-switched NSF programs are analyzed as stored, without
+reconstructing the bank mapping. The PSF family, HES, KSS, SAP, AY, SNDH and
+Pack-Ice files are described in
+[more chiptune and sound-program formats](chiptune-sound-programs.md).
 
 Verification: on 2026-10-12 (macOS AArch64), `tests/chiptune.rs` (6 tests,
 synthetic headers with short hand-assembled drivers, truncation and mutation

@@ -494,7 +494,9 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
-    // Chiptune programs: NSF, NSFe, PSID/RSID and GBS headers.
+    // Chiptune programs: NSF, NSFe, PSID/RSID and GBS headers; the PSF
+    // signature and version byte, HESM, KSCC/KSSX, SAP, ZXAYEMUL, SNDH at
+    // offset 12 and the Pack-Ice magic.
     if let Some(layout) = chiptune::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Chiptune(layout),
