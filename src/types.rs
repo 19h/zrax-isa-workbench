@@ -1225,6 +1225,9 @@ pub enum FileFormat {
     UbiquitiFw,
     /// `ChromeOS` verified-boot kernel partition (`CHROMEOS` keyblock)
     ChromeOsKernel,
+    // APFS
+    /// APFS container (`NXSB` container superblock) and its volumes
+    Apfs,
 }
 
 impl fmt::Display for FileFormat {
@@ -1547,6 +1550,8 @@ impl fmt::Display for FileFormat {
             FileFormat::MikrotikNpk => write!(f, "MikroTik NPK package"),
             FileFormat::UbiquitiFw => write!(f, "Ubiquiti firmware image"),
             FileFormat::ChromeOsKernel => write!(f, "ChromeOS kernel partition"),
+            // APFS
+            FileFormat::Apfs => write!(f, "APFS container"),
         }
     }
 }

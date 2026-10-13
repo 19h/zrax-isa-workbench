@@ -54,6 +54,14 @@ pub enum ClassifierError {
         limit: usize,
     },
 
+    /// Error parsing an APFS container (container superblock, checkpoint,
+    /// object map, volume superblock or B-tree).
+    #[error("APFS parse error: {message}")]
+    ApfsParseError {
+        /// What is wrong with the container.
+        message: String,
+    },
+
     /// Error parsing a Symbian E32 image (EPOC executable or library).
     #[error("Symbian E32 image parse error: {message}")]
     EpocParseError {

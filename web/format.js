@@ -132,6 +132,7 @@ const FORMAT_NAMES = {
   hfsplus: 'HFS+ volume', hfsx: 'HFSX volume',
   xboxstfs: 'Xbox 360 STFS package',
   mikrotiknpk: 'MikroTik NPK package', ubiquitifw: 'Ubiquiti firmware image', chromeoskernel: 'ChromeOS kernel partition',
+  apfs: 'APFS container',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

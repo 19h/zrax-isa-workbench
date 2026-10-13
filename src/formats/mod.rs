@@ -25,6 +25,7 @@ pub mod amiga_hunk;
 pub mod android;
 pub mod aof;
 pub mod aout;
+pub mod apfs;
 pub mod apple;
 pub mod apple2;
 pub mod ar;
@@ -1024,6 +1025,20 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = fwpack::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::FwPack(layout),
+        };
+    }
+
+    // APFS containers: `NXSB` at 32 with object identifier 1, type
+    // 0x80000001, a block size of 4-64 KiB and at least 1 MiB of blocks.
+    // Block 0 starts with the superblock's checksum, and the offsets that
+    // the families above probe inside it (512, 1024, 0x438, 0x8001) hold
+    // volume identifiers, counters or later blocks, which are zero or
+    // checksummed objects in a container, so none of them claims one. A
+    // container in a GPT partition or an Apple disk image is reached as a
+    // child of the partition table or disk image.
+    if let Some(layout) = apfs::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Apfs(layout),
         };
     }
 

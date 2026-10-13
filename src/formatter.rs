@@ -838,6 +838,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::MikrotikNpk => "MikroTik NPK package",
         FileFormat::UbiquitiFw => "Ubiquiti firmware image",
         FileFormat::ChromeOsKernel => "ChromeOS kernel partition",
+        FileFormat::Apfs => "APFS container",
     }
 }
 
