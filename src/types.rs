@@ -1231,6 +1231,9 @@ pub enum FileFormat {
     // Microsoft cabinets
     /// Microsoft cabinet file (`MSCF`)
     MsCab,
+    // Full Flash Update images
+    /// Microsoft Full Flash Update image (FFU, `SignedImage ` security header)
+    Ffu,
 }
 
 impl fmt::Display for FileFormat {
@@ -1557,6 +1560,8 @@ impl fmt::Display for FileFormat {
             FileFormat::Apfs => write!(f, "APFS container"),
             // Microsoft cabinets
             FileFormat::MsCab => write!(f, "Microsoft cabinet"),
+            // Full Flash Update images
+            FileFormat::Ffu => write!(f, "Full Flash Update image"),
         }
     }
 }

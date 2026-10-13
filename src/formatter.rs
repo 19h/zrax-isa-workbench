@@ -840,6 +840,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::ChromeOsKernel => "ChromeOS kernel partition",
         FileFormat::Apfs => "APFS container",
         FileFormat::MsCab => "Microsoft cabinet",
+        FileFormat::Ffu => "Full Flash Update image",
     }
 }
 

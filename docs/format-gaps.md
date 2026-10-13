@@ -104,6 +104,11 @@ Apple UDIF disk images followed (every hdiutil chunk codec including ADC;
 data fork, master and table CRC-32 verified; volume partitions classified
 on their own; encrypted images opaque); sparse images, sparse bundles,
 NDIF and decryption are not implemented; see [Apple disk images](dmg.md).
+Microsoft Full Flash Update images followed (V1 and V2 stores; disks
+assembled from the write descriptors and classified on their own; chunk
+hashes verified up to 64 MiB; catalog signature not verified); compressed
+FFUs, `DISK_SEQ` and partial-update validation entries are not
+implemented; see [Full Flash Update images](ffu.md).
 HFS+ and HFSX volumes followed (catalog, extents overflow and attributes
 B-trees; decmpfs zlib/LZVN/LZFSE decoded); classic HFS without an embedded
 volume and journal replay are not handled; see [HFS+ volumes](hfsplus.md).

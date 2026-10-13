@@ -169,6 +169,8 @@ pub enum Kind {
     Apfs(super::apfs::Layout),
     /// A Microsoft cabinet file.
     Cab(super::cab::Layout),
+    /// A Microsoft Full Flash Update (FFU) image.
+    Ffu(super::ffu::Layout),
 }
 
 impl Kind {
@@ -230,6 +232,7 @@ impl Kind {
             Self::FwPack(layout) => layout.format(),
             Self::Apfs(layout) => layout.format(),
             Self::Cab(layout) => layout.format(),
+            Self::Ffu(layout) => layout.format(),
         }
     }
 
@@ -291,6 +294,7 @@ impl Kind {
             Self::FwPack(layout) => layout.label(),
             Self::Apfs(layout) => layout.label(),
             Self::Cab(layout) => layout.label(),
+            Self::Ffu(layout) => layout.label(),
         }
     }
 
@@ -352,6 +356,7 @@ impl Kind {
             Self::FwPack(layout) => layout.is_weak(),
             Self::Apfs(layout) => layout.is_weak(),
             Self::Cab(layout) => layout.is_weak(),
+            Self::Ffu(layout) => layout.is_weak(),
         }
     }
 }
@@ -418,6 +423,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::FwPack(layout) => super::fwpack::parse_container(data, layout),
         Kind::Apfs(layout) => super::apfs::parse_container(data, layout),
         Kind::Cab(layout) => super::cab::parse_container(data, layout),
+        Kind::Ffu(layout) => super::ffu::parse_container(data, layout),
     }
 }
 

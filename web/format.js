@@ -134,6 +134,7 @@ const FORMAT_NAMES = {
   mikrotiknpk: 'MikroTik NPK package', ubiquitifw: 'Ubiquiti firmware image', chromeoskernel: 'ChromeOS kernel partition',
   apfs: 'APFS container',
   mscab: 'Microsoft cabinet',
+  ffu: 'Full Flash Update image',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

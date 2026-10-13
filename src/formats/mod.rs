@@ -62,6 +62,7 @@ pub mod esp;
 pub mod ext;
 pub mod fat;
 pub mod fatelf;
+pub mod ffu;
 pub mod frf;
 pub mod fwpack;
 pub mod geos;
@@ -1053,6 +1054,18 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = apfs::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Apfs(layout),
+        };
+    }
+
+    // Full Flash Update images: `cbSize` of at least 32, `SignedImage ` at
+    // offset 4 and a chunk size that holds the header. No format above starts
+    // with them; the families above that probe later offsets would need their
+    // structures in the signed catalog or the hash table, which fill the
+    // image's first chunk, and the disk image's own sectors lie behind the
+    // headers and in write-descriptor order.
+    if let Some(layout) = ffu::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Ffu(layout),
         };
     }
 

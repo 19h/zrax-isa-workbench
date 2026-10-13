@@ -69,6 +69,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Microsoft Full Flash Update (FFU) image.
+    #[error("FFU image parse error: {message}")]
+    FfuParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a Symbian E32 image (EPOC executable or library).
     #[error("Symbian E32 image parse error: {message}")]
     EpocParseError {
