@@ -94,6 +94,23 @@ struct Update<'a> {
     extended: Vec<u32>,
 }
 
+/// The updates of a file, back to back from offset 0.
+struct UpdateList<'a> {
+    /// The updates in file order.
+    updates: Vec<Update<'a>>,
+    /// File offset after the last update; only padding may follow.
+    end: usize,
+}
+
+/// An update's sizes, from the data size and total size fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct UpdateSizes {
+    /// Encrypted data size in bytes.
+    data_size: usize,
+    /// Header, data and extended signature table, in bytes.
+    total_size: usize,
+}
+
 /// Whether `data` is a sequence of valid updates, optionally followed by
 /// erased-flash padding.
 pub(super) fn is_valid(data: &[u8]) -> bool {
@@ -102,7 +119,7 @@ pub(super) fn is_valid(data: &[u8]) -> bool {
 }
 
 /// Every update in `data` and where the last one ends.
-fn updates(data: &[u8]) -> Result<(Vec<Update<'_>>, usize)> {
+fn updates(data: &[u8]) -> Result<UpdateList<'_>> {
     let mut list: Vec<Update<'_>> = Vec::new();
     let mut pos = 0;
     while let Some(rest) = data.get(pos..).filter(|rest| !rest.is_empty()) {
@@ -117,7 +134,10 @@ fn updates(data: &[u8]) -> Result<(Vec<Update<'_>>, usize)> {
     if list.is_empty() {
         return Err(error("Missing microcode update header"));
     }
-    Ok((list, pos))
+    Ok(UpdateList {
+        updates: list,
+        end: pos,
+    })
 }
 
 /// The update whose header is at `offset`. The cheap header fields come
@@ -142,7 +162,10 @@ fn parse_update(data: &[u8], offset: usize) -> Result<Update<'_>> {
             "Invalid microcode date 0x{raw_date:08X} at 0x{offset:X}: not a BCD mmddyyyy date"
         ))
     })?;
-    let (data_size, total_size) = sizes(header, offset)?;
+    let UpdateSizes {
+        data_size,
+        total_size,
+    } = sizes(header, offset)?;
     let bytes = field(data, offset, total_size, "microcode update")?;
     let body = field(bytes, 0, HEADER_SIZE + data_size, "microcode update data")?;
     let sum = dword_sum(body);
@@ -167,10 +190,13 @@ fn parse_update(data: &[u8], offset: usize) -> Result<Update<'_>> {
 /// Data size and total size in bytes. A data size field of 0 means the
 /// 2048 B default; otherwise the data size is a multiple of 4 B, the total
 /// a multiple of 1024 B, and the header and data fit in the total.
-fn sizes(header: &[u8], offset: usize) -> Result<(usize, usize)> {
+fn sizes(header: &[u8], offset: usize) -> Result<UpdateSizes> {
     let data_size = to_usize(le_u32(header, 0x1C)?);
     if data_size == 0 {
-        return Ok((DEFAULT_DATA_SIZE, DEFAULT_TOTAL_SIZE));
+        return Ok(UpdateSizes {
+            data_size: DEFAULT_DATA_SIZE,
+            total_size: DEFAULT_TOTAL_SIZE,
+        });
     }
     let total_size = to_usize(le_u32(header, 0x20)?);
     if data_size % DWORD_SIZE != 0 {
@@ -191,7 +217,10 @@ fn sizes(header: &[u8], offset: usize) -> Result<(usize, usize)> {
             "Invalid microcode sizes at 0x{offset:X}: the 48 B header and {data_size} B of data exceed the {total_size} B total size"
         )));
     }
-    Ok((data_size, total_size))
+    Ok(UpdateSizes {
+        data_size,
+        total_size,
+    })
 }
 
 /// Wrapping sum of the little-endian DWORDs of `bytes`.
@@ -261,7 +290,7 @@ fn extended_signatures(
 /// Parse a file of microcode updates into a container whose components are
 /// the opaque updates.
 pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
-    let (updates, end) = updates(data)?;
+    let UpdateList { updates, end } = updates(data)?;
     let mut c = Container::new(
         FileFormat::IntelMicrocode,
         Layout::IntelMicrocode.label(),
@@ -381,11 +410,23 @@ mod tests {
     fn a_zero_data_size_means_the_2048_byte_default() {
         let mut header = [0u8; HEADER_SIZE];
         header[0x20..0x24].copy_from_slice(&7u32.to_le_bytes());
-        assert_eq!(sizes(&header, 0).unwrap(), (2000, 2048));
+        assert_eq!(
+            sizes(&header, 0).unwrap(),
+            UpdateSizes {
+                data_size: 2000,
+                total_size: 2048,
+            }
+        );
         header[0x1C..0x20].copy_from_slice(&0x400u32.to_le_bytes());
         header[0x20..0x24].copy_from_slice(&0x400u32.to_le_bytes());
         assert!(sizes(&header, 0).is_err());
         header[0x20..0x24].copy_from_slice(&0x800u32.to_le_bytes());
-        assert_eq!(sizes(&header, 0).unwrap(), (0x400, 0x800));
+        assert_eq!(
+            sizes(&header, 0).unwrap(),
+            UpdateSizes {
+                data_size: 0x400,
+                total_size: 0x800,
+            }
+        );
     }
 }

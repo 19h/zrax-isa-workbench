@@ -52,9 +52,18 @@ fn trailer_matches(data: &[u8]) -> bool {
     data[body_end..] == sum.to_le_bytes()
 }
 
+/// The six format `0x5A` headers.
+struct Headers5a<'a> {
+    /// The values of each header, in file order.
+    headers: Vec<Vec<&'a [u8]>>,
+    /// File offset just past the last header, where the firmware start
+    /// address and length follow.
+    end: usize,
+}
+
 /// Format `0x5A` headers: each a value count, then that many values of a
 /// length byte and the value bytes.
-fn headers_5a(data: &[u8], end: usize) -> Result<(Vec<Vec<&[u8]>>, usize)> {
+fn headers_5a(data: &[u8], end: usize) -> Result<Headers5a<'_>> {
     let mut pos = 3;
     let mut headers = Vec::with_capacity(HEADER_COUNT);
     for index in 0..HEADER_COUNT {
@@ -71,11 +80,11 @@ fn headers_5a(data: &[u8], end: usize) -> Result<(Vec<Vec<&[u8]>>, usize)> {
         }
         headers.push(values);
     }
-    Ok((headers, pos))
+    Ok(Headers5a { headers, end: pos })
 }
 
 fn parse_5a<'a>(data: &'a [u8], c: &mut Container<'a>, end: usize) -> Result<()> {
-    let (headers, pos) = headers_5a(data, end)?;
+    let Headers5a { headers, end: pos } = headers_5a(data, end)?;
     let start = be_u32(&data[..end], pos)?;
     let length = be_u32(&data[..end], pos + 4)? as usize;
     let firmware_at = pos + 8;
@@ -125,12 +134,25 @@ fn hex_text(bytes: &[u8]) -> String {
     })
 }
 
-/// Format `0x31` headers by type character, with their values.
-type Headers31<'a> = Vec<(u8, Vec<&'a [u8]>)>;
+/// One format `0x31` header.
+struct Header31<'a> {
+    /// The type character that opens and closes the header.
+    kind: u8,
+    /// The values, without their CR LF terminators.
+    values: Vec<&'a [u8]>,
+}
+
+/// The six format `0x31` headers.
+struct Headers31<'a> {
+    /// The headers in file order.
+    headers: Vec<Header31<'a>>,
+    /// File offset just past the last header: the first record.
+    end: usize,
+}
 
 /// Format `0x31` headers: each opens with `T CR LF`, holds CR LF-terminated
 /// values, and closes with the same `T CR LF`.
-fn headers_31(data: &[u8], end: usize) -> Result<(Headers31<'_>, usize)> {
+fn headers_31(data: &[u8], end: usize) -> Result<Headers31<'_>> {
     let mut pos = 3;
     let mut headers = Vec::with_capacity(HEADER_COUNT);
     for index in 0..HEADER_COUNT {
@@ -154,15 +176,18 @@ fn headers_31(data: &[u8], end: usize) -> Result<(Headers31<'_>, usize)> {
             values.push(&rest[..len]);
             pos += len + 2;
         }
-        headers.push((kind, values));
+        headers.push(Header31 { kind, values });
     }
-    Ok((headers, pos))
+    Ok(Headers31 { headers, end: pos })
 }
 
 fn parse_31<'a>(data: &'a [u8], c: &mut Container<'a>, end: usize) -> Result<()> {
-    let (headers, firmware_at) = headers_31(data, end)?;
-    if let Some((_, values)) = headers.iter().find(|(kind, _)| *kind == KEY_HEADER_TYPE) {
-        if let [key] = values[..] {
+    let Headers31 {
+        headers,
+        end: firmware_at,
+    } = headers_31(data, end)?;
+    if let Some(header) = headers.iter().find(|h| h.kind == KEY_HEADER_TYPE) {
+        if let [key] = header.values[..] {
             c.push_metadata(
                 "rwd_cipher_key",
                 "Cipher key",

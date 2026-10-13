@@ -548,11 +548,22 @@ fn role(block: &Block<'_>, index: usize, workarounds: &[usize]) -> Role {
     }
 }
 
+/// The stored bytes a run of blocks spans.
+struct StoredRange {
+    /// File offset of the first block.
+    offset: usize,
+    /// Bytes from the first block to the end of the last.
+    size: usize,
+}
+
 /// File offset of the first block and the size up to the end of the last.
-fn stored_range(blocks: &[&Block<'_>]) -> (usize, usize) {
+fn stored_range(blocks: &[&Block<'_>]) -> StoredRange {
     match (blocks.first(), blocks.last()) {
-        (Some(first), Some(last)) => (first.offset, last.offset + BLOCK_SIZE - first.offset),
-        _ => (0, 0),
+        (Some(first), Some(last)) => StoredRange {
+            offset: first.offset,
+            size: last.offset + BLOCK_SIZE - first.offset,
+        },
+        _ => StoredRange { offset: 0, size: 0 },
     }
 }
 
@@ -627,12 +638,12 @@ impl<'a> Region<'_, 'a> {
         if let [only] = self.blocks.as_slice() {
             return stored_section(label, self.address(), only.payload_offset(), only.payload);
         }
-        let (offset, stored_size) = stored_range(&self.blocks);
+        let stored = stored_range(&self.blocks);
         transformed_section(
             label,
             self.address(),
-            offset,
-            stored_size,
+            stored.offset,
+            stored.size,
             self.bytes(),
             BLOCKS_TRANSFORM,
         )
@@ -849,11 +860,11 @@ fn per_family_children<'a>(c: &mut Container<'a>, groups: &[Group<'_, 'a>]) {
                 )
             ));
         }
-        let (offset, stored_size) = stored_range(&group.blocks);
+        let stored = stored_range(&group.blocks);
         let mut child = Child::decoded(
             label,
-            offset,
-            stored_size,
+            stored.offset,
+            stored.size,
             Cow::Owned(bytes),
             BLOCKS_TRANSFORM,
         );
@@ -909,12 +920,12 @@ fn contained_file_children<'a>(c: &mut Container<'a>, blocks: &[&Block<'a>]) -> 
             ));
             continue;
         }
-        let (offset, stored_size) = stored_range(&file.blocks);
+        let stored = stored_range(&file.blocks);
         c.children.push(
             Child::decoded(
                 label,
-                offset,
-                stored_size,
+                stored.offset,
+                stored.size,
                 Cow::Owned(contents),
                 FILE_TRANSFORM,
             )

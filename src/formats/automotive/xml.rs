@@ -201,7 +201,7 @@ impl Parser<'_> {
             Some(inner) => (inner, true),
             None => (inner, false),
         };
-        let (name, attributes) = parse_tag(inner, tag_start)?;
+        let StartTag { name, attributes } = parse_tag(inner, tag_start)?;
         if self.stack.is_empty() && !self.nodes.is_empty() {
             return Err(error("Invalid XML: more than one root element"));
         }
@@ -251,8 +251,16 @@ fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '-' | '.')
 }
 
+/// What a start tag declares.
+struct StartTag {
+    /// The element name, with any namespace prefix.
+    name: String,
+    /// Attribute names and values in tag order, entities decoded.
+    attributes: Vec<(String, String)>,
+}
+
 /// Element name and attributes of a start tag's inside.
-fn parse_tag(inner: &str, at: usize) -> Result<(String, Vec<(String, String)>)> {
+fn parse_tag(inner: &str, at: usize) -> Result<StartTag> {
     let invalid = || error(format!("Invalid XML tag at 0x{at:X}"));
     let name_len = inner
         .find(|c: char| !is_name_char(c))
@@ -280,7 +288,7 @@ fn parse_tag(inner: &str, at: usize) -> Result<(String, Vec<(String, String)>)> 
         attributes.push((key, decode_entities(&rest[1..=value_end])?));
         rest = rest[value_end + 2..].trim_start();
     }
-    Ok((name, attributes))
+    Ok(StartTag { name, attributes })
 }
 
 /// Decode the predefined entities and character references.

@@ -74,8 +74,16 @@ struct Section<'a> {
     end: usize,
 }
 
+/// The containers of a file, back to back from offset 0.
+struct SectionList<'a> {
+    /// The containers in file order.
+    sections: Vec<Section<'a>>,
+    /// File offset after the last container; only padding may follow.
+    end: usize,
+}
+
 /// Every container in `data` and where the last one ends.
-fn sections(data: &[u8]) -> Result<(Vec<Section<'_>>, usize)> {
+fn sections(data: &[u8]) -> Result<SectionList<'_>> {
     let mut list: Vec<Section<'_>> = Vec::new();
     let mut pos = 0;
     while let Some(rest) = data.get(pos..).filter(|rest| !rest.is_empty()) {
@@ -90,7 +98,10 @@ fn sections(data: &[u8]) -> Result<(Vec<Section<'_>>, usize)> {
     if list.is_empty() {
         return Err(error("Missing AMD microcode container header"));
     }
-    Ok((list, pos))
+    Ok(SectionList {
+        sections: list,
+        end: pos,
+    })
 }
 
 /// The container at `offset`: header, equivalence table, then patch
@@ -189,7 +200,7 @@ fn parse_patch(data: &[u8], offset: usize) -> Result<Patch<'_>> {
 /// Parse a file of AMD microcode containers into a container whose
 /// components are the opaque patches.
 pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
-    let (sections, end) = sections(data)?;
+    let SectionList { sections, end } = sections(data)?;
     let mut c = Container::new(
         FileFormat::AmdMicrocode,
         Layout::AmdMicrocode.label(),

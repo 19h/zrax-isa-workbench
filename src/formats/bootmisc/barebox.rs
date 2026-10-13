@@ -101,51 +101,59 @@ fn lands_in_code(target: i64, size: usize) -> bool {
     usize::try_from(target).is_ok_and(|offset| (HEADER_SIZE..size).contains(&offset))
 }
 
+/// What the head establishes about the instruction set.
+struct HeadTarget {
+    /// The target the head names, or `None` when the code model decides.
+    target: Option<Target>,
+    /// The note that states where the ISA comes from.
+    note: String,
+}
+
 /// The target the head names and the note that states it.
-fn head_target(head: Head, text_base: u32, size: usize, first: u32) -> (Option<Target>, String) {
+fn head_target(head: Head, text_base: u32, size: usize, first: u32) -> HeadTarget {
     let source = "barebox-arm-head.h";
     match head {
-        Head::A32Branch(target) if lands_in_code(target, size) => (
-            Some(arm_target(false)),
-            format!(
+        Head::A32Branch(target) if lands_in_code(target, size) => HeadTarget {
+            target: Some(arm_target(false)),
+            note: format!(
                 "ISA from the barebox head: A32 B 0x{first:08X} to image offset 0x{target:X} ({source})"
             ),
-        ),
-        Head::Thumb2 => (
-            Some(arm_target(false)),
-            format!(
+        },
+        Head::Thumb2 => HeadTarget {
+            target: Some(arm_target(false)),
+            note: format!(
                 "ISA from the barebox head: A32 adr r9 and bx r9 into Thumb-2 code (CONFIG_THUMB2_BAREBOX, {source})"
             ),
-        ),
-        Head::A64Branch(target) if lands_in_code(target, size) => (
-            Some(arm_target(true)),
-            format!(
+        },
+        Head::A64Branch(target) if lands_in_code(target, size) => HeadTarget {
+            target: Some(arm_target(true)),
+            note: format!(
                 "ISA from the barebox head: A64 B 0x{first:08X} to image offset 0x{target:X} (ENTRY_PROC, barebox-arm64.h)"
             ),
-        ),
-        Head::A64Nop if text_base == NO_TEXT_BASE => (
-            Some(arm_target(true)),
-            "ISA from the barebox head: A64 NOP and text base 0xFFFFFFFF (__barebox_arm64_head, head_64.S)"
+        },
+        Head::A64Nop if text_base == NO_TEXT_BASE => HeadTarget {
+            target: Some(arm_target(true)),
+            note: "ISA from the barebox head: A64 NOP and text base 0xFFFFFFFF (__barebox_arm64_head, head_64.S)"
                 .to_string(),
-        ),
-        Head::A32Branch(target) | Head::A64Branch(target) => (
-            None,
-            format!(
+        },
+        Head::A32Branch(target) | Head::A64Branch(target) => HeadTarget {
+            target: None,
+            note: format!(
                 "Head branch 0x{first:08X} targets image offset {target}, outside the image code; ISA from the code model"
             ),
-        ),
-        Head::A64Nop => (
-            None,
-            format!(
+        },
+        Head::A64Nop => HeadTarget {
+            target: None,
+            note: format!(
                 "A64 NOP head with text base 0x{text_base:08X}, not 0xFFFFFFFF; ISA from the code model"
             ),
-        ),
-        Head::Unknown => (
-            None,
-            format!(
+        },
+        Head::Unknown => HeadTarget {
+            target: None,
+            note: format!(
                 "First instruction 0x{first:08X} is not a documented barebox head; ISA from the code model"
             ),
-        ),
+        },
     }
 }
 
@@ -164,10 +172,10 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let first = le_u32(header, 0)?;
     let second = le_u32(header, SECOND_WORD)?;
     let text_base = le_u32(header, TEXT_BASE)?;
-    let (target, head_note) = head_target(head(first, second), text_base, size, first);
+    let from_head = head_target(head(first, second), text_base, size, first);
 
     let mut c = Container::new(FileFormat::BareboxImage, Layout::Barebox.label(), "barebox");
-    c.target = target;
+    c.target = from_head.target;
     c.consumed = size;
     // The section is the image itself; it must never be detected again as
     // a barebox container.
@@ -176,7 +184,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         "barebox image: {} (image size field at 0x2C)",
         size_text(size)
     ));
-    c.notes.push(head_note);
+    c.notes.push(from_head.note);
     c.notes
         .push("Execution starts at image offset 0; the load address is not encoded".into());
     if text_base != NO_TEXT_BASE {
@@ -238,7 +246,11 @@ mod tests {
         assert!(!lands_in_code(0x50, 0x50));
         assert!(!lands_in_code(0x30, 0x200));
         assert!(!lands_in_code(-4, 0x200));
-        assert!(head_target(Head::A32Branch(0x50), 0, 0x200, 0).0.is_some());
-        assert!(head_target(Head::A64Nop, 0, 0x200, A64_NOP).0.is_none());
+        assert!(head_target(Head::A32Branch(0x50), 0, 0x200, 0)
+            .target
+            .is_some());
+        assert!(head_target(Head::A64Nop, 0, 0x200, A64_NOP)
+            .target
+            .is_none());
     }
 }

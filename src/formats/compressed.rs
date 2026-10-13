@@ -434,7 +434,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
     match codec {
         Codec::Gzip => gzip(data, limit),
         Codec::Zlib => {
-            let (out, used) = inflate(data, true, limit)?;
+            let Inflated { data: out, used } = inflate(data, true, limit)?;
             Ok(Decoded {
                 data: out,
                 consumed: Some(used),
@@ -442,7 +442,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
             })
         }
         Codec::Deflate => {
-            let (out, used) = inflate(data, false, limit)?;
+            let Inflated { data: out, used } = inflate(data, false, limit)?;
             Ok(Decoded {
                 data: out,
                 consumed: Some(used),
@@ -493,15 +493,15 @@ pub fn decode_prefix(codec: Codec, data: &[u8], limit: usize) -> Result<Vec<u8>>
     let limit = limit.min(MAX_PAYLOAD);
     match codec {
         Codec::Gzip => Ok(gzip_until(data, limit, AtLimit::Stop)?.data),
-        Codec::Zlib => Ok(inflate_until(data, true, limit, AtLimit::Stop)?.0),
-        Codec::Deflate => Ok(inflate_until(data, false, limit, AtLimit::Stop)?.0),
+        Codec::Zlib => Ok(inflate_until(data, true, limit, AtLimit::Stop)?.data),
+        Codec::Deflate => Ok(inflate_until(data, false, limit, AtLimit::Stop)?.data),
         Codec::Zstd => Ok(zstd_until(data, limit, AtLimit::Stop)?.data),
         Codec::Bzip2 => {
             let decoder = ::bzip2::bufread::MultiBzDecoder::new(data);
             read_until(decoder, limit, "bzip2", AtLimit::Stop)
         }
         Codec::Lz4 => {
-            let (extent, _) = lz4_frames_extent(data)?;
+            let extent = lz4_frames_extent(data)?.size;
             let decoder = lz4_flex::frame::FrameDecoder::new(&data[..extent]);
             read_until(decoder, limit, "LZ4", AtLimit::Stop)
         }
@@ -510,19 +510,23 @@ pub fn decode_prefix(codec: Codec, data: &[u8], limit: usize) -> Result<Vec<u8>>
     }
 }
 
+/// The output of one DEFLATE stream and the input it used.
+struct Inflated {
+    /// The decoded bytes.
+    data: Vec<u8>,
+    /// Input bytes the decoder consumed: the whole stream, with any zlib
+    /// header and Adler-32, unless decoding stopped at the limit.
+    used: usize,
+}
+
 /// Inflate a raw or zlib-wrapped DEFLATE stream. Returns the output and
 /// the number of input bytes the stream used.
-fn inflate(input: &[u8], zlib: bool, limit: usize) -> Result<(Vec<u8>, usize)> {
+fn inflate(input: &[u8], zlib: bool, limit: usize) -> Result<Inflated> {
     inflate_until(input, zlib, limit, AtLimit::Fail)
 }
 
 /// [`inflate`], stopping at the limit when `at_limit` says so.
-fn inflate_until(
-    input: &[u8],
-    zlib: bool,
-    limit: usize,
-    at_limit: AtLimit,
-) -> Result<(Vec<u8>, usize)> {
+fn inflate_until(input: &[u8], zlib: bool, limit: usize, at_limit: AtLimit) -> Result<Inflated> {
     use miniz_oxide::inflate::core::{decompress, inflate_flags, DecompressorOxide};
     use miniz_oxide::inflate::TINFLStatus;
 
@@ -552,12 +556,18 @@ fn inflate_until(
                     return Err(exceeds(limit));
                 }
                 out.truncate(out_pos.min(limit));
-                return Ok((out, in_pos));
+                return Ok(Inflated {
+                    data: out,
+                    used: in_pos,
+                });
             }
             TINFLStatus::HasMoreOutput => {
                 if out_pos >= limit && at_limit == AtLimit::Stop {
                     out.truncate(limit);
-                    return Ok((out, in_pos));
+                    return Ok(Inflated {
+                        data: out,
+                        used: in_pos,
+                    });
                 }
                 if out.len() >= limit {
                     return Err(exceeds(limit));
@@ -627,7 +637,10 @@ fn gzip_until(data: &[u8], limit: usize, at_limit: AtLimit) -> Result<Decoded> {
     loop {
         let member = &data[pos..];
         let start = gzip_header_size(member)?;
-        let (decoded, used) = inflate_until(&member[start..], false, limit - out.len(), at_limit)?;
+        let Inflated {
+            data: decoded,
+            used,
+        } = inflate_until(&member[start..], false, limit - out.len(), at_limit)?;
         if at_limit == AtLimit::Stop && out.len() + decoded.len() == limit {
             out.extend_from_slice(&decoded);
             return Ok(Decoded {
@@ -673,12 +686,20 @@ const LZ4_DICT_ID: u8 = 0x01;
 /// A block size with this bit set stores the block uncompressed.
 const LZ4_UNCOMPRESSED_BLOCK: u32 = 0x8000_0000;
 
+/// The LZ4 frames (and skippable frames) at the start of a stream.
+struct Lz4Frames {
+    /// Bytes the frames occupy from the start of the stream.
+    size: usize,
+    /// Every frame carries a content checksum.
+    all_checked: bool,
+}
+
 /// The extent of the LZ4 frames (and skippable frames) at the start of
 /// `data`, and whether every frame carries a content checksum. The decoder
 /// accepts a frame cut off before its end mark, so the structure is walked
 /// first: descriptor, blocks with optional checksums, end mark, optional
 /// content checksum.
-fn lz4_frames_extent(data: &[u8]) -> Result<(usize, bool)> {
+fn lz4_frames_extent(data: &[u8]) -> Result<Lz4Frames> {
     let mut pos = 0;
     let mut all_checked = true;
     while pos + 4 <= data.len() {
@@ -727,19 +748,22 @@ fn lz4_frames_extent(data: &[u8]) -> Result<(usize, bool)> {
     if pos == 0 {
         return Err(error("Missing LZ4 frame"));
     }
-    Ok((pos, all_checked))
+    Ok(Lz4Frames {
+        size: pos,
+        all_checked,
+    })
 }
 
 /// Decode LZ4 frames; `lz4_flex` validates descriptors and checksums.
 fn lz4_frame(data: &[u8], limit: usize) -> Result<Decoded> {
-    let (extent, checked) = lz4_frames_extent(data)?;
-    let mut input = &data[..extent];
+    let frames = lz4_frames_extent(data)?;
+    let mut input = &data[..frames.size];
     let decoder = lz4_flex::frame::FrameDecoder::new(&mut input);
     let out = read_capped(decoder, limit, "LZ4")?;
     Ok(Decoded {
         data: out,
-        consumed: Some(extent),
-        check: checked.then_some("LZ4 content checksum"),
+        consumed: Some(frames.size),
+        check: frames.all_checked.then_some("LZ4 content checksum"),
     })
 }
 

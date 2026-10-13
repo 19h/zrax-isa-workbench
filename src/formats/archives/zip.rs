@@ -687,9 +687,11 @@ fn local_record(data: &[u8], entry: &Entry<'_>, directory_offset: usize) -> Resu
     let zip64 = extra_block(extra, ZIP64_EXTRA_ID);
     if flags & FLAG_DATA_DESCRIPTOR == 0 {
         let sizes = local_sizes(header, zip64);
-        if le_u32(header, 14)? != entry.crc
-            || sizes != Some((entry.compressed_size, entry.uncompressed_size))
-        {
+        let expected = Sizes {
+            compressed: entry.compressed_size,
+            uncompressed: entry.uncompressed_size,
+        };
+        if le_u32(header, 14)? != entry.crc || sizes != Some(expected) {
             return Err(differs("CRC-32 or size"));
         }
         return Ok(Local {
@@ -708,17 +710,32 @@ fn local_record(data: &[u8], entry: &Entry<'_>, directory_offset: usize) -> Resu
     })
 }
 
+/// The sizes a local header records for its member.
+#[derive(PartialEq, Eq)]
+struct Sizes {
+    /// Stored size in bytes, including any encryption header.
+    compressed: u64,
+    /// Decoded size in bytes.
+    uncompressed: u64,
+}
+
 /// Compressed and uncompressed size of a local header. When either 32-bit
 /// field is saturated, the local ZIP64 field holds both, uncompressed size
 /// first (4.5.3).
-fn local_sizes(header: &[u8], zip64: Option<&[u8]>) -> Option<(u64, u64)> {
+fn local_sizes(header: &[u8], zip64: Option<&[u8]>) -> Option<Sizes> {
     let compressed = le_u32(header, 18).ok()?;
     let uncompressed = le_u32(header, 22).ok()?;
     if compressed != SATURATED_32 && uncompressed != SATURATED_32 {
-        return Some((u64::from(compressed), u64::from(uncompressed)));
+        return Some(Sizes {
+            compressed: u64::from(compressed),
+            uncompressed: u64::from(uncompressed),
+        });
     }
     let field = zip64?;
-    Some((le_u64(field, 8).ok()?, le_u64(field, 0).ok()?))
+    Some(Sizes {
+        compressed: le_u64(field, 8).ok()?,
+        uncompressed: le_u64(field, 0).ok()?,
+    })
 }
 
 /// Length of the data descriptor at `at` (4.3.9): CRC-32 and the two

@@ -178,13 +178,21 @@ fn nes20_size(lsb: u8, msb: u8, unit: u64) -> Option<u64> {
     Some((u64::from(msb) << 8 | u64::from(lsb)) * unit)
 }
 
+/// The NES 2.0 ROM sizes a header declares.
+struct RomSizes {
+    /// PRG-ROM size in bytes, `None` when it overflows 64 bits.
+    prg_size: Option<u64>,
+    /// CHR-ROM size in bytes, `None` when it overflows 64 bits.
+    chr_size: Option<u64>,
+}
+
 /// NES 2.0 PRG-ROM and CHR-ROM sizes.
-fn nes20_sizes(header: &[u8]) -> (Option<u64>, Option<u64>) {
+fn nes20_sizes(header: &[u8]) -> RomSizes {
     let msb = header[SIZE_MSB];
-    (
-        nes20_size(header[PRG_SIZE_LSB], msb & 0x0F, PRG_UNIT),
-        nes20_size(header[CHR_SIZE_LSB], msb >> 4, CHR_UNIT),
-    )
+    RomSizes {
+        prg_size: nes20_size(header[PRG_SIZE_LSB], msb & 0x0F, PRG_UNIT),
+        chr_size: nes20_size(header[CHR_SIZE_LSB], msb >> 4, CHR_UNIT),
+    }
 }
 
 /// Header, trainer, PRG-ROM and CHR-ROM size, when it does not overflow.
@@ -205,8 +213,8 @@ fn is_nes20(data: &[u8], header: &[u8]) -> bool {
     if header[FLAGS7] & REVISION_MASK != REVISION_NES20 {
         return false;
     }
-    let (prg, chr) = nes20_sizes(header);
-    image_size(header, prg, chr).is_some_and(|size| size <= data.len() as u64)
+    let RomSizes { prg_size, chr_size } = nes20_sizes(header);
+    image_size(header, prg_size, chr_size).is_some_and(|size| size <= data.len() as u64)
 }
 
 /// `NES` 0x1A at offset 0. A file too short for the header is still
@@ -227,9 +235,9 @@ fn read_header(header: &[u8], layout: Layout) -> Result<Header> {
     let low_mapper = u16::from(flags6 >> 4);
     let middle_mapper = u16::from(flags7 & 0xF0);
     if layout == Layout::Nes20 {
-        let (prg, chr) = nes20_sizes(header);
-        let prg_size = prg.ok_or_else(|| error("Invalid PRG-ROM size: exceeds 64 bits"))?;
-        let chr_size = chr.ok_or_else(|| error("Invalid CHR-ROM size: exceeds 64 bits"))?;
+        let RomSizes { prg_size, chr_size } = nes20_sizes(header);
+        let prg_size = prg_size.ok_or_else(|| error("Invalid PRG-ROM size: exceeds 64 bits"))?;
+        let chr_size = chr_size.ok_or_else(|| error("Invalid CHR-ROM size: exceeds 64 bits"))?;
         let console = match flags7 & CONSOLE_TYPE_MASK {
             CONSOLE_NES => Console::Standard,
             CONSOLE_VS_SYSTEM => Console::VsSystem(Some(header[CONSOLE_DETAIL])),

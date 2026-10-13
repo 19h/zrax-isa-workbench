@@ -277,7 +277,7 @@ fn plain_child<'a>(item: &Item, stored: &'a [u8], summary: &mut Summary) -> Chil
         summary.plugin_encrypted.push(label.clone());
         return Child::opaque(label, item.offset, stored);
     }
-    let (child, recognized) = recognized_or_opaque(label.clone(), item.offset, file);
+    let Component { child, recognized } = recognized_or_opaque(label.clone(), item.offset, file);
     if !recognized {
         summary.unrecognized.push(label);
     }

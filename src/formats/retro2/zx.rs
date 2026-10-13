@@ -167,6 +167,14 @@ fn machine(version: Z80Version, mode: u8, modify: bool) -> Option<Machine> {
     })
 }
 
+/// A memory block decoded from the `.z80` run-length scheme.
+struct DecodedBlock {
+    /// The decoded bytes.
+    bytes: Vec<u8>,
+    /// Input bytes the decoded bytes took.
+    consumed: usize,
+}
+
 /// Decode the `.z80` run-length scheme until `expected` bytes are out:
 /// `ED ED nn bb` is `nn` copies of `bb`, any other byte is itself. Returns
 /// the bytes and how much input they took.
@@ -174,7 +182,7 @@ fn machine(version: Z80Version, mode: u8, modify: bool) -> Option<Machine> {
 /// # Errors
 ///
 /// A run that overshoots `expected`, or input that ends first.
-fn decode_rle(input: &[u8], expected: usize) -> Result<(Vec<u8>, usize)> {
+fn decode_rle(input: &[u8], expected: usize) -> Result<DecodedBlock> {
     let mut output = Vec::with_capacity(expected);
     let mut pos = 0;
     while output.len() < expected {
@@ -207,7 +215,10 @@ fn decode_rle(input: &[u8], expected: usize) -> Result<(Vec<u8>, usize)> {
             }
         }
     }
-    Ok((output, pos))
+    Ok(DecodedBlock {
+        bytes: output,
+        consumed: pos,
+    })
 }
 
 /// The version a `.z80` header declares, if the header is plausible.
@@ -278,7 +289,10 @@ fn z80_v1<'a>(data: &'a [u8], header: &[u8]) -> Result<Snapshot<'a>> {
     let pc = u16::from_le_bytes([header[Z80_PC], header[Z80_PC + 1]]);
     let stored = &data[Z80_HEADER_SIZE..];
     let section = if is_compressed(header[Z80_FLAGS]) {
-        let (ram, consumed) = decode_rle(stored, RAM_48K)?;
+        let DecodedBlock {
+            bytes: ram,
+            consumed,
+        } = decode_rle(stored, RAM_48K)?;
         if stored[consumed..] != V1_END_MARKER {
             return Err(error(format!(
                 "Invalid .z80 version 1 data: the 48 KiB block does not end with 00 ED ED 00 at \
@@ -348,7 +362,7 @@ fn z80_paged(data: &[u8], version: Z80Version) -> Result<Snapshot<'_>> {
             )));
         }
         seen.push(page);
-        let (label, address) = page_location(machine, page, paged_bank);
+        let Location { label, address } = page_location(machine, page, paged_bank);
         let section = if length == UNCOMPRESSED_BLOCK {
             stored_section(
                 label,
@@ -358,7 +372,10 @@ fn z80_paged(data: &[u8], version: Z80Version) -> Result<Snapshot<'_>> {
             )
         } else {
             let stored = range(data, ".z80 page", contents, usize::from(length))?;
-            let (page_bytes, consumed) = decode_rle(stored, PAGE_SIZE)?;
+            let DecodedBlock {
+                bytes: page_bytes,
+                consumed,
+            } = decode_rle(stored, PAGE_SIZE)?;
             if consumed != stored.len() {
                 return Err(error(format!(
                     "Invalid .z80 page {page} at 0x{offset:X}: 16 KiB decoded from {consumed} of \
@@ -393,9 +410,17 @@ fn z80_paged(data: &[u8], version: Z80Version) -> Result<Snapshot<'_>> {
     })
 }
 
+/// Where a `.z80` page or a `.sna` bank is loaded.
+struct Location {
+    /// Section label naming the page or bank.
+    label: String,
+    /// Z80 address of its first byte.
+    address: u64,
+}
+
 /// A `.z80` page's label and Z80 address. 128K pages 3-10 are RAM banks
 /// 0-7; the 48K and `SamRam` pages map as [`PAGES_48K`] lists.
-fn page_location(machine: Machine, page: u8, paged_bank: Option<u8>) -> (String, u64) {
+fn page_location(machine: Machine, page: u8, paged_bank: Option<u8>) -> Location {
     if machine == Machine::K128 {
         return bank_location(page - FIRST_RAM_PAGE, paged_bank);
     }
@@ -403,27 +428,36 @@ fn page_location(machine: Machine, page: u8, paged_bank: Option<u8>) -> (String,
         .iter()
         .find(|(known, _, _)| *known == page)
         .map_or((RAM_START, ""), |(_, address, role)| (*address, *role));
-    (
-        format!(
+    Location {
+        label: format!(
             "RAM 0x{address:04X}-0x{:04X}{role} (page {page})",
             address + PAGE_SIZE as u64 - 1
         ),
         address,
-    )
+    }
 }
 
 /// A 128K RAM bank's label and address: bank 5 at 0x4000, bank 2 at
 /// 0x8000, the paged bank at 0xC000, and the others at 0xC000, where they
 /// can be paged in.
-fn bank_location(bank: u8, paged_bank: Option<u8>) -> (String, u64) {
+fn bank_location(bank: u8, paged_bank: Option<u8>) -> Location {
     match bank {
-        SCREEN_BANK => (format!("RAM bank {bank} (0x4000)"), RAM_START),
-        SECOND_BANK => (format!("RAM bank {bank} (0x8000)"), SECOND_BANK_ADDRESS),
-        _ if Some(bank) == paged_bank => (
-            format!("RAM bank {bank} (paged at 0xC000)"),
-            PAGED_BANK_ADDRESS,
-        ),
-        _ => (format!("RAM bank {bank} (paged out)"), PAGED_BANK_ADDRESS),
+        SCREEN_BANK => Location {
+            label: format!("RAM bank {bank} (0x4000)"),
+            address: RAM_START,
+        },
+        SECOND_BANK => Location {
+            label: format!("RAM bank {bank} (0x8000)"),
+            address: SECOND_BANK_ADDRESS,
+        },
+        _ if Some(bank) == paged_bank => Location {
+            label: format!("RAM bank {bank} (paged at 0xC000)"),
+            address: PAGED_BANK_ADDRESS,
+        },
+        _ => Location {
+            label: format!("RAM bank {bank} (paged out)"),
+            address: PAGED_BANK_ADDRESS,
+        },
     }
 }
 
@@ -566,7 +600,7 @@ fn push_sna_128k_banks<'a>(c: &mut Container<'a>, data: &'a [u8], paged: u8) {
     let first = [SCREEN_BANK, SECOND_BANK];
     let mut offset = SNA_HEADER_SIZE;
     for bank in first {
-        let (label, address) = bank_location(bank, paged_bank);
+        let Location { label, address } = bank_location(bank, paged_bank);
         c.sections.push(stored_section(
             label,
             address,
@@ -588,7 +622,7 @@ fn push_sna_128k_banks<'a>(c: &mut Container<'a>, data: &'a [u8], paged: u8) {
     ));
     offset = SNA_48K_SIZE + SNA_128K_EXTRA;
     for bank in (0..BANKS_128K).filter(|b| !first.contains(b) && *b != paged) {
-        let (label, address) = bank_location(bank, paged_bank);
+        let Location { label, address } = bank_location(bank, paged_bank);
         c.sections.push(stored_section(
             label,
             address,
@@ -619,9 +653,9 @@ mod tests {
 
     #[test]
     fn runs_expand_and_literals_pass_through() {
-        let (out, used) = decode_rle(&[1, ESCAPE, ESCAPE, 3, 7, ESCAPE, 2], 6).unwrap();
-        assert_eq!(out, vec![1, 7, 7, 7, ESCAPE, 2]);
-        assert_eq!(used, 7);
+        let decoded = decode_rle(&[1, ESCAPE, ESCAPE, 3, 7, ESCAPE, 2], 6).unwrap();
+        assert_eq!(decoded.bytes, vec![1, 7, 7, 7, ESCAPE, 2]);
+        assert_eq!(decoded.consumed, 7);
     }
 
     #[test]

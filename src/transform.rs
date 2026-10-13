@@ -49,6 +49,16 @@ pub enum Transform {
     },
 }
 
+/// Where transformed bytes are held in the stored input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredRange {
+    /// Offset in the stored input, in bytes.
+    pub offset: usize,
+    /// Size in the stored input, in bytes, including any spare areas
+    /// inside the range.
+    pub size: usize,
+}
+
 /// Every reading tried for an inconclusive raw input, in order.
 pub const CANDIDATES: &[Transform] = &[
     Transform::Swap16,
@@ -156,14 +166,20 @@ impl Transform {
     /// The stored range that holds `size` transformed bytes at `offset`,
     /// for spare-area removal; other transforms permute bytes across the
     /// whole input, so the stored range is the input itself.
-    pub fn stored_range(self, offset: usize, size: usize, input_len: usize) -> (usize, usize) {
+    pub fn stored_range(self, offset: usize, size: usize, input_len: usize) -> StoredRange {
         match self {
             Self::NandSpare { page, spare } if size > 0 => {
                 let stored = |o: usize| (o / page) * (page + spare) + o % page;
                 let start = stored(offset);
-                (start, stored(offset + size - 1) + 1 - start)
+                StoredRange {
+                    offset: start,
+                    size: stored(offset + size - 1) + 1 - start,
+                }
             }
-            _ => (0, input_len),
+            _ => StoredRange {
+                offset: 0,
+                size: input_len,
+            },
         }
     }
 }
@@ -268,8 +284,20 @@ mod tests {
         let data = transform.apply(&dump).unwrap();
         assert_eq!(data.len(), 2048);
         assert!(data.iter().all(|b| *b != 0xff));
-        assert_eq!(transform.stored_range(512, 512, dump.len()), (528, 512));
-        assert_eq!(transform.stored_range(500, 24, dump.len()), (500, 40));
+        assert_eq!(
+            transform.stored_range(512, 512, dump.len()),
+            StoredRange {
+                offset: 528,
+                size: 512
+            }
+        );
+        assert_eq!(
+            transform.stored_range(500, 24, dump.len()),
+            StoredRange {
+                offset: 500,
+                size: 40
+            }
+        );
         assert!(transform.apply(&dump[..dump.len() - 1]).is_none());
     }
 

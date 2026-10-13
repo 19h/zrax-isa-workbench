@@ -337,7 +337,7 @@ fn retry_without_spare(
             else {
                 continue;
             };
-            let (offset, size) = t.stored_range(offset, size, data.len());
+            let stored = t.stored_range(offset, size, data.len());
             if slice.decoded.is_none() {
                 slice.decoded = Some(DecodedRange {
                     transform: t.name(),
@@ -345,8 +345,8 @@ fn retry_without_spare(
                     size: slice.size,
                 });
             }
-            slice.offset = offset as u64;
-            slice.size = size as u64;
+            slice.offset = stored.offset as u64;
+            slice.size = stored.size as u64;
         }
         return Some(inner);
     }

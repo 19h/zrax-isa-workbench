@@ -249,15 +249,29 @@ fn name_list(names: &[String], limit: usize) -> String {
 /// format that needs its whole input is not recognized from a prefix.
 const RECOGNITION_PREFIX: usize = 64 << 10;
 
+/// A component and whether recognition admitted it for analysis.
+struct Component<'a> {
+    /// The component: stored when recognized, opaque otherwise.
+    child: Child<'a>,
+    /// Its first bytes start a format the classifier recognizes.
+    recognized: bool,
+}
+
 /// A component that is analyzed only when its first bytes start a format
 /// the classifier recognizes; anything else is listed as opaque data,
 /// because no field of these images says that it is code.
-fn recognized_or_opaque(label: String, offset: usize, bytes: &[u8]) -> (Child<'_>, bool) {
+fn recognized_or_opaque(label: String, offset: usize, bytes: &[u8]) -> Component<'_> {
     let prefix = &bytes[..bytes.len().min(RECOGNITION_PREFIX)];
     if container::is_recognized(prefix) {
-        (Child::stored(label, offset, bytes), true)
+        Component {
+            child: Child::stored(label, offset, bytes),
+            recognized: true,
+        }
     } else {
-        (Child::opaque(label, offset, bytes), false)
+        Component {
+            child: Child::opaque(label, offset, bytes),
+            recognized: false,
+        }
     }
 }
 

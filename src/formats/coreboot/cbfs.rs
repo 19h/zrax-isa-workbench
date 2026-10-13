@@ -282,13 +282,13 @@ struct Entry<'a> {
 
 impl Entry<'_> {
     fn content(&self) -> Content {
-        file_type(self.file_type).map_or(Content::Recognized, |(_, content)| content)
+        file_type(self.file_type).map_or(Content::Recognized, |known| known.content)
     }
 
     fn type_name(&self) -> String {
         file_type(self.file_type).map_or_else(
             || format!("type 0x{:X}", self.file_type),
-            |(name, _)| name.to_string(),
+            |known| known.name.to_string(),
         )
     }
 
@@ -336,11 +336,20 @@ struct HashTally {
     unchecked: usize,
 }
 
-fn file_type(value: u32) -> Option<(&'static str, Content)> {
+/// A file type listed in [`FILE_TYPES`].
+struct FileType {
+    /// `enum cbfs_type` name without its `CBFS_TYPE_` prefix.
+    name: &'static str,
+    /// What files of this type hold.
+    content: Content,
+}
+
+/// The listed file type with `value`, if any.
+fn file_type(value: u32) -> Option<FileType> {
     FILE_TYPES
         .iter()
         .find(|(id, _, _)| *id == value)
-        .map(|(_, name, content)| (*name, *content))
+        .map(|&(_, name, content)| FileType { name, content })
 }
 
 /// The message of a content error, for a note.
@@ -809,16 +818,27 @@ fn push_child<'a>(c: &mut Container<'a>, child: Child<'a>, policy: Policy, budge
     c.children.push(child);
 }
 
+/// How a file's data is compressed.
+struct FileCompression {
+    /// `CBFS_COMPRESS_*`; `COMPRESS_NONE` without a compression attribute.
+    algorithm: u32,
+    /// Declared decoded size in bytes; 0 without a compression attribute.
+    decoded_size: usize,
+}
+
 /// The compression attribute's algorithm and decoded size, or no
 /// compression.
-fn attribute_compression(entry: &Entry<'_>) -> (u32, usize) {
-    entry
-        .attributes
-        .compression
-        .as_ref()
-        .map_or((COMPRESS_NONE, 0), |a| {
-            (a.algorithm, a.decoded_size as usize)
-        })
+fn attribute_compression(entry: &Entry<'_>) -> FileCompression {
+    entry.attributes.compression.as_ref().map_or(
+        FileCompression {
+            algorithm: COMPRESS_NONE,
+            decoded_size: 0,
+        },
+        |a| FileCompression {
+            algorithm: a.algorithm,
+            decoded_size: a.decoded_size as usize,
+        },
+    )
 }
 
 /// Legacy stage (`struct cbfs_stage`, little-endian): compression (u32),
@@ -885,7 +905,10 @@ fn stage<'a>(entry: &Entry<'a>, notes: &mut Vec<String>) -> Result<Stored<'a>> {
         note.push_str("; the entry lies outside the stage's memory");
     }
     notes.push(note);
-    let (compression, decoded_size) = attribute_compression(entry);
+    let FileCompression {
+        algorithm: compression,
+        decoded_size,
+    } = attribute_compression(entry);
     Ok(Stored {
         label: entry.label(),
         offset: entry.data_offset,
@@ -991,7 +1014,10 @@ fn add_file<'a>(
     budget: &mut Budget,
     tally: &mut HashTally,
 ) {
-    let (compression, decoded_size) = attribute_compression(entry);
+    let FileCompression {
+        algorithm: compression,
+        decoded_size,
+    } = attribute_compression(entry);
     let codec = match compression {
         COMPRESS_NONE => String::new(),
         COMPRESS_LZMA => format!("; LZMA, {decoded_size} B decoded size declared"),

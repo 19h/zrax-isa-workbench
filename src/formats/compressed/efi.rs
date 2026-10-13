@@ -577,19 +577,27 @@ mod tests {
         w.put(count_bits, bits32(symbol));
     }
 
+    /// A prefix code the test encoder writes symbols with.
+    struct EncoderCode {
+        /// Code length of each symbol in bits; 0 for an unused symbol.
+        lengths: Vec<u8>,
+        /// Canonical code of each symbol, `lengths[symbol]` bits wide.
+        codes: Vec<u32>,
+    }
+
     /// A code over `used` symbols: written as a single symbol when only one
     /// is used, else as flat lengths. Returns the lengths and codes.
-    fn code_for(alphabet: usize, used: &[usize]) -> Option<(Vec<u8>, Vec<u32>)> {
+    fn code_for(alphabet: usize, used: &[usize]) -> Option<EncoderCode> {
         (used.len() > 1).then(|| {
             let lengths = flat_lengths(alphabet, used);
             let codes = canonical_codes(&lengths);
-            (lengths, codes)
+            EncoderCode { lengths, codes }
         })
     }
 
-    fn put_symbol(w: &mut BitWriter, code: Option<&(Vec<u8>, Vec<u32>)>, symbol: usize) {
-        if let Some((lengths, codes)) = code {
-            w.put(u32::from(lengths[symbol]), codes[symbol]);
+    fn put_symbol(w: &mut BitWriter, code: Option<&EncoderCode>, symbol: usize) {
+        if let Some(code) = code {
+            w.put(u32::from(code.lengths[symbol]), code.codes[symbol]);
         }
     }
 
@@ -628,7 +636,7 @@ mod tests {
         let c_code = match c_lengths {
             Some(lengths) => {
                 let codes = canonical_codes(&lengths);
-                Some((lengths, codes))
+                Some(EncoderCode { lengths, codes })
             }
             None => code_for(NC, &c_used),
         };
@@ -638,7 +646,7 @@ mod tests {
                 put_single(w, TBIT, 0);
                 put_single(w, CBIT, c_used[0]);
             }
-            Some((lengths, _)) => {
+            Some(EncoderCode { lengths, .. }) => {
                 let number = lengths.iter().rposition(|&l| l > 0).unwrap() + 1;
                 let mut t_used: Vec<usize> = lengths[..number]
                     .iter()
@@ -649,7 +657,7 @@ mod tests {
                 let t_code = code_for(NT, &t_used);
                 match &t_code {
                     None => put_single(w, TBIT, t_used[0]),
-                    Some((t_lengths, _)) => put_pt_code(w, t_lengths, TBIT, Some(3)),
+                    Some(code) => put_pt_code(w, &code.lengths, TBIT, Some(3)),
                 }
                 w.put(CBIT, bits32(number));
                 for &l in &lengths[..number] {
@@ -661,7 +669,7 @@ mod tests {
         let p_code = code_for(MAXNP, &p_used);
         match &p_code {
             None => put_single(w, variant.position_bits(), p_used[0]),
-            Some((p_lengths, _)) => put_pt_code(w, p_lengths, variant.position_bits(), None),
+            Some(code) => put_pt_code(w, &code.lengths, variant.position_bits(), None),
         }
         for t in tokens {
             put_symbol(w, c_code.as_ref(), c_symbol(t));

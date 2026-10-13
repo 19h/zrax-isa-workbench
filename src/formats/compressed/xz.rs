@@ -247,9 +247,17 @@ fn decode_block(filters: &[Filter], input: &mut &[u8], limit: usize) -> Result<V
     read_capped(reader, limit, "xz")
 }
 
+/// Where a decoded stream ends and how its blocks are checked.
+struct StreamEnd {
+    /// Offset just after the stream footer.
+    end: usize,
+    /// Check type from the stream flags (section 2.1.1.2).
+    check: u8,
+}
+
 /// Decode one stream starting at `start`, appending to `out`. Returns the
 /// stream's end offset and its check type.
-fn stream(data: &[u8], start: usize, out: &mut Vec<u8>, limit: usize) -> Result<(usize, u8)> {
+fn stream(data: &[u8], start: usize, out: &mut Vec<u8>, limit: usize) -> Result<StreamEnd> {
     let header = slice(data, start, STREAM_HEADER_SIZE)?;
     if header[..6] != XZ_MAGIC {
         return Err(error(format!("Missing xz stream header at 0x{start:X}")));
@@ -311,7 +319,10 @@ fn stream(data: &[u8], start: usize, out: &mut Vec<u8>, limit: usize) -> Result<
     if backward != index_size as u64 {
         return Err(error("Invalid xz backward size"));
     }
-    Ok((footer_start + STREAM_HEADER_SIZE, check))
+    Ok(StreamEnd {
+        end: footer_start + STREAM_HEADER_SIZE,
+        check,
+    })
 }
 
 /// Validate the index at `start` against the decoded blocks; returns its
@@ -343,7 +354,7 @@ pub(super) fn xz(data: &[u8], limit: usize) -> Result<Decoded> {
     let mut pos = 0;
     let mut checks = Vec::new();
     loop {
-        let (end, check) = stream(data, pos, &mut out, limit)?;
+        let StreamEnd { end, check } = stream(data, pos, &mut out, limit)?;
         checks.push(check);
         pos = end;
         while data.get(pos..pos + 4).is_some_and(is_zero) {

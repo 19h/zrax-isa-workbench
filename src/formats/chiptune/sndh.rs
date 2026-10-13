@@ -123,11 +123,23 @@ struct Tags {
     stopped: Option<usize>,
 }
 
+/// A NUL-terminated string tag argument.
+struct NulString {
+    /// The text, at most [`MAX_TEXT`] characters.
+    text: String,
+    /// File offset after the terminating NUL; past the end of the file
+    /// when the NUL is missing.
+    next: usize,
+}
+
 /// The NUL-terminated string at `at` and the offset after its NUL.
-fn nul_string(data: &[u8], at: usize) -> (String, usize) {
+fn nul_string(data: &[u8], at: usize) -> NulString {
     let rest = data.get(at..).unwrap_or_default();
     let len = rest.iter().position(|b| *b == 0).unwrap_or(rest.len());
-    (bounded_text(&rest[..len], MAX_TEXT), at + len + 1)
+    NulString {
+        text: bounded_text(&rest[..len], MAX_TEXT),
+        next: at + len + 1,
+    }
 }
 
 /// `prefix` and two decimal digits.
@@ -156,7 +168,7 @@ fn read_tags(data: &[u8]) -> Tags {
             continue;
         }
         if let Some((_, field)) = STRING_TAGS.iter().find(|(id, _)| rest.starts_with(*id)) {
-            let (text, next) = nul_string(data, pos + MAGIC.len());
+            let NulString { text, next } = nul_string(data, pos + MAGIC.len());
             tags.strings.push((field, text));
             pos = next;
             continue;
@@ -184,7 +196,7 @@ fn read_tags(data: &[u8]) -> Tags {
             continue;
         }
         if rest.starts_with(FLAGS) {
-            let (text, next) = nul_string(data, pos + FLAGS.len());
+            let NulString { text, next } = nul_string(data, pos + FLAGS.len());
             tags.flags = Some(text);
             pos = next;
             continue;

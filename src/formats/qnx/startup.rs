@@ -494,7 +494,7 @@ fn stored_image<'a>(c: &mut Container<'a>, data: &'a [u8], h: &StartupHeader) ->
 /// reports.
 fn decoded_image<'a>(c: &mut Container<'a>, data: &'a [u8], h: &StartupHeader, codec: Codec) {
     let stream = &data[h.startup_end..h.stored_end - TRAILER_SIZE];
-    let (image, blocks) = match decode(stream, h, codec) {
+    let DecodedImage { image, blocks } = match decode(stream, h, codec) {
         Ok(decoded) => decoded,
         Err(e) => {
             let note = format!(
@@ -557,10 +557,18 @@ fn push_opaque_image<'a>(c: &mut Container<'a>, data: &'a [u8], h: &StartupHeade
         .push(Child::opaque(COMPRESSED_LABEL, h.startup_end, stored));
 }
 
+/// A compressed image filesystem after decoding.
+struct DecodedImage {
+    /// The decoded image filesystem, `imagefs_size` bytes.
+    image: Vec<u8>,
+    /// Number of blocks in a block stream; `None` for a gzip stream.
+    blocks: Option<usize>,
+}
+
 /// Decode the compressed stream (padding included, trailer excluded) into
 /// exactly `imagefs_size` bytes. Returns the bytes and, for block streams,
 /// the number of blocks.
-fn decode(stream: &[u8], h: &StartupHeader, codec: Codec) -> Result<(Vec<u8>, Option<usize>)> {
+fn decode(stream: &[u8], h: &StartupHeader, codec: Codec) -> Result<DecodedImage> {
     if h.imagefs_size > MAX_PAYLOAD {
         return Err(error(format!(
             "imagefs_size {} exceeds the {} extraction limit",
@@ -603,7 +611,7 @@ fn decode(stream: &[u8], h: &StartupHeader, codec: Codec) -> Result<(Vec<u8>, Op
             h.imagefs_size
         )));
     }
-    Ok((image, blocks))
+    Ok(DecodedImage { image, blocks })
 }
 
 /// A UCL-compressed image filesystem: its block framing is checked, but the

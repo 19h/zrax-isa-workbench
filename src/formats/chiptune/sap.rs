@@ -186,23 +186,38 @@ fn apply_tag(header: &mut Header, line: &[u8], at: usize) -> Result<()> {
     Ok(())
 }
 
+/// The header tags and where the binary part after them starts.
+struct HeaderLines {
+    /// The tags read from the header lines.
+    header: Header,
+    /// File offset of the binary part: the first block, or the `TYPE R`
+    /// register dump.
+    binary_at: usize,
+}
+
 /// The header lines after `SAP`; returns the header and the offset of the
 /// binary part. For `TYPE R` the first line that is not a tag starts the
 /// register dump.
-fn read_header(data: &[u8]) -> Result<(Header, usize)> {
+fn read_header(data: &[u8]) -> Result<HeaderLines> {
     let mut header = Header::default();
     let mut pos = MAGIC.len();
     loop {
         let rest = &data[pos..];
         if rest.is_empty() || rest.starts_with(&BLOCK_MARKER) {
-            return Ok((header, pos));
+            return Ok(HeaderLines {
+                header,
+                binary_at: pos,
+            });
         }
         let line_end = rest.iter().position(|b| *b == b'\n');
         let line = line_end.map_or(rest, |end| &rest[..end]);
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         if !is_header_line(line) {
             if header.player_type == Some(TYPE_R) {
-                return Ok((header, pos));
+                return Ok(HeaderLines {
+                    header,
+                    binary_at: pos,
+                });
             }
             return Err(error(format!("Invalid SAP header line at 0x{pos:X}")));
         }
@@ -256,7 +271,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     if !data.starts_with(MAGIC) {
         return Err(error("Missing SAP header line"));
     }
-    let (header, binary_at) = read_header(data)?;
+    let HeaderLines { header, binary_at } = read_header(data)?;
     let player_type = check_required(&header)?;
     let mut c = Container::new(FileFormat::Sap, Layout::Sap.label(), "sap");
     c.consumed = data.len();

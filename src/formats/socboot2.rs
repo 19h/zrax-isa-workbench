@@ -168,6 +168,16 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     }
 }
 
+/// What one of the three ISA-naming header fields (the eGON jump
+/// instruction, `GFH_BROM_CFG`, `booting_image_config`) establishes.
+struct IsaEvidence {
+    /// The target the field names; `None` when it names none, so the code
+    /// model classifies the extracted code.
+    target: Option<Target>,
+    /// The note that states the field's value and what it establishes.
+    note: String,
+}
+
 fn error(message: impl Into<String>) -> ClassifierError {
     ClassifierError::SocBoot2ParseError {
         message: message.into(),

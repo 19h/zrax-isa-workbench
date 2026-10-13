@@ -12,7 +12,7 @@
 //! translates its pointers by the ROM offset; `dumprom.cpp` reads the FILES
 //! entries right after the TOC.
 
-use super::memory::Memory;
+use super::memory::{Memory, Region};
 use super::*;
 use crate::formats::coff;
 use crate::formats::container::{self, Child, Container, Target, MAX_COMPONENTS};
@@ -674,7 +674,7 @@ impl Components {
             let located = translation
                 .storage(section.data_pointer)
                 .and_then(|address| memory.stored(address, size));
-            let Some((offset, bytes)) = located else {
+            let Some(Region { offset, bytes, .. }) = located else {
                 self.split_code += 1;
                 continue;
             };
@@ -716,7 +716,7 @@ impl Components {
         let located = translation
             .storage(file.load_pointer)
             .and_then(|address| memory.stored(address, to_usize(file.stored_size)));
-        let Some((offset, bytes)) = located else {
+        let Some(Region { offset, bytes, .. }) = located else {
             self.split_files += 1;
             return;
         };

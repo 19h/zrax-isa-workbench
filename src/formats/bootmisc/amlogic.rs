@@ -291,7 +291,8 @@ fn child<'a>(item: &Item<'a>, summary: &mut Summary) -> Child<'a> {
             Child::opaque(label, item.offset, item.bytes)
         }
         Role::Generic => {
-            let (child, recognized) = recognized_or_opaque(label.clone(), item.offset, item.bytes);
+            let Component { child, recognized } =
+                recognized_or_opaque(label.clone(), item.offset, item.bytes);
             if !recognized {
                 summary.unrecognized.push(label);
             }

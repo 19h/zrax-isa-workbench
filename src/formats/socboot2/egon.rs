@@ -199,14 +199,14 @@ pub(crate) fn decode_jump(word: u32) -> Option<Jump> {
 /// The target the jump instruction names, and the note that states it.
 /// A jump counts as evidence only when it lands inside the image, past the
 /// shared header fields.
-fn jump_target(word: u32, length: usize) -> (Option<Target>, String) {
+fn jump_target(word: u32, length: usize) -> IsaEvidence {
     let Some(jump) = decode_jump(word) else {
-        return (
-            None,
-            format!(
+        return IsaEvidence {
+            target: None,
+            note: format!(
                 "Jump instruction 0x{word:08X} is neither an A32 B nor a RISC-V JAL x0; ISA from the code model"
             ),
-        );
+        };
     };
     let (name, target, caveat) = match jump.kind {
         JumpKind::Arm => (
@@ -227,23 +227,37 @@ fn jump_target(word: u32, length: usize) -> (Option<Target>, String) {
             "Jump instruction 0x{word:08X} ({name}) targets image offset {}, outside the image code; ISA from the code model",
             jump.target
         );
-        return (None, note);
+        return IsaEvidence { target: None, note };
     }
     let note = format!(
         "Boot ROM entry ISA from the jump instruction 0x{word:08X}: {name} to image offset 0x{:X}; {caveat}",
         jump.target
     );
-    (Some(target), note)
+    IsaEvidence {
+        target: Some(target),
+        note,
+    }
 }
 
-/// `SPL` signature version as `(major, minor)`, when U-Boot wrote one.
-/// `header` is the 0x60-byte eGON header.
-fn spl_version(header: &[u8]) -> Option<(u8, u8)> {
+/// A U-Boot `SPL` header version, split from the version byte at 0x17.
+struct SplVersion {
+    /// Bits 7:5 of the version byte.
+    major: u8,
+    /// Bits 4:0 of the version byte.
+    minor: u8,
+}
+
+/// `SPL` signature version, when U-Boot wrote one. `header` is the
+/// 0x60-byte eGON header.
+fn spl_version(header: &[u8]) -> Option<SplVersion> {
     if &header[SPL_SIGNATURE..SPL_SIGNATURE + SPL_MAGIC.len()] != SPL_MAGIC {
         return None;
     }
     let version = header[SPL_VERSION];
-    Some((version >> SPL_MINOR_BITS, version & SPL_MINOR_MASK))
+    Some(SplVersion {
+        major: version >> SPL_MINOR_BITS,
+        minor: version & SPL_MINOR_MASK,
+    })
 }
 
 /// The NUL-terminated device tree name an SPL header (version 0.2 and
@@ -262,7 +276,7 @@ fn dt_name(image: &[u8], header: &[u8]) -> Option<String> {
 
 /// SPL header version and device tree name, as notes and metadata.
 fn describe_spl(c: &mut Container<'_>, image: &[u8], header: &[u8]) {
-    let Some((major, minor)) = spl_version(header) else {
+    let Some(SplVersion { major, minor }) = spl_version(header) else {
         return;
     };
     c.notes
@@ -293,10 +307,10 @@ pub(super) fn parse_egon(data: &[u8]) -> Result<Container<'_>> {
     let checksum = le_u32(header, CHECKSUM)?;
     verify_checksum(image, CHECKSUM, checksum, "eGON")?;
     let word = le_u32(header, JUMP_INSTRUCTION)?;
-    let (target, jump_note) = jump_target(word, length);
+    let evidence = jump_target(word, length);
 
     let mut c = Container::new(FileFormat::AllwinnerEgon, Layout::Egon.label(), "allwinner");
-    c.target = target;
+    c.target = evidence.target;
     c.consumed = length;
     // The section is the image itself; it must never be detected again as
     // an eGON container.
@@ -305,7 +319,7 @@ pub(super) fn parse_egon(data: &[u8]) -> Result<Container<'_>> {
         "Allwinner eGON.BT0 boot image; checksum 0x{checksum:08X} verified over {}",
         size_text(length)
     ));
-    c.notes.push(jump_note);
+    c.notes.push(evidence.note);
     c.notes.push(
         "The SRAM load address is not encoded; the section address is the image offset".into(),
     );
@@ -351,10 +365,18 @@ fn toc0_item_name(name: u32) -> String {
     }
 }
 
+/// A TOC0 image whose main header passed `toc0_verify`'s checks.
+struct Toc0Image<'a> {
+    /// The checksummed image: the first `length` bytes of the file.
+    image: &'a [u8],
+    /// The main header's checksum, verified over `image`.
+    checksum: u32,
+}
+
 /// The TOC0 main header and its checksummed image, checked in the order of
 /// U-Boot's `toc0_verify`: length against the file, name and magic,
 /// checksum, length alignment, end marker.
-fn toc0_image(data: &[u8]) -> Result<(&[u8], u32)> {
+fn toc0_image(data: &[u8]) -> Result<Toc0Image<'_>> {
     let main = range(data, 0, TOC0_MAIN_SIZE, "TOC0 main header")?;
     let length = le_size(main, TOC0_LENGTH)?;
     let image = range(data, 0, length, "TOC0 image")?;
@@ -376,11 +398,11 @@ fn toc0_image(data: &[u8]) -> Result<(&[u8], u32)> {
     if &main[TOC0_MAIN_END..TOC0_MAIN_SIZE] != TOC0_END {
         return Err(error("Missing TOC0 main header end marker MIE;"));
     }
-    Ok((image, checksum))
+    Ok(Toc0Image { image, checksum })
 }
 
 pub(super) fn parse_toc0(data: &[u8]) -> Result<Container<'_>> {
-    let (image, checksum) = toc0_image(data)?;
+    let Toc0Image { image, checksum } = toc0_image(data)?;
     let length = image.len();
     let count = le_size(image, TOC0_NUM_ITEMS)?;
     if count > (length - TOC0_MAIN_SIZE) / TOC0_ITEM_SIZE {
@@ -467,11 +489,11 @@ mod tests {
     #[test]
     fn jumps_outside_the_image_code_name_no_target() {
         // B to offset 0x10 lands in the checksum and length fields.
-        assert!(jump_target(0xea00_0002, 0x200).0.is_none());
+        assert!(jump_target(0xea00_0002, 0x200).target.is_none());
         // B to 0x60 in an image of exactly 0x60 bytes.
-        assert!(jump_target(0xea00_0016, 0x60).0.is_none());
+        assert!(jump_target(0xea00_0016, 0x60).target.is_none());
         assert_eq!(
-            jump_target(0xea00_0016, 0x200).0,
+            jump_target(0xea00_0016, 0x200).target,
             Some(Target::new(Isa::Arm, 32, Endianness::Little))
         );
     }

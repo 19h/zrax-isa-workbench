@@ -34,8 +34,16 @@ const FIRST_MEMBER: usize = 22;
 /// The first member's name.
 const ATTACHMENT: &str = "attach.att";
 
+/// A parsed member record.
+struct Member<'a> {
+    /// The member's payload as a component.
+    child: Child<'a>,
+    /// File offset just past the payload: the next member or the tail.
+    end: usize,
+}
+
 /// One member record and the offset after it.
-fn member<'a>(data: &'a [u8], pos: usize, notes: &mut Vec<String>) -> Result<(Child<'a>, usize)> {
+fn member<'a>(data: &'a [u8], pos: usize, notes: &mut Vec<String>) -> Result<Member<'a>> {
     let name_len = usize::from(be_u16(data, pos)?);
     let name_bytes = slice(data, pos + 2, name_len)?;
     let name = String::from_utf8_lossy(name_bytes).to_string();
@@ -59,7 +67,10 @@ fn member<'a>(data: &'a [u8], pos: usize, notes: &mut Vec<String>) -> Result<(Ch
         // formats (plain S-record text) are listed.
         Child::stored(name, payload_at, payload).if_recognized()
     };
-    Ok((child, payload_at + payload_len))
+    Ok(Member {
+        child,
+        end: payload_at + payload_len,
+    })
 }
 
 pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
@@ -101,15 +112,16 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     c.notes.push(
         "Layout from community reverse engineering of Techstream; no field names a CPU".into(),
     );
-    let (first, mut pos) = member(image, FIRST_MEMBER, &mut c.notes)?;
-    c.children.push(first);
+    let first = member(image, FIRST_MEMBER, &mut c.notes)?;
+    c.children.push(first.child);
+    let mut pos = first.end;
     if MEMBER_LIST_FORMATS.contains(&format_type) {
         let count = usize::from(*slice(image, pos, 1)?.first().expect("one byte"));
         pos += 1;
         for _ in 0..count {
-            let (child, next) = member(image, pos, &mut c.notes)?;
-            c.children.push(child);
-            pos = next;
+            let record = member(image, pos, &mut c.notes)?;
+            c.children.push(record.child);
+            pos = record.end;
         }
         if pos != total {
             return Err(error(format!(

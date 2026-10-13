@@ -332,24 +332,26 @@ fn sbl_header_offset(data: &[u8], notes: &mut Vec<String>) -> Result<usize> {
 }
 
 /// The instruction set `booting_image_config` names, and its note.
-fn booting_image_target(config: u32) -> (Option<Target>, String) {
+fn booting_image_target(config: u32) -> IsaEvidence {
     match config {
-        SBL_AARCH64 => (
-            Some(Target::new(Isa::AArch64, 64, Endianness::Little)),
-            "booting_image_config 0xF: AArch64 SBL".into(),
-        ),
-        SBL_AARCH32 => (
-            Some(Target::without_byte_order(Isa::Arm, 32)),
-            "booting_image_config 0x0: AArch32 SBL".into(),
-        ),
-        SBL_CONFIG_UNSET => (
-            None,
-            "booting_image_config is unset; the header names no instruction set".into(),
-        ),
-        other => (
-            None,
-            format!("booting_image_config 0x{other:X} is not a documented value; no instruction set claimed"),
-        ),
+        SBL_AARCH64 => IsaEvidence {
+            target: Some(Target::new(Isa::AArch64, 64, Endianness::Little)),
+            note: "booting_image_config 0xF: AArch64 SBL".into(),
+        },
+        SBL_AARCH32 => IsaEvidence {
+            target: Some(Target::without_byte_order(Isa::Arm, 32)),
+            note: "booting_image_config 0x0: AArch32 SBL".into(),
+        },
+        SBL_CONFIG_UNSET => IsaEvidence {
+            target: None,
+            note: "booting_image_config is unset; the header names no instruction set".into(),
+        },
+        other => IsaEvidence {
+            target: None,
+            note: format!(
+                "booting_image_config 0x{other:X} is not a documented value; no instruction set claimed"
+            ),
+        },
     }
 }
 
@@ -377,20 +379,20 @@ pub(super) fn parse_sbl(data: &[u8]) -> Result<Container<'_>> {
             fields.image_size, fields.code_size
         )));
     }
-    let (target, isa_note) = booting_image_target(le_u32(header, SBL_BOOTING_IMAGE_CONFIG)?);
+    let evidence = booting_image_target(le_u32(header, SBL_BOOTING_IMAGE_CONFIG)?);
 
     let mut c = Container::new(
         FileFormat::QualcommMbn,
         Layout::QualcommSbl.label(),
         "qualcomm",
     );
-    c.target = target;
+    c.target = evidence.target;
     c.notes
         .push("Qualcomm SBL MBN, 80-byte header (codeword 0x844BDCD1, magic 0x73D71034)".into());
     c.notes.append(&mut notes);
-    c.notes.push(isa_note);
+    c.notes.push(evidence.note);
     describe_image_id(&mut c, image_id);
-    let end = push_image(&mut c, data, image_src, &fields, target)?;
+    let end = push_image(&mut c, data, image_src, &fields, evidence.target)?;
     c.consumed = end;
     if let Some(member) = trailing_member(data, end, &mut c.notes) {
         c.children.push(member);
@@ -405,15 +407,15 @@ mod tests {
     #[test]
     fn booting_image_config_names_only_documented_values() {
         assert_eq!(
-            booting_image_target(SBL_AARCH64).0,
+            booting_image_target(SBL_AARCH64).target,
             Some(Target::new(Isa::AArch64, 64, Endianness::Little))
         );
         assert_eq!(
-            booting_image_target(SBL_AARCH32).0,
+            booting_image_target(SBL_AARCH32).target,
             Some(Target::without_byte_order(Isa::Arm, 32))
         );
-        assert!(booting_image_target(SBL_CONFIG_UNSET).0.is_none());
-        assert!(booting_image_target(7).0.is_none());
+        assert!(booting_image_target(SBL_CONFIG_UNSET).target.is_none());
+        assert!(booting_image_target(7).target.is_none());
     }
 
     #[test]

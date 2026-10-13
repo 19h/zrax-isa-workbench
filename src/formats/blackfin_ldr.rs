@@ -139,9 +139,19 @@ struct Block {
     init: bool,
 }
 
+/// What a block walk found.
+struct Walk {
+    /// The loaded blocks, in file order.
+    blocks: Vec<Block>,
+    /// File offset just past the last final block.
+    end: usize,
+    /// Number of boot streams, one per final block.
+    streams: usize,
+}
+
 /// Walk `BF54x`-style blocks from 0. Returns the loaded blocks, the end
 /// offset and the number of boot streams.
-fn bf54x_blocks(data: &[u8]) -> Result<(Vec<Block>, usize, usize)> {
+fn bf54x_blocks(data: &[u8]) -> Result<Walk> {
     let mut pos = 0;
     let mut blocks = Vec::new();
     let mut streams = 0;
@@ -169,7 +179,11 @@ fn bf54x_blocks(data: &[u8]) -> Result<(Vec<Block>, usize, usize)> {
         if code & BFLAG_FINAL != 0 {
             streams += 1;
             if !is_bf54x_header(data, pos) {
-                return Ok((blocks, pos, streams));
+                return Ok(Walk {
+                    blocks,
+                    end: pos,
+                    streams,
+                });
             }
         }
         if blocks.len() > MAX_COMPONENTS {
@@ -178,8 +192,9 @@ fn bf54x_blocks(data: &[u8]) -> Result<(Vec<Block>, usize, usize)> {
     }
 }
 
-/// Walk `BF53x`-style blocks from `start` to the final block.
-fn bf53x_blocks(data: &[u8], start: usize) -> Result<(Vec<Block>, usize)> {
+/// Walk `BF53x`-style blocks from `start` to the final block, which ends
+/// the only boot stream.
+fn bf53x_blocks(data: &[u8], start: usize) -> Result<Walk> {
     let first = le_u32(data, start)?;
     if first & BF53X_FIRST_ADDRESS_MASK != BF53X_FIRST_ADDRESS {
         return Err(error(format!(
@@ -209,7 +224,11 @@ fn bf53x_blocks(data: &[u8], start: usize) -> Result<(Vec<Block>, usize)> {
         }
         pos = data_at + stored;
         if flags & BF53X_FINAL != 0 {
-            return Ok((blocks, pos));
+            return Ok(Walk {
+                blocks,
+                end: pos,
+                streams: 1,
+            });
         }
         if blocks.len() > MAX_COMPONENTS {
             return Err(error("LDR stream has too many blocks"));
@@ -225,18 +244,18 @@ fn bf53x_blocks(data: &[u8], start: usize) -> Result<(Vec<Block>, usize)> {
 /// beyond the file, a stream without a final block, or non-padding bytes
 /// after it.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
-    let (blocks, end, streams) = match layout {
+    let Walk {
+        blocks,
+        end,
+        streams,
+    } = match layout {
         Layout::Bf54x => bf54x_blocks(data)?,
-        Layout::Bf53x => {
-            let (blocks, end) = bf53x_blocks(data, 0)?;
-            (blocks, end, 1)
-        }
+        Layout::Bf53x => bf53x_blocks(data, 0)?,
         Layout::Bf56x => {
             if data.len() <= BF56X_GLOBAL_HEADER || data[3] >> 4 != BF56X_SIGNATURE {
                 return Err(error("Missing BF56x LDR global header"));
             }
-            let (blocks, end) = bf53x_blocks(data, BF56X_GLOBAL_HEADER)?;
-            (blocks, end, 1)
+            bf53x_blocks(data, BF56X_GLOBAL_HEADER)?
         }
     };
     if !is_padding(&data[end..]) {

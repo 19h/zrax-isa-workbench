@@ -519,6 +519,16 @@ pub(super) enum Placement {
     Children(&'static str),
 }
 
+/// The volumes [`sequence`] found in a region.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct VolumeSequence {
+    /// Number of volumes found.
+    pub(super) volumes: usize,
+    /// Offset in `data` where the last volume ends, or the region start
+    /// when there is none.
+    pub(super) end: usize,
+}
+
 /// Walk `data[start..end]` as a sequence of volumes separated by padding.
 /// Non-padding bytes between volumes are listed when they are a
 /// recognized format. Returns how many volumes were found and where the
@@ -530,7 +540,7 @@ pub(super) fn sequence<'a>(
     start: usize,
     end: usize,
     placement: Placement,
-) -> Result<(usize, usize)> {
+) -> Result<VolumeSequence> {
     let mut scan = Scan::default();
     let mut pos = start;
     let mut found = 0;
@@ -565,7 +575,10 @@ pub(super) fn sequence<'a>(
             "Firmware volume scan stopped after {MAX_VOLUME_CANDIDATES} candidate signatures"
         ));
     }
-    Ok((found, last_end))
+    Ok(VolumeSequence {
+        volumes: found,
+        end: last_end,
+    })
 }
 
 /// List `data[from..to]` when it holds more than padding; only recognized
@@ -628,7 +641,7 @@ pub(super) fn parse(data: &[u8], layout: Layout) -> Result<Container<'_>> {
         base: start,
     };
     let first = walk_volume(&mut c, &mut budget, stream, 0)?;
-    let (further, end) = sequence(
+    let further = sequence(
         &mut c,
         &mut budget,
         data,
@@ -636,11 +649,11 @@ pub(super) fn parse(data: &[u8], layout: Layout) -> Result<Container<'_>> {
         data.len(),
         Placement::Inline,
     )?;
-    c.consumed = end;
-    if further > 0 {
+    c.consumed = further.end;
+    if further.volumes > 0 {
         c.notes.push(format!(
             "{} after the first one",
-            count(further, "further firmware volume")
+            count(further.volumes, "further firmware volume")
         ));
     }
     c.notes.push(

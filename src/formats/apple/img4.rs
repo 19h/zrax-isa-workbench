@@ -157,10 +157,18 @@ fn byte(data: &[u8], at: usize) -> Result<u8> {
         .ok_or_else(|| error(format!("Truncated DER element header at 0x{at:X}")))
 }
 
+/// A high tag number and the octets that encode it.
+struct TagNumber {
+    /// The tag number.
+    number: u32,
+    /// Octets the number occupies, in bytes.
+    len: usize,
+}
+
 /// Base-128 tag-number octets at `at`, most significant first, with the
 /// continuation bit set on all but the last. Returns the number and the
 /// octets used.
-fn tag_number(data: &[u8], at: usize) -> Result<(u32, usize)> {
+fn tag_number(data: &[u8], at: usize) -> Result<TagNumber> {
     let mut number: u64 = 0;
     for i in 0..MAX_TAG_NUMBER_OCTETS {
         let octet = byte(data, at + i)?;
@@ -176,7 +184,7 @@ fn tag_number(data: &[u8], at: usize) -> Result<(u32, usize)> {
                     "Unsupported DER tag number at 0x{at:X}: more than 32 bits"
                 ))
             })?;
-            return Ok((number, i + 1));
+            return Ok(TagNumber { number, len: i + 1 });
         }
     }
     Err(error(format!(
@@ -190,9 +198,9 @@ fn read_header(data: &[u8], at: usize) -> Result<Header> {
     let identifier = byte(data, at)?;
     let mut pos = at + 1;
     let number = if identifier & HIGH_TAG_NUMBER == HIGH_TAG_NUMBER {
-        let (number, used) = tag_number(data, pos)?;
-        pos += used;
-        number
+        let tag = tag_number(data, pos)?;
+        pos += tag.len;
+        tag.number
     } else {
         u32::from(identifier & HIGH_TAG_NUMBER)
     };

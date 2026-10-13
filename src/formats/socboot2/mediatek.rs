@@ -259,13 +259,22 @@ fn file_info(data: &[u8], gfh: usize) -> Result<FileInfo> {
     Ok(info)
 }
 
-/// The GFH records in `chain` (the bytes before the content offset), as
-/// type and record bytes. The chain may end before the content offset.
+/// One record of the GFH chain.
+struct GfhRecord<'a> {
+    /// `GFH_TYPE_*` value from the common header.
+    record_type: u16,
+    /// The whole record, common header included: as many bytes as its
+    /// size field gives.
+    bytes: &'a [u8],
+}
+
+/// The GFH records in `chain` (the bytes before the content offset), in
+/// chain order. The chain may end before the content offset.
 fn gfh_records<'a>(
     chain: &'a [u8],
     gfh: usize,
     notes: &mut Vec<String>,
-) -> Result<Vec<(u16, &'a [u8])>> {
+) -> Result<Vec<GfhRecord<'a>>> {
     let mut records = Vec::new();
     let mut pos = 0;
     while pos + GFH_COMMON_SIZE <= chain.len() {
@@ -284,7 +293,10 @@ fn gfh_records<'a>(
                 gfh + pos
             )));
         }
-        records.push((record_type, &chain[pos..pos + size]));
+        records.push(GfhRecord {
+            record_type,
+            bytes: &chain[pos..pos + size],
+        });
         pos += size;
     }
     Ok(records)
@@ -292,52 +304,55 @@ fn gfh_records<'a>(
 
 /// The `AArch64` hand-off a `GFH_BROM_CFG` record requests, and the note
 /// that states the evidence.
-fn brom_cfg_target(records: &[(u16, &[u8])]) -> (Option<Target>, String) {
-    let Some((_, record)) = records.iter().find(|(t, _)| *t == GFH_BROM_CFG) else {
-        return (
-            None,
-            "No GFH_BROM_CFG record; the header names no instruction set".into(),
-        );
+fn brom_cfg_target(records: &[GfhRecord<'_>]) -> IsaEvidence {
+    let brom_cfg = records
+        .iter()
+        .find(|record| record.record_type == GFH_BROM_CFG);
+    let Some(record) = brom_cfg.map(|record| record.bytes) else {
+        return IsaEvidence {
+            target: None,
+            note: "No GFH_BROM_CFG record; the header names no instruction set".into(),
+        };
     };
     let cfg_bits = le_u32(record, BROM_CFG_BITS).ok();
     let jump_byte = record.get(BROM_CFG_JUMP_BL_ARM64).copied();
     let (Some(cfg_bits), Some(jump_byte)) = (cfg_bits, jump_byte) else {
-        return (
-            None,
-            format!(
+        return IsaEvidence {
+            target: None,
+            note: format!(
                 "GFH_BROM_CFG record of {} B is too short for the AArch64 hand-off fields",
                 record.len()
             ),
-        );
+        };
     };
     let enabled = cfg_bits & BROM_CFG_JUMP_BL_ARM64_EN != 0;
     let requested = jump_byte == JUMP_BL_ARM64;
     match (enabled, requested) {
-        (true, true) => (
-            Some(Target::new(Isa::AArch64, 64, Endianness::Little)),
-            "GFH_BROM_CFG requests an AArch64 hand-off (cfg_bits 0x1000 and jump_bl_arm64 0x64)"
+        (true, true) => IsaEvidence {
+            target: Some(Target::new(Isa::AArch64, 64, Endianness::Little)),
+            note: "GFH_BROM_CFG requests an AArch64 hand-off (cfg_bits 0x1000 and jump_bl_arm64 0x64)"
                 .into(),
-        ),
-        (false, false) => (
-            None,
-            "GFH_BROM_CFG does not request an AArch64 hand-off; that does not establish AArch32, so the ISA comes from the code model"
+        },
+        (false, false) => IsaEvidence {
+            target: None,
+            note: "GFH_BROM_CFG does not request an AArch64 hand-off; that does not establish AArch32, so the ISA comes from the code model"
                 .into(),
-        ),
-        _ => (
-            None,
-            format!(
+        },
+        _ => IsaEvidence {
+            target: None,
+            note: format!(
                 "GFH_BROM_CFG AArch64 fields disagree (cfg_bits 0x{cfg_bits:X}, jump_bl_arm64 0x{jump_byte:02X}); no instruction set claimed"
             ),
-        ),
+        },
     }
 }
 
 /// The GFH record types, in chain order, as one note.
-fn records_note(records: &[(u16, &[u8])]) -> String {
+fn records_note(records: &[GfhRecord<'_>]) -> String {
     let mut names: Vec<String> = records
         .iter()
         .take(MAX_NAMED_RECORDS)
-        .map(|(record_type, _)| record_type_name(*record_type))
+        .map(|record| record_type_name(record.record_type))
         .collect();
     if records.len() > MAX_NAMED_RECORDS {
         names.push(format!("{} more", records.len() - MAX_NAMED_RECORDS));
@@ -382,14 +397,14 @@ fn parse_gfh<'a>(data: &'a [u8], gfh: usize, c: &mut Container<'a>) -> Result<()
     let info = file_info(data, gfh)?;
     let image = range(data, gfh, info.file_length, "preloader image")?;
     let records = gfh_records(&image[..info.content_offset], gfh, &mut c.notes)?;
-    let (target, isa_note) = brom_cfg_target(&records);
+    let evidence = brom_cfg_target(&records);
     let version = le_u32(image, 0)? >> GFH_VERSION_SHIFT;
     c.notes.push(format!(
         "MediaTek preloader; GFH_FILE_INFO version {version} at 0x{gfh:X}; file type {}, flash type {}",
         info.file_type, info.flash_type
     ));
     c.notes.push(records_note(&records));
-    c.notes.push(isa_note);
+    c.notes.push(evidence.note);
     if info.jump_offset != info.content_offset {
         c.notes.push(format!(
             "Code starts at the jump offset 0x{:X}, not at the end of the GFH chain (0x{:X})",
@@ -397,7 +412,7 @@ fn parse_gfh<'a>(data: &'a [u8], gfh: usize, c: &mut Container<'a>) -> Result<()
         ));
     }
     let entry = u64::from(info.load_address) + info.jump_offset as u64;
-    c.target = target;
+    c.target = evidence.target;
     c.entry = Some(entry);
     c.consumed = gfh + info.file_length;
     c.push_metadata(
@@ -423,7 +438,7 @@ fn parse_gfh<'a>(data: &'a [u8], gfh: usize, c: &mut Container<'a>) -> Result<()
     let code_end = info.file_length - info.sig_size;
     let code = &image[info.jump_offset..code_end];
     let mut code_child = Child::stored("Preloader code", gfh + info.jump_offset, code);
-    if let Some(target) = target {
+    if let Some(target) = evidence.target {
         code_child = code_child.with_target(target);
     }
     c.children.push(code_child);
@@ -505,20 +520,29 @@ mod tests {
         bytes
     }
 
+    /// The target `brom_cfg_target` takes from a chain whose only record is
+    /// the `GFH_BROM_CFG` record `cfg`.
+    fn brom_cfg_only(cfg: &[u8]) -> Option<Target> {
+        let records = [GfhRecord {
+            record_type: GFH_BROM_CFG,
+            bytes: cfg,
+        }];
+        brom_cfg_target(&records).target
+    }
+
     #[test]
     fn brom_cfg_needs_both_aarch64_fields() {
         let mut cfg = record(0x64, GFH_BROM_CFG);
-        let none = brom_cfg_target(&[(GFH_BROM_CFG, &cfg)]);
-        assert!(none.0.is_none());
+        assert!(brom_cfg_only(&cfg).is_none());
         cfg[BROM_CFG_BITS..BROM_CFG_BITS + 4].copy_from_slice(&0x1000u32.to_le_bytes());
-        assert!(brom_cfg_target(&[(GFH_BROM_CFG, &cfg)]).0.is_none());
+        assert!(brom_cfg_only(&cfg).is_none());
         cfg[BROM_CFG_JUMP_BL_ARM64] = JUMP_BL_ARM64;
         assert_eq!(
-            brom_cfg_target(&[(GFH_BROM_CFG, &cfg)]).0,
+            brom_cfg_only(&cfg),
             Some(Target::new(Isa::AArch64, 64, Endianness::Little))
         );
         let short = record(0x20, GFH_BROM_CFG);
-        assert!(brom_cfg_target(&[(GFH_BROM_CFG, &short)]).0.is_none());
+        assert!(brom_cfg_only(&short).is_none());
     }
 
     #[test]

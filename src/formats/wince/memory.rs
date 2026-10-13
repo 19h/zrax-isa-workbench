@@ -6,7 +6,7 @@ use super::*;
 use std::borrow::Cow;
 
 /// Bytes stored for one address range.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Region<'a> {
     /// Storage address of `bytes[0]`.
     pub(super) address: u64,
@@ -104,13 +104,18 @@ impl<'a> Memory<'a> {
                 .is_some_and(|first| self.contiguous(first, address, len) == len)
     }
 
-    /// The `len` bytes at `address` when one region holds them all: their
-    /// file offset and the stored bytes.
-    pub(super) fn stored(&self, address: u64, len: usize) -> Option<(usize, &'a [u8])> {
+    /// The `len` bytes at `address` when one region holds them all, as a
+    /// region of their own: `address`, their file offset and the stored
+    /// bytes.
+    pub(super) fn stored(&self, address: u64, len: usize) -> Option<Region<'a>> {
         let region = self.regions[self.index(address)?];
         let start = usize::try_from(address - region.address).ok()?;
         let bytes = region.bytes.get(start..start.checked_add(len)?)?;
-        Some((region.offset + start, bytes))
+        Some(Region {
+            address,
+            offset: region.offset + start,
+            bytes,
+        })
     }
 }
 
@@ -149,8 +154,14 @@ mod tests {
         assert!(!memory.covers(0x1000, 7));
         assert!(memory.covers(0x1800, 0));
         assert!(!memory.covers(0x1800, 1));
-        assert_eq!(memory.stored(0x1001, 2), Some((0x11, &low[1..3])));
+        assert_eq!(
+            memory.stored(0x1001, 2),
+            Some(region(0x1001, 0x11, &low[1..3]))
+        );
         assert_eq!(memory.stored(0x1003, 2), None);
-        assert_eq!(memory.stored(0x2002, 2), Some((0x82, &far[2..])));
+        assert_eq!(
+            memory.stored(0x2002, 2),
+            Some(region(0x2002, 0x82, &far[2..]))
+        );
     }
 }

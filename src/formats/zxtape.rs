@@ -34,8 +34,21 @@ const TYPE_BYTES: u8 = 3;
 /// Fewest TAP blocks for structural recognition: a header and its data.
 const TAP_MIN_BLOCKS: usize = 2;
 
-/// ROM-format tape blocks with the file offset of their flag byte.
-type Blocks<'a> = Vec<(usize, &'a [u8])>;
+/// A ROM-format tape block.
+struct TapeBlock<'a> {
+    /// File offset of the flag byte.
+    offset: usize,
+    /// The flag byte, the data and the XOR checksum.
+    block: &'a [u8],
+}
+
+/// The ROM-format blocks of a TZX file and its version.
+struct TzxBlocks<'a> {
+    /// ROM-format tape blocks, in file order.
+    blocks: Vec<TapeBlock<'a>>,
+    /// TZX version, as `major.minor` with two minor digits.
+    version: String,
+}
 
 /// A recognized tape layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,17 +128,17 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 /// with valid checksums, starting with a ROM header block.
 pub fn detect_weak(data: &[u8]) -> Option<Layout> {
     let blocks = tap_blocks(data).ok()?;
-    let starts_with_header = blocks
-        .first()
-        .is_some_and(|(_, block)| block.len() == HEADER_BLOCK_SIZE && block[0] == FLAG_HEADER);
+    let starts_with_header = blocks.first().is_some_and(|first| {
+        first.block.len() == HEADER_BLOCK_SIZE && first.block[0] == FLAG_HEADER
+    });
     let valid = blocks.len() >= TAP_MIN_BLOCKS
         && starts_with_header
-        && blocks.iter().all(|(_, block)| checksum_ok(block));
+        && blocks.iter().all(|b| checksum_ok(b.block));
     valid.then_some(Layout::Tap)
 }
 
 /// TAP blocks: a little-endian length, then the block.
-fn tap_blocks(data: &[u8]) -> Result<Blocks<'_>> {
+fn tap_blocks(data: &[u8]) -> Result<Vec<TapeBlock<'_>>> {
     let mut pos = 0;
     let mut blocks = Vec::new();
     while pos < data.len() {
@@ -133,7 +146,10 @@ fn tap_blocks(data: &[u8]) -> Result<Blocks<'_>> {
         if len == 0 {
             return Err(error(format!("Invalid empty TAP block at 0x{pos:X}")));
         }
-        blocks.push((pos + 2, slice(data, pos + 2, len)?));
+        blocks.push(TapeBlock {
+            offset: pos + 2,
+            block: slice(data, pos + 2, len)?,
+        });
         pos += 2 + len;
         if blocks.len() > MAX_COMPONENTS {
             return Err(error("TAP file has too many blocks"));
@@ -173,7 +189,7 @@ fn tzx_block_length(data: &[u8], id: u8, at: usize) -> Result<usize> {
 }
 
 /// ROM-format tape blocks of a TZX file, with their file offsets.
-fn tzx_blocks(data: &[u8]) -> Result<(Blocks<'_>, String)> {
+fn tzx_blocks(data: &[u8]) -> Result<TzxBlocks<'_>> {
     let header = slice(data, 0, TZX_HEADER_SIZE)?;
     if !header.starts_with(TZX_MAGIC) {
         return Err(error("Missing TZX signature"));
@@ -193,7 +209,10 @@ fn tzx_blocks(data: &[u8]) -> Result<(Blocks<'_>, String)> {
             _ => None,
         };
         if let Some(skip) = data_at {
-            blocks.push((pos + 1 + skip, &body[skip..]));
+            blocks.push(TapeBlock {
+                offset: pos + 1 + skip,
+                block: &body[skip..],
+            });
         }
         pos += 1 + length;
         count += 1;
@@ -201,16 +220,16 @@ fn tzx_blocks(data: &[u8]) -> Result<(Blocks<'_>, String)> {
             return Err(error("TZX file has too many blocks"));
         }
     }
-    Ok((blocks, version))
+    Ok(TzxBlocks { blocks, version })
 }
 
 /// Pair ROM header blocks with the data block after them; `Bytes` data
 /// become load sections at their load address.
-fn load_blocks<'a>(c: &mut Container<'a>, blocks: &[(usize, &'a [u8])]) {
+fn load_blocks<'a>(c: &mut Container<'a>, blocks: &[TapeBlock<'a>]) {
     let mut bad_checksums = 0;
     let mut headerless = 0;
     let mut pending: Option<(u8, String, usize, usize)> = None;
-    for &(offset, block) in blocks {
+    for &TapeBlock { offset, block } in blocks {
         if block.is_empty() {
             continue;
         }
@@ -265,7 +284,7 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     c.consumed = data.len();
     let blocks = match layout {
         Layout::Tzx => {
-            let (blocks, version) = tzx_blocks(data)?;
+            let TzxBlocks { blocks, version } = tzx_blocks(data)?;
             c.notes.push(format!(
                 "TZX version {version}; {} data blocks",
                 blocks.len()

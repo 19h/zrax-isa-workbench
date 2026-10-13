@@ -523,14 +523,18 @@ fn push_subcaches(c: &mut Container<'_>, data: &[u8], header_size: usize, le: bo
     Ok(())
 }
 
+/// The Mach-O header of a cache image, located in this file.
+struct MachoImage<'a> {
+    /// File offset of the Mach-O header.
+    offset: usize,
+    /// The Mach-O header and load commands.
+    header: &'a [u8],
+}
+
 /// The Mach-O header and load commands of the image at `address`, or
 /// `None` when no mapping in this file holds them or the bytes there are
 /// not a Mach-O header.
-fn macho_image<'a>(
-    data: &'a [u8],
-    mappings: &[Mapping],
-    address: u64,
-) -> Option<(usize, &'a [u8])> {
+fn macho_image<'a>(data: &'a [u8], mappings: &[Mapping], address: u64) -> Option<MachoImage<'a>> {
     let mapping = mappings
         .iter()
         .find(|m| m.file_offset_of(address).is_some())?;
@@ -551,7 +555,10 @@ fn macho_image<'a>(
     if u64::try_from(end).ok()? > mapping.file_end() {
         return None;
     }
-    Some((offset, data.get(offset..end)?))
+    Some(MachoImage {
+        offset,
+        header: data.get(offset..end)?,
+    })
 }
 
 /// The NUL-terminated path at file offset `offset`.
@@ -618,8 +625,8 @@ fn push_images<'a>(
     {
         let address = u64_at(entry, 0, le)?;
         let path = image_path(data, usize_at(entry, IMAGE_PATH_OFFSET, le)?, i)?;
-        if let Some((image_offset, header)) = macho_image(data, mappings, address) {
-            let mut child = Child::stored(path, image_offset, header).if_recognized();
+        if let Some(image) = macho_image(data, mappings, address) {
+            let mut child = Child::stored(path, image.offset, image.header).if_recognized();
             if let Some(target) = c.target {
                 child = child.with_target(target);
             }

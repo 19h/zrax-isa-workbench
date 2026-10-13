@@ -736,6 +736,14 @@ fn reassemble(
     }
 }
 
+/// The stored data of one operation.
+struct Blob<'a> {
+    /// File offset of the data; `blob_start` for an operation without data.
+    offset: usize,
+    /// The stored bytes, possibly compressed.
+    bytes: &'a [u8],
+}
+
 /// The file offset and stored bytes an operation's data occupies, checked
 /// against the file and the payload signature.
 fn operation_blob<'a>(
@@ -745,9 +753,12 @@ fn operation_blob<'a>(
     partition: &str,
     index: usize,
     op: &Operation<'_>,
-) -> Result<(usize, &'a [u8])> {
+) -> Result<Blob<'a>> {
     if op.data_length == 0 {
-        return Ok((blob_start, &[]));
+        return Ok(Blob {
+            offset: blob_start,
+            bytes: &[],
+        });
     }
     let offset = op.data_offset.ok_or_else(|| {
         error(format!(
@@ -768,10 +779,10 @@ fn operation_blob<'a>(
     })?;
     let what = format!("OTA data for partition {partition} operation {index}");
     let bytes = slice64(data, start, op.data_length, &what)?;
-    Ok((
-        usize::try_from(start).expect("blob lies in the file"),
+    Ok(Blob {
+        offset: usize::try_from(start).expect("blob lies in the file"),
         bytes,
-    ))
+    })
 }
 
 /// Parse an update payload: header, manifest, signatures, then one
@@ -831,11 +842,11 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     for p in &manifest.partitions {
         let mut ranges = Vec::with_capacity(p.operations.len());
         for (i, op) in p.operations.iter().enumerate() {
-            let (offset, bytes) = operation_blob(data, blob_start, &manifest, &p.name, i, op)?;
-            if has_blob(op.kind) || !bytes.is_empty() {
-                payload_end = payload_end.max(offset + bytes.len());
+            let blob = operation_blob(data, blob_start, &manifest, &p.name, i, op)?;
+            if has_blob(op.kind) || !blob.bytes.is_empty() {
+                payload_end = payload_end.max(blob.offset + blob.bytes.len());
             }
-            ranges.push((offset, bytes));
+            ranges.push(blob);
         }
         blobs.push(ranges);
     }
@@ -926,18 +937,18 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         }
         let stored_start = ranges
             .iter()
-            .filter(|(_, bytes)| !bytes.is_empty())
-            .map(|(offset, _)| *offset)
+            .filter(|blob| !blob.bytes.is_empty())
+            .map(|blob| blob.offset)
             .min()
             .unwrap_or(blob_start);
         let stored_end = ranges
             .iter()
-            .map(|(offset, bytes)| offset + bytes.len())
+            .map(|blob| blob.offset + blob.bytes.len())
             .max()
             .unwrap_or(blob_start)
             .max(stored_start);
         let stored = &data[stored_start..stored_end];
-        let blob_bytes: Vec<&[u8]> = ranges.iter().map(|(_, bytes)| *bytes).collect();
+        let blob_bytes: Vec<&[u8]> = ranges.iter().map(|blob| blob.bytes).collect();
         match reassemble(p, &blob_bytes, manifest.block_size, &mut limits) {
             Reassembly::Image {
                 data: image,

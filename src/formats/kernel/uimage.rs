@@ -35,17 +35,39 @@ fn os_name(os: u8) -> &'static str {
     }
 }
 
+/// The names of an image type.
+struct TypeNames {
+    /// FIT name (`uimage_type` in `boot/image.c`), or `unknown`.
+    fit: &'static str,
+    /// Display name.
+    label: &'static str,
+}
+
 /// FIT name and display name of an image type.
-fn type_names(image_type: u8) -> (&'static str, &'static str) {
+fn type_names(image_type: u8) -> TypeNames {
     IMAGE_TYPES
         .iter()
         .find(|(id, _, _)| *id == image_type)
-        .map_or(("unknown", "Image"), |(_, fit, name)| (*fit, *name))
+        .map_or(
+            TypeNames {
+                fit: "unknown",
+                label: "Image",
+            },
+            |&(_, fit, label)| TypeNames { fit, label },
+        )
+}
+
+/// One image of a multi-file payload.
+struct MultiImage<'a> {
+    /// Offset of the image from the start of the payload.
+    offset: usize,
+    /// The image, without its padding.
+    image: &'a [u8],
 }
 
 /// Multi-file image payload: big-endian sizes terminated by zero, then the
 /// images in order, each padded to four bytes.
-fn multi_images(payload: &[u8]) -> Result<Vec<(usize, &[u8])>> {
+fn multi_images(payload: &[u8]) -> Result<Vec<MultiImage<'_>>> {
     let mut sizes = Vec::new();
     let mut pos = 0;
     loop {
@@ -61,7 +83,10 @@ fn multi_images(payload: &[u8]) -> Result<Vec<(usize, &[u8])>> {
     }
     let mut images = Vec::with_capacity(sizes.len());
     for size in sizes {
-        images.push((pos, slice(payload, pos, size)?));
+        images.push(MultiImage {
+            offset: pos,
+            image: slice(payload, pos, size)?,
+        });
         pos = align4(pos + size)?;
     }
     Ok(images)
@@ -110,7 +135,10 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
 
     let arch = arch_by_id(arch_id);
     let arch_name = arch.map_or("Unknown", |a| a.name);
-    let (type_id, type_label) = type_names(image_type);
+    let TypeNames {
+        fit: type_id,
+        label: type_label,
+    } = type_names(image_type);
     let (compression_name, codec) = match COMPRESSIONS.iter().find(|(id, _, _)| *id == compression)
     {
         Some((_, name, codec)) => (*name, *codec),
@@ -158,7 +186,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let executable = EXECUTABLE_TYPES.contains(&type_id) || image_type == uimage_type::MULTI;
     let unknown_codec = compression_name == "unknown";
     if image_type == uimage_type::MULTI {
-        for (i, (offset, image)) in multi_images(payload)?.into_iter().enumerate() {
+        for (i, MultiImage { offset, image }) in multi_images(payload)?.into_iter().enumerate() {
             // The compression field applies to the first image, the kernel.
             let label = format!("Image {}", i + 1);
             let image_codec = if i == 0 { codec } else { None };

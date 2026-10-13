@@ -454,13 +454,24 @@ pub(super) fn parse_rkfw(data: &[u8]) -> Result<Container<'_>> {
     Ok(c)
 }
 
+/// The data inside a `PARM`/`KRNL` wrapper.
+struct WrapperPayload<'a> {
+    /// The declared number of bytes after the 8-byte wrapper header.
+    bytes: &'a [u8],
+    /// Whether the RKCRC stored after the data matches it.
+    crc_matches: bool,
+}
+
 /// The data of a `PARM`/`KRNL` wrapper and whether its RKCRC matches, or
 /// `None` when the declared length exceeds the part.
-fn unwrap_rkcrc(bytes: &[u8]) -> Option<(&[u8], bool)> {
+fn unwrap_rkcrc(bytes: &[u8]) -> Option<WrapperPayload<'_>> {
     let len = usize::try_from(le_u32(bytes, WRAPPER_LENGTH).ok()?).ok()?;
     let inner = bytes.get(WRAPPER_HEADER_SIZE..WRAPPER_HEADER_SIZE.checked_add(len)?)?;
     let stored = le_u32(bytes, WRAPPER_HEADER_SIZE + len).ok()?;
-    Some((inner, stored == rkcrc(inner)))
+    Some(WrapperPayload {
+        bytes: inner,
+        crc_matches: stored == rkcrc(inner),
+    })
 }
 
 /// One RKAF part as a component: a `PARM` wrapper, the `parameter` part
@@ -475,15 +486,15 @@ fn rkaf_component<'a>(
     let wrapper = bytes.get(..4);
     let is_wrapper = wrapper == Some(KRNL_MAGIC) || wrapper == Some(PARM_MAGIC);
     if is_wrapper {
-        if let Some((inner, crc_ok)) = unwrap_rkcrc(bytes) {
-            if !crc_ok {
+        if let Some(payload) = unwrap_rkcrc(bytes) {
+            if !payload.crc_matches {
                 notes.push(format!("{label}: wrapper RKCRC does not match"));
             }
             let inner_offset = offset + WRAPPER_HEADER_SIZE;
             if wrapper == Some(KRNL_MAGIC) {
-                return Child::stored(label, inner_offset, inner);
+                return Child::stored(label, inner_offset, payload.bytes);
             }
-            return Child::opaque(label, inner_offset, inner);
+            return Child::opaque(label, inner_offset, payload.bytes);
         }
         notes.push(format!("{label}: wrapper length exceeds the part"));
     }
@@ -670,9 +681,18 @@ struct Entry<'a> {
     stored: &'a [u8],
 }
 
+/// The entries of the three RKBOOT tables and where their data ends.
+struct RkbootEntries<'a> {
+    /// Every entry, in table order (0x471, 0x472, loader).
+    entries: Vec<Entry<'a>>,
+    /// File offset of the end of the last table or entry data, where
+    /// `boot_merger` appends the CRC.
+    content_end: usize,
+}
+
 /// Every entry of the three tables, and the end of the last table or entry
 /// data, where `boot_merger` appends the CRC.
-fn rkboot_entries<'a>(data: &'a [u8], header: &[u8]) -> Result<(Vec<Entry<'a>>, usize)> {
+fn rkboot_entries<'a>(data: &'a [u8], header: &[u8]) -> Result<RkbootEntries<'a>> {
     let mut content_end = RKBOOT_HEADER_SIZE;
     let mut entries = Vec::new();
     for &(kind, at) in &RKBOOT_TABLES {
@@ -714,7 +734,10 @@ fn rkboot_entries<'a>(data: &'a [u8], header: &[u8]) -> Result<(Vec<Entry<'a>>, 
             });
         }
     }
-    Ok((entries, content_end))
+    Ok(RkbootEntries {
+        entries,
+        content_end,
+    })
 }
 
 pub(super) fn parse_rkboot(data: &[u8]) -> Result<Container<'_>> {
@@ -728,7 +751,10 @@ pub(super) fn parse_rkboot(data: &[u8]) -> Result<Container<'_>> {
             "Invalid RKBOOT header size {header_size} B: expected 102 B"
         )));
     }
-    let (entries, content_end) = rkboot_entries(data, header)?;
+    let RkbootEntries {
+        entries,
+        content_end,
+    } = rkboot_entries(data, header)?;
     let crc = verify_rkcrc(data, content_end, "RKBOOT")?;
     expect_padding(data, content_end + CRC_SIZE, "RKBOOT CRC")?;
 

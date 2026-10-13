@@ -208,10 +208,19 @@ pub(super) fn detect(data: &[u8]) -> Option<N64ByteOrder> {
     (native[CLOCK_RATE_LOW_BYTE] & 0x0F == CLOCK_RATE_NIBBLE).then_some(order)
 }
 
+/// An N64 check code, stored in the header or computed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CheckCode {
+    /// CRC1, the header word at 0x10.
+    crc1: u32,
+    /// CRC2, the header word at 0x14.
+    crc2: u32,
+}
+
 /// The N64 check code (CRC1, CRC2) over the first MiB of game code, as
 /// n64crc.c computes it; `code` must hold at least [`IPL3_COPY_SIZE`]
 /// bytes and `ipl3` the whole IPL3, both in native order.
-fn check_code(cic: &Cic, ipl3: &[u8], code: &[u8]) -> (u32, u32) {
+fn check_code(cic: &Cic, ipl3: &[u8], code: &[u8]) -> CheckCode {
     let [mut t1, mut t2, mut t3, mut t4, mut t5, mut t6] = [cic.seed; 6];
     for (i, word) in code[..IPL3_COPY_SIZE].chunks_exact(4).enumerate() {
         let d = u32::from_be_bytes(word.try_into().expect("chunks of 4 bytes"));
@@ -239,12 +248,18 @@ fn check_code(cic: &Cic, ipl3: &[u8], code: &[u8]) -> (u32, u32) {
         t1 = t1.wrapping_add(mixed ^ d);
     }
     match cic.mix {
-        Mix::Xor => (t6 ^ t4 ^ t3, t5 ^ t2 ^ t1),
-        Mix::Add => ((t6 ^ t4).wrapping_add(t3), (t5 ^ t2).wrapping_add(t1)),
-        Mix::Multiply => (
-            t6.wrapping_mul(t4).wrapping_add(t3),
-            t5.wrapping_mul(t2).wrapping_add(t1),
-        ),
+        Mix::Xor => CheckCode {
+            crc1: t6 ^ t4 ^ t3,
+            crc2: t5 ^ t2 ^ t1,
+        },
+        Mix::Add => CheckCode {
+            crc1: (t6 ^ t4).wrapping_add(t3),
+            crc2: (t5 ^ t2).wrapping_add(t1),
+        },
+        Mix::Multiply => CheckCode {
+            crc1: t6.wrapping_mul(t4).wrapping_add(t3),
+            crc2: t5.wrapping_mul(t2).wrapping_add(t1),
+        },
     }
 }
 
@@ -374,15 +389,15 @@ fn check_code_note(
     ipl3: &[u8],
     game: &[u8],
 ) -> Result<String> {
-    let stored = (
-        be_u32(header, CHECK_CODE_HIGH)?,
-        be_u32(header, CHECK_CODE_LOW)?,
-    );
+    let stored = CheckCode {
+        crc1: be_u32(header, CHECK_CODE_HIGH)?,
+        crc2: be_u32(header, CHECK_CODE_LOW)?,
+    };
     let Some(cic) = cic else {
         return Ok(format!(
             "IPL3 CRC-32 0x{ipl3_crc32:08X} matches no known CIC; check code 0x{:08X}{:08X} not \
                 verified",
-            stored.0, stored.1
+            stored.crc1, stored.crc2
         ));
     };
     if game.len() < IPL3_COPY_SIZE {
@@ -390,20 +405,20 @@ fn check_code_note(
             "CIC {} IPL3; the ROM ends before 0x{:X}, so check code 0x{:08X}{:08X} is not verified",
             cic.name,
             GAME_CODE_OFFSET + IPL3_COPY_SIZE,
-            stored.0,
-            stored.1
+            stored.crc1,
+            stored.crc2
         ));
     }
     let computed = check_code(cic, ipl3, game);
     Ok(if computed == stored {
         format!(
             "CIC {} IPL3; check code 0x{:08X}{:08X} verified over 0x1000-0x100FFF",
-            cic.name, stored.0, stored.1
+            cic.name, stored.crc1, stored.crc2
         )
     } else {
         format!(
             "CIC {} IPL3; check code 0x{:08X}{:08X} does not match the computed 0x{:08X}{:08X}",
-            cic.name, stored.0, stored.1, computed.0, computed.1
+            cic.name, stored.crc1, stored.crc2, computed.crc1, computed.crc2
         )
     })
 }
@@ -516,6 +531,12 @@ mod tests {
         let cic = &CICS[1];
         let words = u32::try_from(IPL3_COPY_SIZE / 4).expect("0x40000 words fit in u32");
         let t1 = cic.seed.wrapping_mul(words + 1);
-        assert_eq!(check_code(cic, &ipl3, &code), (cic.seed, t1));
+        assert_eq!(
+            check_code(cic, &ipl3, &code),
+            CheckCode {
+                crc1: cic.seed,
+                crc2: t1,
+            }
+        );
     }
 }

@@ -191,16 +191,28 @@ impl Pages {
     }
 }
 
+/// Bytes of the image and the file offset they start at.
+#[derive(Clone, Copy)]
+struct Section<'a> {
+    /// File offset of the first byte.
+    offset: usize,
+    /// The bytes; empty for an absent section.
+    bytes: &'a [u8],
+}
+
 /// The `size` bytes of `what` at file offset `offset`. An absent (empty)
 /// section is not checked against the file, whose last padding may be
 /// missing.
-fn section<'a>(data: &'a [u8], offset: u64, size: u32, what: &str) -> Result<(usize, &'a [u8])> {
+fn section<'a>(data: &'a [u8], offset: u64, size: u32, what: &str) -> Result<Section<'a>> {
     if size == 0 {
-        return Ok((usize::try_from(offset).unwrap_or(usize::MAX), &[]));
+        return Ok(Section {
+            offset: usize::try_from(offset).unwrap_or(usize::MAX),
+            bytes: &[],
+        });
     }
     let bytes = slice64(data, offset, u64::from(size), what)?;
     let offset = usize::try_from(offset).expect("section lies in the file");
-    Ok((offset, bytes))
+    Ok(Section { offset, bytes })
 }
 
 /// A page size from the header: a power of two from 2 KiB to 128 KiB. A
@@ -218,9 +230,19 @@ fn page_size(value: u32, what: &str, notes: &mut Vec<String>) -> Result<u32> {
     Ok(value)
 }
 
+/// The two halves of an `os_version` field, each `None` when zero (not
+/// set).
+#[derive(Debug, PartialEq)]
+struct OsVersion {
+    /// The release, `A.B.C`.
+    release: Option<String>,
+    /// The security patch level, `YYYY-MM`.
+    patch_level: Option<String>,
+}
+
 /// The OS version and security patch level an `os_version` field encodes,
 /// or `None` for a half that is zero (not set).
-fn os_version(value: u32) -> (Option<String>, Option<String>) {
+fn os_version(value: u32) -> OsVersion {
     let version = value >> OS_VERSION_SHIFT;
     let patch = value & OS_PATCH_LEVEL_MASK;
     let release = (version != 0).then(|| {
@@ -238,12 +260,18 @@ fn os_version(value: u32) -> (Option<String>, Option<String>) {
             patch & OS_PATCH_MONTH_MASK
         )
     });
-    (release, patch_level)
+    OsVersion {
+        release,
+        patch_level,
+    }
 }
 
 /// Notes and metadata for the `os_version` field.
 fn push_os_version(c: &mut Container<'_>, value: u32) {
-    let (release, patch_level) = os_version(value);
+    let OsVersion {
+        release,
+        patch_level,
+    } = os_version(value);
     c.notes.push(format!(
         "OS version {}; security patch level {}",
         release.as_deref().unwrap_or("not set"),
@@ -281,8 +309,14 @@ fn payload_section<'a>(
     budget: &mut Budget,
     notes: &mut Vec<String>,
 ) -> Child<'a> {
-    let (offset, stored) = strip_mediatek(label, offset, stored, notes);
-    payload_child(label.to_string(), offset, stored, budget, notes)
+    let payload = strip_mediatek(label, offset, stored, notes);
+    payload_child(
+        label.to_string(),
+        payload.offset,
+        payload.bytes,
+        budget,
+        notes,
+    )
 }
 
 /// The payload after a 512-byte `MediaTek` header, if `stored` starts with
@@ -292,9 +326,13 @@ fn strip_mediatek<'a>(
     offset: usize,
     stored: &'a [u8],
     notes: &mut Vec<String>,
-) -> (usize, &'a [u8]) {
+) -> Section<'a> {
+    let unchanged = Section {
+        offset,
+        bytes: stored,
+    };
     if le_u32(stored, 0).ok() != Some(MTK_MAGIC) || stored.len() < MTK_HEADER_SIZE {
-        return (offset, stored);
+        return unchanged;
     }
     let size = le_u32(stored, 4).unwrap_or_default() as usize;
     let name = asciiz(&stored[8..40]);
@@ -302,12 +340,15 @@ fn strip_mediatek<'a>(
         notes.push(format!(
             "{label}: 512-byte MediaTek header \"{name}\" before the payload"
         ));
-        (offset + MTK_HEADER_SIZE, payload)
+        Section {
+            offset: offset + MTK_HEADER_SIZE,
+            bytes: payload,
+        }
     } else {
         notes.push(format!(
             "{label}: MediaTek header declares {size} B, more than the section holds; header kept"
         ));
-        (offset, stored)
+        unchanged
     }
 }
 
@@ -415,19 +456,19 @@ fn parse_paged(data: &[u8], version: u32, dt_size: Option<u32>) -> Result<Contai
 
     let mut pages = Pages::after_header(page, BOOT_V0_HEADER_SIZE);
     let mut budget = Budget::new();
-    let (kernel_offset, kernel) = section(
+    let kernel = section(
         data,
         pages.place(header.kernel_size)?,
         header.kernel_size,
         "boot image kernel",
     )?;
-    let (ramdisk_offset, ramdisk) = section(
+    let ramdisk = section(
         data,
         pages.place(header.ramdisk_size)?,
         header.ramdisk_size,
         "boot image ramdisk",
     )?;
-    let (second_offset, second) = section(
+    let second = section(
         data,
         pages.place(header.second_size)?,
         header.second_size,
@@ -469,15 +510,15 @@ fn parse_paged(data: &[u8], version: u32, dt_size: Option<u32>) -> Result<Contai
         "boot image DTB",
     )?;
 
-    let mut id_parts = vec![kernel, ramdisk, second];
-    if let Some((_, dt)) = appended_dt {
-        id_parts.push(dt);
+    let mut id_parts = vec![kernel.bytes, ramdisk.bytes, second.bytes];
+    if let Some(dt) = appended_dt {
+        id_parts.push(dt.bytes);
     }
     if version >= 1 {
-        id_parts.push(recovery_dtbo.map_or(&[][..], |(_, bytes)| bytes));
+        id_parts.push(recovery_dtbo.map_or(&[][..], |dtbo| dtbo.bytes));
     }
     if version >= 2 {
-        id_parts.push(dtb.1);
+        id_parts.push(dtb.bytes);
     }
     c.notes.push(if header.id.iter().all(|&b| b == 0) {
         "Image ID is empty".into()
@@ -493,38 +534,41 @@ fn parse_paged(data: &[u8], version: u32, dt_size: Option<u32>) -> Result<Contai
             .into(),
     );
 
-    if !kernel.is_empty() {
+    if !kernel.bytes.is_empty() {
         c.children.push(payload_section(
             "Kernel",
-            kernel_offset,
-            kernel,
+            kernel.offset,
+            kernel.bytes,
             &mut budget,
             &mut c.notes,
         ));
     }
-    if !ramdisk.is_empty() {
+    if !ramdisk.bytes.is_empty() {
         c.children.push(payload_section(
             "Ramdisk",
-            ramdisk_offset,
-            ramdisk,
+            ramdisk.offset,
+            ramdisk.bytes,
             &mut budget,
             &mut c.notes,
         ));
     }
-    if !second.is_empty() {
-        c.children
-            .push(Child::stored("Second-stage loader", second_offset, second));
+    if !second.bytes.is_empty() {
+        c.children.push(Child::stored(
+            "Second-stage loader",
+            second.offset,
+            second.bytes,
+        ));
     }
-    if let Some((offset, dt)) = appended_dt.filter(|(_, dt)| !dt.is_empty()) {
+    if let Some(dt) = appended_dt.filter(|dt| !dt.bytes.is_empty()) {
         c.children
-            .push(Child::opaque("Appended device tree", offset, dt));
+            .push(Child::opaque("Appended device tree", dt.offset, dt.bytes));
     }
-    if let Some((offset, dtbo)) = recovery_dtbo {
+    if let Some(dtbo) = recovery_dtbo {
         c.children
-            .push(Child::opaque("Recovery DTBO", offset, dtbo));
+            .push(Child::opaque("Recovery DTBO", dtbo.offset, dtbo.bytes));
     }
-    if !dtb.1.is_empty() {
-        c.children.push(Child::opaque("DTB", dtb.0, dtb.1));
+    if !dtb.bytes.is_empty() {
+        c.children.push(Child::opaque("DTB", dtb.offset, dtb.bytes));
     }
     push_unexplained_tail(&mut c, data, pages.end());
     Ok(c)
@@ -577,48 +621,51 @@ fn parse_gki(data: &[u8], version: u32) -> Result<Container<'_>> {
 
     let mut pages = Pages::after_header(GKI_PAGE_SIZE, size);
     let mut budget = Budget::new();
-    let (kernel_offset, kernel) = section(
+    let kernel = section(
         data,
         pages.place(kernel_size)?,
         kernel_size,
         "boot image kernel",
     )?;
-    let (ramdisk_offset, ramdisk) = section(
+    let ramdisk = section(
         data,
         pages.place(ramdisk_size)?,
         ramdisk_size,
         "boot image ramdisk",
     )?;
-    let (signature_offset, signature) = section(
+    let signature = section(
         data,
         pages.place(signature_size)?,
         signature_size,
         "boot image signature",
     )?;
-    if !kernel.is_empty() {
+    if !kernel.bytes.is_empty() {
         c.children.push(payload_section(
             "Kernel",
-            kernel_offset,
-            kernel,
+            kernel.offset,
+            kernel.bytes,
             &mut budget,
             &mut c.notes,
         ));
     }
-    if !ramdisk.is_empty() {
+    if !ramdisk.bytes.is_empty() {
         c.children.push(payload_section(
             "Ramdisk",
-            ramdisk_offset,
-            ramdisk,
+            ramdisk.offset,
+            ramdisk.bytes,
             &mut budget,
             &mut c.notes,
         ));
     }
-    if !signature.is_empty() {
+    if !signature.bytes.is_empty() {
         c.notes.push(format!(
             "Boot signature: {signature_size} B (AVB vbmeta used by VTS); not verified"
         ));
-        c.children
-            .push(Child::opaque("Boot signature", signature_offset, signature));
+        c.children.push(Child::opaque(
+            "Boot signature",
+            signature.offset,
+            signature.bytes,
+        ));
     }
     let end = pages.end();
     let tail = push_partition_tail(&mut c, data, end);
@@ -626,7 +673,7 @@ fn parse_gki(data: &[u8], version: u32) -> Result<Container<'_>> {
     // certify_bootimg.py appends certificates (AVB vbmeta images) that the
     // header does not describe; an AVB footer's own vbmeta can sit there too.
     let is_footer_vbmeta = tail.vbmeta_offset == Some(end);
-    if signature.is_empty() && rest.starts_with(AVB_VBMETA_MAGIC) && !is_footer_vbmeta {
+    if signature.bytes.is_empty() && rest.starts_with(AVB_VBMETA_MAGIC) && !is_footer_vbmeta {
         let certificate = &rest[..rest.len().min(GKI_CERTIFICATE_SIZE)];
         c.notes.push(format!(
             "Boot certificate block ({} B) after the ramdisk, not described by the header; not verified",
@@ -826,25 +873,25 @@ pub(super) fn parse_vendor(data: &[u8]) -> Result<Container<'_>> {
     );
 
     let mut pages = Pages::after_header(page, header_size);
-    let (ramdisks_offset, ramdisks) = section(
+    let ramdisks = section(
         data,
         pages.place(header.vendor_ramdisk_size)?,
         header.vendor_ramdisk_size,
         "vendor ramdisk section",
     )?;
-    let (dtb_offset, dtb) = section(
+    let dtb = section(
         data,
         pages.place(header.dtb_size)?,
         header.dtb_size,
         "vendor_boot DTB",
     )?;
-    let (_, table) = section(
+    let table = section(
         data,
         pages.place(header.table_size)?,
         header.table_size,
         "vendor ramdisk table",
     )?;
-    let (bootconfig_offset, bootconfig) = section(
+    let bootconfig = section(
         data,
         pages.place(header.bootconfig_size)?,
         header.bootconfig_size,
@@ -853,12 +900,13 @@ pub(super) fn parse_vendor(data: &[u8]) -> Result<Container<'_>> {
 
     let mut budget = Budget::new();
     if version == 4 && header.table_entries > 0 {
-        let entries = vendor_ramdisk_table(table, header.table_entries, header.table_entry_size)?;
+        let entries =
+            vendor_ramdisk_table(table.bytes, header.table_entries, header.table_entry_size)?;
         let total: u64 = entries.iter().map(|e| u64::from(e.size)).sum();
         c.notes.push(format!(
             "Vendor ramdisk table: {} entries in a {} B section",
             entries.len(),
-            ramdisks.len()
+            ramdisks.bytes.len()
         ));
         if total != u64::from(header.vendor_ramdisk_size) {
             c.notes.push(format!(
@@ -871,7 +919,7 @@ pub(super) fn parse_vendor(data: &[u8]) -> Result<Container<'_>> {
                 break;
             }
             let stored = slice(
-                ramdisks,
+                ramdisks.bytes,
                 entry.offset as usize,
                 entry.size as usize,
                 "vendor ramdisk",
@@ -881,32 +929,35 @@ pub(super) fn parse_vendor(data: &[u8]) -> Result<Container<'_>> {
                     "Invalid vendor ramdisk table entry {i}: 0x{:X} + {} B is outside the {} B vendor ramdisk section",
                     entry.offset,
                     entry.size,
-                    ramdisks.len()
+                    ramdisks.bytes.len()
                 ))
             })?;
             if stored.is_empty() {
                 continue;
             }
             let label = vendor_ramdisk_label(i, entry);
-            let offset = ramdisks_offset + entry.offset as usize;
+            let offset = ramdisks.offset + entry.offset as usize;
             let child = payload_child(label, offset, stored, &mut budget, &mut c.notes);
             c.children.push(child);
         }
-    } else if !ramdisks.is_empty() {
+    } else if !ramdisks.bytes.is_empty() {
         c.children.push(payload_child(
             "Vendor ramdisk".into(),
-            ramdisks_offset,
-            ramdisks,
+            ramdisks.offset,
+            ramdisks.bytes,
             &mut budget,
             &mut c.notes,
         ));
     }
-    if !dtb.is_empty() {
-        c.children.push(Child::opaque("DTB", dtb_offset, dtb));
+    if !dtb.bytes.is_empty() {
+        c.children.push(Child::opaque("DTB", dtb.offset, dtb.bytes));
     }
-    if !bootconfig.is_empty() {
-        c.children
-            .push(Child::opaque("Bootconfig", bootconfig_offset, bootconfig));
+    if !bootconfig.bytes.is_empty() {
+        c.children.push(Child::opaque(
+            "Bootconfig",
+            bootconfig.offset,
+            bootconfig.bytes,
+        ));
     }
     push_unexplained_tail(&mut c, data, pages.end());
     Ok(c)
@@ -922,14 +973,26 @@ mod tests {
         let value = ((14 << 14) << 11) | (24 << 4) | 5;
         assert_eq!(
             os_version(value),
-            (Some("14.0.0".into()), Some("2024-05".into()))
+            OsVersion {
+                release: Some("14.0.0".into()),
+                patch_level: Some("2024-05".into()),
+            }
         );
-        assert_eq!(os_version(0), (None, None));
+        assert_eq!(
+            os_version(0),
+            OsVersion {
+                release: None,
+                patch_level: None,
+            }
+        );
         let (year, month) = (20, 12);
         let value = (((11 << 14) | (2 << 7) | 3) << 11) | (year << 4) | month;
         assert_eq!(
             os_version(value),
-            (Some("11.2.3".into()), Some("2020-12".into()))
+            OsVersion {
+                release: Some("11.2.3".into()),
+                patch_level: Some("2020-12".into()),
+            }
         );
     }
 
@@ -952,11 +1015,13 @@ mod tests {
         section[4..8].copy_from_slice(&8u32.to_le_bytes());
         section[8..14].copy_from_slice(b"KERNEL");
         let mut notes = Vec::new();
-        let (offset, payload) = strip_mediatek("Kernel", 0x800, &section, &mut notes);
-        assert_eq!((offset, payload.len()), (0x800 + MTK_HEADER_SIZE, 8));
+        let payload = strip_mediatek("Kernel", 0x800, &section, &mut notes);
+        assert_eq!(payload.offset, 0x800 + MTK_HEADER_SIZE);
+        assert_eq!(payload.bytes.len(), 8);
         assert!(notes[0].contains("\"KERNEL\""));
         section[4..8].copy_from_slice(&9u32.to_le_bytes());
-        let (offset, payload) = strip_mediatek("Kernel", 0x800, &section, &mut notes);
-        assert_eq!((offset, payload.len()), (0x800, section.len()));
+        let payload = strip_mediatek("Kernel", 0x800, &section, &mut notes);
+        assert_eq!(payload.offset, 0x800);
+        assert_eq!(payload.bytes.len(), section.len());
     }
 }

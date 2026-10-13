@@ -352,7 +352,7 @@ fn list_region<'a>(
     }
     match content(region.index) {
         Content::Volumes => {
-            let (found, _) = fv::sequence(
+            let found = fv::sequence(
                 c,
                 budget,
                 data,
@@ -360,7 +360,7 @@ fn list_region<'a>(
                 region.end,
                 fv::Placement::Children(name),
             )?;
-            if found == 0 {
+            if found.volumes == 0 {
                 c.notes
                     .push(format!("{name} region holds no firmware volume"));
             }

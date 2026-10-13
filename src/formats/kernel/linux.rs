@@ -312,10 +312,20 @@ pub(super) fn x86(data: &[u8], protocol: u16) -> Result<Container<'_>> {
     Ok(c)
 }
 
+/// The compressed kernel found in an Arm zImage.
+struct ZImagePayload {
+    /// File offset where the compressed kernel starts.
+    offset: usize,
+    /// The codec whose header was found there.
+    codec: Codec,
+    /// The decoded kernel.
+    decoded: compressed::Decoded,
+}
+
 /// The first offset in `image[..end]` where a kernel codec decodes,
 /// searched from the end of the zImage header. The zImage header does not
 /// record where the compressed kernel starts.
-fn find_payload(image: &[u8], end: usize) -> Option<(usize, Codec, compressed::Decoded)> {
+fn find_payload(image: &[u8], end: usize) -> Option<ZImagePayload> {
     let mut tried = 0;
     for offset in ZIMAGE_HEADER_END..end {
         let candidate = &image[offset..end];
@@ -323,7 +333,11 @@ fn find_payload(image: &[u8], end: usize) -> Option<(usize, Codec, compressed::D
             continue;
         };
         if let Ok(decoded) = compressed::decode(codec, candidate) {
-            return Some((offset, codec, decoded));
+            return Some(ZImagePayload {
+                offset,
+                codec,
+                decoded,
+            });
         }
         tried += 1;
         if tried >= MAX_PAYLOAD_CANDIDATES {
@@ -398,7 +412,12 @@ pub(super) fn arm(data: &[u8], byte_order: ArmByteOrder) -> Result<Container<'_>
     c.code_sections = true;
     let size_word = size_word_offset(image, &word);
     let search_end = size_word.map_or(image.len(), |offset| offset + 4);
-    let Some((offset, codec, decoded)) = find_payload(image, search_end) else {
+    let Some(ZImagePayload {
+        offset,
+        codec,
+        decoded,
+    }) = find_payload(image, search_end)
+    else {
         c.notes
             .push("No compressed kernel payload was found in the zImage".into());
         return Ok(c);
