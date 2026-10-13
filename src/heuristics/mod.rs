@@ -521,14 +521,25 @@ pub fn score_all_architectures(data: &[u8], options: &ClassifierOptions) -> Vec<
 fn candidates_from_scan(scan: &Scan) -> Vec<ArchitectureScore> {
     let model = scan.model();
     let evidence = scan.class_evidence(None);
-    let mut merged: HashMap<(Isa, u8, Endianness), f64> = HashMap::new();
+    // Classes of one ISA, bit width and byte order merge into one candidate.
+    // The candidates stay in model order, so the confidence sum and the order
+    // of candidates that tie on score are the same on every run (a hash map
+    // made both depend on its random seed).
+    let mut merged: Vec<((Isa, u8, Endianness), f64)> = Vec::new();
     for i in 0..model.len() {
         if let ClassKind::Code { isa, endianness, bitwidth, .. } = model.class(i).kind {
-            let e = merged.entry((isa, bitwidth, endianness)).or_insert(f64::NEG_INFINITY);
-            *e = e.max(evidence[i]);
+            let key = (isa, bitwidth, endianness);
+            match merged.iter_mut().find(|(candidate, _)| *candidate == key) {
+                Some((_, best)) => *best = best.max(evidence[i]),
+                None => merged.push((key, evidence[i])),
+            }
         }
     }
-    let positive: f64 = merged.values().filter(|v| **v > 0.0).sum();
+    let positive: f64 = merged
+        .iter()
+        .map(|(_, ev)| *ev)
+        .filter(|ev| *ev > 0.0)
+        .sum();
     let mut out: Vec<ArchitectureScore> = merged
         .into_iter()
         .map(|((isa, bitwidth, endianness), ev)| ArchitectureScore {
