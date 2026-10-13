@@ -809,6 +809,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Vhd => "VHD disk image",
         FileFormat::Vhdx => "VHDX disk image",
         FileFormat::Vdi => "VDI disk image",
+        FileFormat::Gcz => "GCZ disc image",
+        FileFormat::Ciso => "CISO disc image",
+        FileFormat::Wbfs => "WBFS image",
+        FileFormat::Cso => "CSO disc image",
     }
 }
 

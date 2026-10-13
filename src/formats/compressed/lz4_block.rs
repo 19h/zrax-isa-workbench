@@ -74,6 +74,15 @@ impl<'a> Input<'a> {
 
 /// Decode a raw LZ4 block stream into at most `limit` bytes.
 pub(super) fn decode(data: &[u8], limit: usize) -> Result<Decoded> {
+    decode_until(data, limit, AtLimit::Fail)
+}
+
+/// [`decode`], or with [`AtLimit::Stop`] the first `limit` bytes: decoding
+/// ends once the output reaches the limit, and the rest of the input is not
+/// read. Containers that pad each block to an alignment rely on this, as
+/// maxcso v1.13.0 `src/input.cpp` does with `LZ4_decompress_safe_partial`
+/// ("It could include padding").
+pub(super) fn decode_until(data: &[u8], limit: usize, at_limit: AtLimit) -> Result<Decoded> {
     if data.is_empty() {
         return Err(error("Truncated LZ4 block stream at 0x0"));
     }
@@ -84,11 +93,18 @@ pub(super) fn decode(data: &[u8], limit: usize) -> Result<Decoded> {
         let literal_size = input.length(token >> 4)?;
         let literals = input.bytes(literal_size)?;
         if out.len().saturating_add(literal_size) > limit {
+            if at_limit == AtLimit::Stop {
+                out.extend_from_slice(&literals[..limit - out.len()]);
+                return Ok(stopped(out));
+            }
             return Err(exceeds(limit));
         }
         out.extend_from_slice(literals);
         if input.is_at_end() {
             break;
+        }
+        if at_limit == AtLimit::Stop && out.len() == limit {
+            return Ok(stopped(out));
         }
         let offset_at = input.pos;
         let offset = usize::from(u16::from_le_bytes(
@@ -107,15 +123,20 @@ pub(super) fn decode(data: &[u8], limit: usize) -> Result<Decoded> {
             .length(token & MATCH_NIBBLE_MASK)?
             .checked_add(MIN_MATCH)
             .ok_or_else(|| error("LZ4 length overflow"))?;
-        if out.len().saturating_add(match_size) > limit {
+        let room = limit - out.len();
+        if match_size > room && at_limit == AtLimit::Fail {
             return Err(exceeds(limit));
         }
         // A match may overlap its own output (offset < length), so it is
         // copied a byte at a time.
         let start = out.len() - offset;
-        out.reserve(match_size);
-        for i in start..start + match_size {
+        let copied = match_size.min(room);
+        out.reserve(copied);
+        for i in start..start + copied {
             out.push(out[i]);
+        }
+        if at_limit == AtLimit::Stop && out.len() == limit {
+            return Ok(stopped(out));
         }
     }
     Ok(Decoded {
@@ -123,6 +144,15 @@ pub(super) fn decode(data: &[u8], limit: usize) -> Result<Decoded> {
         consumed: Some(data.len()),
         check: None,
     })
+}
+
+/// Output that stopped at the limit: how much input it used is not known.
+fn stopped(out: Vec<u8>) -> Decoded {
+    Decoded {
+        data: out,
+        consumed: None,
+        check: None,
+    }
 }
 
 #[cfg(test)]
@@ -146,6 +176,27 @@ mod tests {
         let stream = [0x1f, b'a', 0x01, 0x00, 0x01, 0x10, b'b'];
         let decoded = decode(&stream, MAX_PAYLOAD).unwrap();
         assert_eq!(decoded.data, [b"a".repeat(21), b"b".to_vec()].concat());
+    }
+
+    #[test]
+    fn stopping_at_the_limit_ignores_padding_after_the_block() {
+        let payload = b"sector sector sector sector".repeat(30);
+        let mut padded = lz4_flex::block::compress(&payload);
+        padded.extend_from_slice(&[0; 13]);
+        assert!(decode(&padded, payload.len()).is_err());
+        let decoded = decode_until(&padded, payload.len(), AtLimit::Stop).unwrap();
+        assert_eq!(decoded.data, payload);
+        assert_eq!(decoded.consumed, None);
+        // A limit inside a match or a literal run keeps the first bytes.
+        for limit in [1, 7, 100, payload.len() - 1] {
+            let prefix = decode_until(&padded, limit, AtLimit::Stop).unwrap();
+            assert_eq!(prefix.data, &payload[..limit], "limit {limit}");
+        }
+        // A stream that ends before the limit still ends with its input.
+        let exact = lz4_flex::block::compress(&payload);
+        let whole = decode_until(&exact, payload.len() + 10, AtLimit::Stop).unwrap();
+        assert_eq!(whole.data, payload);
+        assert_eq!(whole.consumed, Some(exact.len()));
     }
 
     #[test]

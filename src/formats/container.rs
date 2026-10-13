@@ -140,6 +140,8 @@ pub enum Kind {
     Capsule(super::capsule::Layout),
     /// A virtual disk image: QCOW2, VMDK, VHD, VHDX or VDI.
     VirtualDisk(super::vdisk::Layout),
+    /// A compressed or packed disc container: GCZ, CISO, WBFS, CSO or ZSO.
+    DiscImage(super::discimg::Layout),
 }
 
 impl Kind {
@@ -188,6 +190,7 @@ impl Kind {
             Self::Sis(layout) => layout.format(),
             Self::Capsule(layout) => layout.format(),
             Self::VirtualDisk(layout) => layout.format(),
+            Self::DiscImage(layout) => layout.format(),
         }
     }
 
@@ -236,6 +239,7 @@ impl Kind {
             Self::Sis(layout) => layout.label(),
             Self::Capsule(layout) => layout.label(),
             Self::VirtualDisk(layout) => layout.label(),
+            Self::DiscImage(layout) => layout.label(),
         }
     }
 
@@ -284,6 +288,7 @@ impl Kind {
             Self::Sis(layout) => layout.is_weak(),
             Self::Capsule(layout) => layout.is_weak(),
             Self::VirtualDisk(layout) => layout.is_weak(),
+            Self::DiscImage(layout) => layout.is_weak(),
         }
     }
 }
@@ -337,6 +342,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Sis(layout) => super::sis::parse_container(data, layout),
         Kind::Capsule(layout) => super::capsule::parse_container(data, layout),
         Kind::VirtualDisk(layout) => super::vdisk::parse_container(data, layout),
+        Kind::DiscImage(layout) => super::discimg::parse_container(data, layout),
     }
 }
 

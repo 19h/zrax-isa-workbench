@@ -43,6 +43,7 @@ pub mod container;
 pub mod coreboot;
 pub mod d10;
 pub mod dex;
+pub mod discimg;
 pub mod discs;
 pub mod ecoff;
 pub mod elf;
@@ -772,6 +773,18 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = erofs::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Erofs(layout),
+        };
+    }
+
+    // Compressed and packed disc containers: the GCZ magic with a
+    // consistent block count, `WBFS` with plausible sector shifts, `CISO`
+    // with a GameCube block map or a PSP CSO header, and `ZISO`. Before
+    // the console-disc and ISO 9660 checks: a CISO keeps its block map
+    // where those look for the disc magics and stores the disc's first
+    // block at 0x8000, where ISO 9660 looks for its descriptor.
+    if let Some(layout) = discimg::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::DiscImage(layout),
         };
     }
 

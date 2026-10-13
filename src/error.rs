@@ -91,6 +91,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a compressed or packed disc container (GCZ, CISO,
+    /// WBFS, CSO or ZSO).
+    #[error("Disc image container parse error: {message}")]
+    DiscImageParseError {
+        /// What is wrong with the container.
+        message: String,
+    },
+
     /// Error parsing a partition table (MBR, GPT or Apple Partition Map).
     #[error("Partition table parse error: {message}")]
     PartitionParseError {

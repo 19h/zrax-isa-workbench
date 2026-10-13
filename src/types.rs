@@ -1156,6 +1156,15 @@ pub enum FileFormat {
     Vhdx,
     /// VirtualBox VDI disk image
     Vdi,
+    // Disc image containers
+    /// Dolphin GCZ compressed `GameCube` or Wii disc image
+    Gcz,
+    /// `GameCube` or Wii CISO (compact ISO) disc image
+    Ciso,
+    /// Wii Backup File System (WBFS) image
+    Wbfs,
+    /// PSP CSO or ZSO compressed ISO image
+    Cso,
 }
 
 impl fmt::Display for FileFormat {
@@ -1438,6 +1447,11 @@ impl fmt::Display for FileFormat {
             FileFormat::Vhd => write!(f, "VHD disk image"),
             FileFormat::Vhdx => write!(f, "VHDX disk image"),
             FileFormat::Vdi => write!(f, "VDI disk image"),
+            // Disc image containers
+            FileFormat::Gcz => write!(f, "GCZ disc image"),
+            FileFormat::Ciso => write!(f, "CISO disc image"),
+            FileFormat::Wbfs => write!(f, "WBFS image"),
+            FileFormat::Cso => write!(f, "CSO disc image"),
         }
     }
 }
