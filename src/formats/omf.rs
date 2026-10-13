@@ -114,6 +114,10 @@ pub fn detect(data: &[u8]) -> bool {
             return false;
         }
 
+        if !is_consistent_header_record(&data[pos..end]) {
+            return false;
+        }
+
         checked += 1;
         pos = end;
 
@@ -123,6 +127,20 @@ pub fn detect(data: &[u8]) -> bool {
     }
 
     checked >= 2 && structural_hits > 0
+}
+
+/// THEADR and LHEADR records hold a name (length byte, characters) and the
+/// checksum, so the record length is the name length plus 2 (TIS OMF 1.1,
+/// "THEADR Translator Header Record"). Other record types pass. Without
+/// this check, repeated `80 05 00 00` words in unrelated data read as
+/// header records.
+fn is_consistent_header_record(record: &[u8]) -> bool {
+    match record {
+        [0x80 | 0x82, low, high, name_len, ..] => {
+            usize::from(u16::from_le_bytes([*low, *high])) == usize::from(*name_len) + 2
+        }
+        _ => true,
+    }
 }
 
 /// Parse OMF file.
@@ -226,6 +244,17 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn header_records_must_hold_exactly_their_name() {
+        // THEADR "a.c" (length 3 + checksum), then MODEND.
+        let mut data = vec![0x80, 0x05, 0x00, 0x03, b'a', b'.', b'c', 0x00];
+        data.extend_from_slice(&[0x8a, 0x02, 0x00, 0x00, 0x00]);
+        assert!(detect(&data));
+        // Repeated `80 05 00 00` words, as in a cdb hash table.
+        let table: Vec<u8> = [0x80, 0x05, 0x00, 0x00].repeat(64);
+        assert!(!detect(&table));
+    }
+
     fn make_record(rec_type: u8, payload: &[u8]) -> Vec<u8> {
         let mut rec = Vec::with_capacity(3 + payload.len() + 1);
         rec.push(rec_type);
@@ -239,14 +268,15 @@ mod tests {
 
     #[test]
     fn test_detect_omf() {
-        let mut data = make_record(0x80, b"test");
+        // THEADR names are length-prefixed strings.
+        let mut data = make_record(0x80, b"\x04test");
         data.extend(make_record(0x8A, &[]));
         assert!(detect(&data));
     }
 
     #[test]
     fn test_parse_omf_32bit() {
-        let mut data = make_record(0x80, b"mod");
+        let mut data = make_record(0x80, b"\x03mod");
         data.extend(make_record(0xA1, &[1, 2, 3, 4]));
         data.extend(make_record(0x8B, &[]));
         let result = parse(&data).unwrap();
@@ -263,14 +293,17 @@ mod tests {
 
     #[test]
     fn test_detect_omf_without_valid_checksums() {
-        let mut data = make_record(0x80, b"mod");
-        data.extend(make_record(0x88, b"x"));
-        data.extend(make_record(0x96, b"names"));
-        data.extend(make_record(0x8A, &[]));
-        // Corrupt checksums but keep record framing intact.
-        data[10] ^= 0x55;
-        data[20] ^= 0xAA;
-        assert!(detect(&data));
+        let mut records = [
+            make_record(0x80, b"\x03mod"),
+            make_record(0x88, b"x"),
+            make_record(0x96, b"names"),
+            make_record(0x8A, &[]),
+        ];
+        // Corrupt two checksums (each record's last byte), keeping framing.
+        for (record, flip) in records.iter_mut().zip([0x55, 0xAA]) {
+            *record.last_mut().expect("records end with a checksum") ^= flip;
+        }
+        assert!(detect(&records.concat()));
     }
 
     #[test]
