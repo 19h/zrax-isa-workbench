@@ -77,6 +77,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an Xbox 360 STFS package (`XContent` `CON `, `LIVE` or
+    /// `PIRS`).
+    #[error("Xbox 360 package parse error: {message}")]
+    StfsParseError {
+        /// What is wrong with the package.
+        message: String,
+    },
+
     /// Error parsing an ARM Image Format (AIF) executable image.
     #[error("ARM AIF parse error: {message}")]
     AifParseError {

@@ -102,6 +102,7 @@ pub mod socboot;
 pub mod som;
 pub mod sox;
 pub mod spc;
+pub mod stfs;
 pub mod tds;
 pub mod ti_c55x;
 pub mod ti;
@@ -808,6 +809,18 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = erofs::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Erofs(layout),
+        };
+    }
+
+    // Xbox 360 STFS packages: `CON `, `LIVE` or `PIRS` at offset 0, a
+    // header size of at least 0x971A, a 0x24-byte volume descriptor and
+    // volume type 0 or 1. Before the disc-container, console-disc and ISO
+    // 9660 checks, which look at 0x8000 and 0x10000, where a package keeps
+    // its title thumbnail and its first data blocks; none of them starts
+    // with these magics.
+    if let Some(layout) = stfs::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Stfs(layout),
         };
     }
 

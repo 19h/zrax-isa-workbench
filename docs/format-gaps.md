@@ -257,7 +257,11 @@ CODE files as Z80) and standalone +3DOS and AMSDOS headered files followed;
 see [CPC and Spectrum +3 disk images](cpcdsk.md). Nintendo 3DS NCSD and CIA
 and Switch PFS0/NSP and XCI containers followed (NCA, NAND partitions and
 title-key-encrypted contents opaque); see [Nintendo 3DS and Switch
-containers](nintendo2.md).
+containers](nintendo2.md). Xbox 360 STFS packages (CON, LIVE, PIRS)
+followed: files reassembled from their data blocks and listed by path (XEX
+classified by its parser), SHA-1 of the header, hash tables and blocks
+checked, signatures not verified; SVOD volumes recognized without their
+data files; see [Xbox 360 STFS packages](stfs.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as

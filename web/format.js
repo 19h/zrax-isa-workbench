@@ -130,6 +130,7 @@ const FORMAT_NAMES = {
   ncsd: '3DS NCSD', cia: '3DS CIA', pfs0: 'Switch PFS0', xci: 'Switch XCI',
   appledmg: 'Apple disk image',
   hfsplus: 'HFS+ volume', hfsx: 'HFSX volume',
+  xboxstfs: 'Xbox 360 STFS package',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

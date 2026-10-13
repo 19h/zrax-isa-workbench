@@ -1215,6 +1215,9 @@ pub enum FileFormat {
     HfsPlus,
     /// HFSX volume (`HX`), HFS Plus with optional case-sensitive names
     Hfsx,
+    // Xbox 360 packages
+    /// Xbox 360 STFS package (`XContent` `CON `, `LIVE` or `PIRS`)
+    XboxStfs,
 }
 
 impl fmt::Display for FileFormat {
@@ -1531,6 +1534,8 @@ impl fmt::Display for FileFormat {
             // HFS+ and HFSX volumes
             FileFormat::HfsPlus => write!(f, "HFS+ volume"),
             FileFormat::Hfsx => write!(f, "HFSX volume"),
+            // Xbox 360 packages
+            FileFormat::XboxStfs => write!(f, "Xbox 360 STFS package"),
         }
     }
 }

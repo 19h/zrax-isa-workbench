@@ -160,6 +160,8 @@ pub enum Kind {
     Dmg(super::dmg::Layout),
     /// An HFS Plus or HFSX volume, plain or in an HFS wrapper.
     HfsPlus(super::hfsplus::Layout),
+    /// An Xbox 360 STFS package (`XContent` `CON `, `LIVE` or `PIRS`).
+    Stfs(super::stfs::Layout),
 }
 
 impl Kind {
@@ -217,6 +219,7 @@ impl Kind {
             Self::Nintendo2(layout) => layout.format(),
             Self::Dmg(layout) => layout.format(),
             Self::HfsPlus(layout) => layout.format(),
+            Self::Stfs(layout) => layout.format(),
         }
     }
 
@@ -274,6 +277,7 @@ impl Kind {
             Self::Nintendo2(layout) => layout.label(),
             Self::Dmg(layout) => layout.label(),
             Self::HfsPlus(layout) => layout.label(),
+            Self::Stfs(layout) => layout.label(),
         }
     }
 
@@ -331,6 +335,7 @@ impl Kind {
             Self::Nintendo2(layout) => layout.is_weak(),
             Self::Dmg(layout) => layout.is_weak(),
             Self::HfsPlus(layout) => layout.is_weak(),
+            Self::Stfs(layout) => layout.is_weak(),
         }
     }
 }
@@ -393,6 +398,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Nintendo2(layout) => super::nintendo2::parse_container(data, layout),
         Kind::Dmg(layout) => super::dmg::parse_container(data, layout),
         Kind::HfsPlus(layout) => super::hfsplus::parse_container(data, layout),
+        Kind::Stfs(layout) => super::stfs::parse_container(data, layout),
     }
 }
 
