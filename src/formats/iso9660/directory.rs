@@ -78,22 +78,22 @@ impl<'a> Record<'a> {
                  {len} B record"
             )));
         }
-        let (extent, extent_be) = both_u32_halves(record, 2)?;
-        let (data_len, data_len_be) = both_u32_halves(record, 10)?;
+        let extent = both_u32_halves(record, 2)?;
+        let data_len = both_u32_halves(record, 10)?;
         // The padding byte after an even-length identifier (9.1.12); a
         // record that ends right after the identifier has no system use.
         let system_use_start = (identifier_end + usize::from(identifier_len % 2 == 0)).min(len);
         Ok(Self {
             offset: at,
             ear_blocks: record[1],
-            extent,
-            data_len,
+            extent: extent.little,
+            data_len: data_len.little,
             flags: record[25],
             interleaved: record[26] != 0 || record[27] != 0,
             identifier: &record[RECORD_HEADER_SIZE..identifier_end],
             system_use: &record[system_use_start..],
             system_use_offset: at + system_use_start,
-            byte_orders_differ: extent != extent_be || data_len != data_len_be,
+            byte_orders_differ: extent.agreed().is_none() || data_len.agreed().is_none(),
         })
     }
 

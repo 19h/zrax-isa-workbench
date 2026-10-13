@@ -386,22 +386,43 @@ fn be_u32(data: &[u8], at: usize) -> Result<u32> {
     Ok(u32::from_be_bytes(array(data, at)?))
 }
 
+/// The two halves of a both-byte-order field: the little-endian copy, then
+/// the big-endian one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BothOrders<T> {
+    little: T,
+    big: T,
+}
+
+impl<T: PartialEq + Copy> BothOrders<T> {
+    /// The value, when the two halves agree.
+    fn agreed(self) -> Option<T> {
+        (self.little == self.big).then_some(self.little)
+    }
+}
+
 /// A 16-bit number in both byte orders (ECMA-119 7.2.3): little-endian,
-/// then big-endian. Returns both halves.
-fn both_u16_halves(data: &[u8], at: usize) -> Result<(u16, u16)> {
-    Ok((le_u16(data, at)?, be_u16(data, at + 2)?))
+/// then big-endian.
+fn both_u16_halves(data: &[u8], at: usize) -> Result<BothOrders<u16>> {
+    Ok(BothOrders {
+        little: le_u16(data, at)?,
+        big: be_u16(data, at + 2)?,
+    })
 }
 
 /// A 32-bit number in both byte orders (ECMA-119 7.3.3): little-endian,
-/// then big-endian. Returns both halves.
-fn both_u32_halves(data: &[u8], at: usize) -> Result<(u32, u32)> {
-    Ok((le_u32(data, at)?, be_u32(data, at + 4)?))
+/// then big-endian.
+fn both_u32_halves(data: &[u8], at: usize) -> Result<BothOrders<u32>> {
+    Ok(BothOrders {
+        little: le_u32(data, at)?,
+        big: be_u32(data, at + 4)?,
+    })
 }
 
 /// A 16-bit both-byte-order field whose halves must agree; `field` names it
 /// in the error.
 fn both_u16(data: &[u8], at: usize, field: &str) -> Result<u16> {
-    let (little, big) = both_u16_halves(data, at)?;
+    let BothOrders { little, big } = both_u16_halves(data, at)?;
     if little != big {
         return Err(error(format!(
             "Invalid {field} at 0x{at:X}: little-endian 0x{little:04X} and big-endian \
@@ -414,7 +435,7 @@ fn both_u16(data: &[u8], at: usize, field: &str) -> Result<u16> {
 /// A 32-bit both-byte-order field whose halves must agree; `field` names it
 /// in the error.
 fn both_u32(data: &[u8], at: usize, field: &str) -> Result<u32> {
-    let (little, big) = both_u32_halves(data, at)?;
+    let BothOrders { little, big } = both_u32_halves(data, at)?;
     if little != big {
         return Err(error(format!(
             "Invalid {field} at 0x{at:X}: little-endian 0x{little:08X} and big-endian \

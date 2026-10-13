@@ -118,7 +118,12 @@ fn for_each_entry<'a>(
             }
             pos += len;
         }
-        let Some((block, start, len)) = next else {
+        let Some(Continuation {
+            block,
+            offset: start,
+            length: len,
+        }) = next
+        else {
             return Ok(());
         };
         hops += 1;
@@ -140,17 +145,30 @@ fn for_each_entry<'a>(
     }
 }
 
+/// Where a `CE` entry continues the system use entries.
+struct Continuation {
+    /// Logical block of the continuation area.
+    block: u32,
+    /// Byte offset of the area in that block.
+    offset: u32,
+    /// Length of the area in bytes.
+    length: u32,
+}
+
 /// A `CE` entry's continuation area: block, offset and length, each in
 /// both byte orders (SUSP 5.1, `CE` length 28).
-fn continuation(data: &[u8], at: usize) -> std::result::Result<(u32, u32, u32), String> {
+fn continuation(data: &[u8], at: usize) -> std::result::Result<Continuation, String> {
     let field = |offset: usize| {
         both_u32_halves(data, offset)
             .ok()
-            .filter(|(little, big)| little == big)
-            .map(|(little, _)| little)
+            .and_then(BothOrders::agreed)
             .ok_or_else(|| format!("invalid CE entry at 0x{at:X}"))
     };
-    Ok((field(0)?, field(8)?, field(16)?))
+    Ok(Continuation {
+        block: field(0)?,
+        offset: field(8)?,
+        length: field(16)?,
+    })
 }
 
 /// Whether the root directory's first record (`.`) shows Rock Ridge: an
