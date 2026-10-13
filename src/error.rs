@@ -68,6 +68,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an ISO 9660 optical disc filesystem image.
+    #[error("ISO 9660 parse error: {message}")]
+    Iso9660ParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an Espressif firmware image or flash dump (ESP32
     /// family, ESP8266, ESP-IDF partition table).
     #[error("Espressif image parse error: {message}")]

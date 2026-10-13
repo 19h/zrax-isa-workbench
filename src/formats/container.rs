@@ -116,6 +116,8 @@ pub enum Kind {
     Partitions(super::partitions::Layout),
     /// A FAT12, FAT16, FAT32 or exFAT volume.
     Fat(super::fat::Layout),
+    /// An ISO 9660 optical disc filesystem image.
+    Iso9660(super::iso9660::Layout),
 }
 
 impl Kind {
@@ -153,6 +155,7 @@ impl Kind {
             Self::Erofs(layout) => layout.format(),
             Self::Partitions(layout) => layout.format(),
             Self::Fat(layout) => layout.format(),
+            Self::Iso9660(layout) => layout.format(),
         }
     }
 
@@ -190,6 +193,7 @@ impl Kind {
             Self::Erofs(layout) => layout.label(),
             Self::Partitions(layout) => layout.label(),
             Self::Fat(layout) => layout.label(),
+            Self::Iso9660(layout) => layout.label(),
         }
     }
 
@@ -227,6 +231,7 @@ impl Kind {
             Self::Erofs(layout) => layout.is_weak(),
             Self::Partitions(layout) => layout.is_weak(),
             Self::Fat(layout) => layout.is_weak(),
+            Self::Iso9660(layout) => layout.is_weak(),
         }
     }
 }
@@ -269,6 +274,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Erofs(layout) => erofs::parse_container(data, layout),
         Kind::Partitions(layout) => super::partitions::parse_container(data, layout),
         Kind::Fat(layout) => super::fat::parse_container(data, layout),
+        Kind::Iso9660(layout) => super::iso9660::parse_container(data, layout),
     }
 }
 

@@ -54,6 +54,7 @@ pub mod frf;
 pub mod goff;
 pub mod hex;
 pub mod huawei;
+pub mod iso9660;
 pub mod java;
 pub mod kernel;
 pub mod llvm_bc;
@@ -743,6 +744,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = erofs::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Erofs(layout),
+        };
+    }
+
+    // ISO 9660: `CD001` at 0x8001 and a consistent primary volume
+    // descriptor. After the console formats, whose disc headers fill the
+    // 32 KiB system area (Saturn, Sega CD, Dreamcast), and before any
+    // partition-table check: a hybrid ISO carries an MBR in its system area.
+    if let Some(layout) = iso9660::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Iso9660(layout),
         };
     }
 

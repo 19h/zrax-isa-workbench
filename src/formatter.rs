@@ -787,6 +787,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::ApplePartitionMap => "Apple Partition Map",
         FileFormat::Fat => "FAT filesystem",
         FileFormat::ExFat => "exFAT filesystem",
+        FileFormat::Iso9660 => "ISO 9660",
     }
 }
 

@@ -1097,6 +1097,9 @@ pub enum FileFormat {
     Fat,
     /// exFAT volume
     ExFat,
+    // ISO 9660
+    /// ISO 9660 (ECMA-119) optical disc filesystem image
+    Iso9660,
 }
 
 impl fmt::Display for FileFormat {
@@ -1345,6 +1348,8 @@ impl fmt::Display for FileFormat {
             // FAT
             FileFormat::Fat => write!(f, "FAT filesystem"),
             FileFormat::ExFat => write!(f, "exFAT filesystem"),
+            // ISO 9660
+            FileFormat::Iso9660 => write!(f, "ISO 9660"),
         }
     }
 }

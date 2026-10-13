@@ -109,6 +109,7 @@ const FORMAT_NAMES = {
   androidsuper: 'Android super image', androiddtbo: 'Android DTBO image', androidvbmeta: 'AVB vbmeta image', erofs: 'EROFS',
   mbr: 'MBR partition table', gpt: 'GPT partition table', applepartitionmap: 'Apple Partition Map',
   fat: 'FAT filesystem', exfat: 'exFAT filesystem',
+  iso9660: 'ISO 9660',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

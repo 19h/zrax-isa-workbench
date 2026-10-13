@@ -95,7 +95,9 @@ extents not decoded) followed; see [EROFS](erofs.md). Partition tables (MBR
 with EBR chains, GPT, Apple Partition Map) followed too; see
 [partition tables](partitions.md). FAT12/16/32 (weak; FAT type by cluster
 count) and exFAT (strong; boot, entry-set and up-case checksums verified)
-followed; see [FAT](fat.md). Every row
+followed; see [FAT](fat.md). ISO 9660 (Rock Ridge, Joliet; El Torito boot
+images as children; UDF bridge and hybrid partition tables noted) followed;
+see [ISO 9660](iso9660.md). Every row
 of this section is now implemented.
 
 | Impact | Format | Identification | Notes |
