@@ -162,6 +162,9 @@ pub enum Kind {
     HfsPlus(super::hfsplus::Layout),
     /// An Xbox 360 STFS package (`XContent` `CON `, `LIVE` or `PIRS`).
     Stfs(super::stfs::Layout),
+    /// A firmware package wrapper: `MikroTik` NPK, Ubiquiti firmware image or
+    /// `ChromeOS` kernel partition.
+    FwPack(super::fwpack::Layout),
 }
 
 impl Kind {
@@ -220,6 +223,7 @@ impl Kind {
             Self::Dmg(layout) => layout.format(),
             Self::HfsPlus(layout) => layout.format(),
             Self::Stfs(layout) => layout.format(),
+            Self::FwPack(layout) => layout.format(),
         }
     }
 
@@ -278,6 +282,7 @@ impl Kind {
             Self::Dmg(layout) => layout.label(),
             Self::HfsPlus(layout) => layout.label(),
             Self::Stfs(layout) => layout.label(),
+            Self::FwPack(layout) => layout.label(),
         }
     }
 
@@ -336,6 +341,7 @@ impl Kind {
             Self::Dmg(layout) => layout.is_weak(),
             Self::HfsPlus(layout) => layout.is_weak(),
             Self::Stfs(layout) => layout.is_weak(),
+            Self::FwPack(layout) => layout.is_weak(),
         }
     }
 }
@@ -399,6 +405,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Dmg(layout) => super::dmg::parse_container(data, layout),
         Kind::HfsPlus(layout) => super::hfsplus::parse_container(data, layout),
         Kind::Stfs(layout) => super::stfs::parse_container(data, layout),
+        Kind::FwPack(layout) => super::fwpack::parse_container(data, layout),
     }
 }
 

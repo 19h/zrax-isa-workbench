@@ -61,6 +61,7 @@ pub mod ext;
 pub mod fat;
 pub mod fatelf;
 pub mod frf;
+pub mod fwpack;
 pub mod geos;
 pub mod goff;
 pub mod hex;
@@ -1012,6 +1013,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = hfsplus::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::HfsPlus(layout),
+        };
+    }
+
+    // Firmware package wrappers with keys at offset 0: the NPK magic with a
+    // documented first part, a Ubiquiti header magic with `PART` at 268, or
+    // the `CHROMEOS` keyblock magic with version 2. No format above starts
+    // with them; the families above that probe later offsets would need
+    // their structures inside the package's compressed or signed parts.
+    if let Some(layout) = fwpack::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::FwPack(layout),
         };
     }
 

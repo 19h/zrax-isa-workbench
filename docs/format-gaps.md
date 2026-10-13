@@ -159,7 +159,10 @@ verified) are implemented; see [coreboot](coreboot.md). Router wrappers
 (Broadcom TRX v1/v2, Netgear CHK, D-Link SEAMA, TP-Link mktplinkfw v1/v2/v3 and
 SafeLoader; TRX CRC and CHK checksums verified, MD5 digests not verified; LZMA
 kernels decoded by the OpenWrt convention) are implemented; see [router
-firmware](router.md). Windows minidumps (`ProcessorArchitecture` as the
+firmware](router.md). MikroTik NPK packages, Ubiquiti firmware images and
+ChromeOS kernel partitions followed (a ChromeOS firmware vblock, which only
+a signature check tells apart from a kernel partition, is a parse error);
+see [firmware package wrappers](fwpack.md). Windows minidumps (`ProcessorArchitecture` as the
 target; module memory as code, limited to executable sections when PE
 headers are dumped, other memory opaque; checked against three
 real dumps) and kernel crash dump headers (`PAGEDUMP`, `PAGEDU64`; bodies

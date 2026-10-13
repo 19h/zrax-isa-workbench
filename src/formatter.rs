@@ -835,6 +835,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::HfsPlus => "HFS+ volume",
         FileFormat::Hfsx => "HFSX volume",
         FileFormat::XboxStfs => "Xbox 360 STFS package",
+        FileFormat::MikrotikNpk => "MikroTik NPK package",
+        FileFormat::UbiquitiFw => "Ubiquiti firmware image",
+        FileFormat::ChromeOsKernel => "ChromeOS kernel partition",
     }
 }
 

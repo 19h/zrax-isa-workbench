@@ -85,6 +85,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a firmware package wrapper (`MikroTik` NPK, Ubiquiti
+    /// firmware image or `ChromeOS` kernel partition).
+    #[error("Firmware package parse error: {message}")]
+    FwPackParseError {
+        /// What is wrong with the package.
+        message: String,
+    },
+
     /// Error parsing an ARM Image Format (AIF) executable image.
     #[error("ARM AIF parse error: {message}")]
     AifParseError {

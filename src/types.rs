@@ -1218,6 +1218,13 @@ pub enum FileFormat {
     // Xbox 360 packages
     /// Xbox 360 STFS package (`XContent` `CON `, `LIVE` or `PIRS`)
     XboxStfs,
+    // Firmware package wrappers
+    /// `MikroTik` `RouterOS` package (NPK)
+    MikrotikNpk,
+    /// Ubiquiti firmware image (`UBNT`, `OPEN` or `GEOS` header)
+    UbiquitiFw,
+    /// `ChromeOS` verified-boot kernel partition (`CHROMEOS` keyblock)
+    ChromeOsKernel,
 }
 
 impl fmt::Display for FileFormat {
@@ -1536,6 +1543,10 @@ impl fmt::Display for FileFormat {
             FileFormat::Hfsx => write!(f, "HFSX volume"),
             // Xbox 360 packages
             FileFormat::XboxStfs => write!(f, "Xbox 360 STFS package"),
+            // Firmware package wrappers
+            FileFormat::MikrotikNpk => write!(f, "MikroTik NPK package"),
+            FileFormat::UbiquitiFw => write!(f, "Ubiquiti firmware image"),
+            FileFormat::ChromeOsKernel => write!(f, "ChromeOS kernel partition"),
         }
     }
 }
