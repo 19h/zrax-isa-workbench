@@ -14,9 +14,9 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::{
-    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, coreboot, ext, huawei, mcu,
-    mtd, nintendo, optionrom, pcfw, rofs, router, socboot, socboot2, uefi, wince, zxtape,
-    MAX_PAYLOAD,
+    archives, automotive, bitstream, blackfin_ldr, chiptune, compressed, coreboot, erofs, ext,
+    huawei, mcu, mtd, nintendo, optionrom, pcfw, rofs, router, socboot, socboot2, uefi, wince,
+    zxtape, MAX_PAYLOAD,
 };
 use crate::types::{
     ClassificationResult, Endianness, FileFormat, Isa, MetadataEntry, MetadataKey, MetadataValue,
@@ -72,7 +72,8 @@ pub enum Kind {
     Retro(super::retro::Layout),
     /// An Apple Image4 file or dyld shared cache.
     Apple(super::apple::Layout),
-    /// An Android boot, `vendor_boot`, sparse, OTA or bootloader-pack image.
+    /// An Android boot, `vendor_boot`, sparse, OTA, bootloader-pack,
+    /// `super`, DTBO or vbmeta image.
     Android(super::android::Layout),
     /// A system-on-chip boot image (Xilinx `BOOT.BIN`, NXP i.MX, NXP Secure
     /// Binary).
@@ -109,6 +110,8 @@ pub enum Kind {
     /// CD, MSX, Lynx, 7800, C64, Atari ST, ZX Spectrum, `WonderSwan`, Neo
     /// Geo Pocket).
     Retro2(super::retro2::Layout),
+    /// An EROFS filesystem image.
+    Erofs(erofs::Layout),
 }
 
 impl Kind {
@@ -143,6 +146,7 @@ impl Kind {
             Self::PcFw(layout) => layout.format(),
             Self::BootMisc(layout) => layout.format(),
             Self::Retro2(layout) => layout.format(),
+            Self::Erofs(layout) => layout.format(),
         }
     }
 
@@ -177,6 +181,7 @@ impl Kind {
             Self::PcFw(layout) => layout.label(),
             Self::BootMisc(layout) => layout.label(),
             Self::Retro2(layout) => layout.label(),
+            Self::Erofs(layout) => layout.label(),
         }
     }
 
@@ -211,6 +216,7 @@ impl Kind {
             Self::PcFw(layout) => layout.is_weak(),
             Self::BootMisc(layout) => layout.is_weak(),
             Self::Retro2(layout) => layout.is_weak(),
+            Self::Erofs(layout) => layout.is_weak(),
         }
     }
 }
@@ -250,6 +256,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::PcFw(layout) => pcfw::parse_container(data, layout),
         Kind::BootMisc(layout) => super::bootmisc::parse_container(data, layout),
         Kind::Retro2(layout) => super::retro2::parse_container(data, layout),
+        Kind::Erofs(layout) => erofs::parse_container(data, layout),
     }
 }
 

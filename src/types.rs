@@ -1073,6 +1073,17 @@ pub enum FileFormat {
     WonderSwanRom,
     /// Neo Geo Pocket or Neo Geo Pocket Color ROM (`.ngp`, `.ngc`)
     NgpRom,
+    // More Android images
+    /// Android dynamic-partition `super` image (liblp metadata)
+    AndroidSuper,
+    /// Android DTB/DTBO table image (`dt_table_header`)
+    AndroidDtbo,
+    /// Android Verified Boot vbmeta image (`AVB0`)
+    AndroidVbmeta,
+
+    // EROFS
+    /// EROFS filesystem image
+    Erofs,
 }
 
 impl fmt::Display for FileFormat {
@@ -1308,6 +1319,12 @@ impl fmt::Display for FileFormat {
             FileFormat::ZxSnapshot => write!(f, "ZX Spectrum snapshot"),
             FileFormat::WonderSwanRom => write!(f, "WonderSwan ROM"),
             FileFormat::NgpRom => write!(f, "Neo Geo Pocket ROM"),
+            // More Android images
+            FileFormat::AndroidSuper => write!(f, "Android super image"),
+            FileFormat::AndroidDtbo => write!(f, "Android DTBO image"),
+            FileFormat::AndroidVbmeta => write!(f, "AVB vbmeta image"),
+            // EROFS
+            FileFormat::Erofs => write!(f, "EROFS"),
         }
     }
 }

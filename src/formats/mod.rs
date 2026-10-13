@@ -45,6 +45,7 @@ pub mod ecoff;
 pub mod elf;
 pub mod epoc;
 pub mod epr;
+pub mod erofs;
 pub mod esp;
 pub mod ext;
 pub mod fatelf;
@@ -587,7 +588,8 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
-    // Android boot, vendor_boot, sparse, OTA and bootloader-pack images.
+    // Android boot, vendor_boot, sparse, OTA, bootloader-pack, DTBO and
+    // vbmeta images, and super images (geometry magic at 0 or 4096).
     // Their magics are distinct from every format above.
     if let Some(layout) = android::detect(data) {
         return DetectedFormat::Container {
@@ -730,6 +732,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = retro2::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Retro2(layout),
+        };
+    }
+
+    // EROFS: magic 0xE0F5E1E2 at 1024. Checked after the executable and
+    // firmware formats, whose headers lie in the first kilobyte that EROFS
+    // leaves unused.
+    if let Some(layout) = erofs::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Erofs(layout),
         };
     }
 

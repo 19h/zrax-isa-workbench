@@ -89,7 +89,9 @@ index is not walked) and JFFS2 in both byte orders (weak; every node CRC
 verified) are implemented; see [flash filesystems](mtd.md). ext2/ext3/ext4
 (strong detection with superblock geometry checks; block maps, extent trees
 and htree directories; `metadata_csum` and `gdt_csum` verified; inline-data
-and encrypted files not read) is implemented; see [ext](ext.md). Every row
+and encrypted files not read) is implemented; see [ext](ext.md). EROFS
+(compact and extended inodes; LZ4, MicroLZMA and DEFLATE clusters; Zstandard
+extents not decoded) followed; see [EROFS](erofs.md). Every row
 of this section is now implemented.
 
 | Impact | Format | Identification | Notes |

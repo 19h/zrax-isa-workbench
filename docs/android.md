@@ -1,13 +1,14 @@
 # Android images
 
 `src/formats/android.rs` and its submodules (`boot.rs`, `sparse.rs`,
-`ota.rs`, `bootloader.rs`) parse Android boot and vendor_boot images, sparse
-images, update_engine OTA payloads and Pixel/Nexus bootloader packs into the
-shared container model ([compressed streams and the container
-model](compressed-streams.md)). None of these formats names a CPU: every
-container result has an unknown ISA with confidence 0, and the ISA comes
-from the kernels, partition images and pack members, each classified from
-its own bytes.
+`ota.rs`, `bootloader.rs`, `super_image.rs`, `dtbo.rs`, `vbmeta.rs`) parse
+Android boot and vendor_boot images, sparse images, update_engine OTA
+payloads, Pixel/Nexus bootloader packs, dynamic-partition `super` images,
+DTB/DTBO table images and AVB vbmeta images into the shared container model
+([compressed streams and the container model](compressed-streams.md)).
+None of these formats names a CPU: every container result has an unknown
+ISA with confidence 0, and the ISA comes from the kernels, partition images
+and pack members, each classified from its own bytes.
 
 ## Implemented layouts
 
@@ -23,6 +24,10 @@ its own bytes.
 | `androidbootloader` | Qualcomm meta image v1: 76-byte header, `img_hdr_sz / 80` entries of name, absolute offset and size | Strong: `3C D6 1A CE` | One component per entry in use (offset and size nonzero) | CAF `meta_image/meta_format.h` (OnePlusOSS mirror `018b5519`); AOSP `device/huawei/angler` `releasetools.py` `cf92cd8e` |
 | `androidbootloader` | FBPK v2: 112-byte `PackHeader`, `PackEntry` records at `header_size` with stride `entry_header_size`, absolute 64-bit data offsets | Strong: `FBPK`, version 2 | One component per non-empty entry, labelled `name` or `name (product)`; type 0 (partition table) opaque | Google `fbpack.py`/`fbpacktool.py` (Pixel `fw_unpack` tools on source.android.com, 2021) |
 | `androidbootloader` | FBPK v1: 84-byte header, 56-byte entry headers each followed by its data, `next_offset` chains entries | Strong: `FBPK`, version 1 | As FBPK v2 | Community only: `anestisb/qc_image_unpacker` `src/packed_image.h` `28a783a9`, BANG `android_fbpk.ksy` `96370e4f` |
+| `androidsuper` | Full `super` image (`ImageBuilder`): 4096 reserved bytes, geometry and backup at 4096 and 8192, `metadata_slot_count` primary and backup copies of `metadata_max_size`, partition data; liblp metadata v10.0 to v10.2 (header, partition, extent, group and block device tables) | Strong: geometry magic `67 44 6C 61` at 4096 | One member per partition whose extents are in the file, labelled with its name and listed when it holds a recognized format: one linear extent borrowed at its stored offset, several linear and zero extents assembled (transform `LP extents`) | AOSP [`system/core` `a3b721a3`](https://android.googlesource.com/platform/system/core/+/a3b721a32242006b59cb12bd62c9133632af3a2d/fs_mgr/liblp/include/liblp/metadata_format.h) `fs_mgr/liblp/include/liblp/metadata_format.h`, `reader.cpp`, `utility.cpp`, `images.cpp`, `writer.cpp` |
+| `androidsuper` (variant) | `super_empty` image (`WriteToImageFile`): geometry at 0, one metadata copy at 4096, no partition data | Strong: geometry magic at 0 | None; partitions described in metadata | As above |
+| `androiddtbo` | DTB/DTBO table: 32-byte `dt_table_header`, 32-byte `dt_table_entry` records at `dt_entries_offset`, blobs inside `total_size`; version 1 entries compressed with zlib or gzip | Strong: `D7 B7 AB 1E` | One member per distinct blob (`DT entry <n> (id 0x…, rev 0x…)`), classified as a device tree; compressed blobs decoded; blobs that are not device trees opaque | AOSP [`system/libufdt` `9b70f594`](https://android.googlesource.com/platform/system/libufdt/+/9b70f594cf149c7c73989c78f03d210f8aa1c1f6/utils/src/dt_table.h) `utils/src/dt_table.h`, `mkdtboimg.py`, `mkdtimg_core.c` |
+| `androidvbmeta` | AVB vbmeta image: 256-byte header, authentication block (hash, signature), auxiliary block (public key, its metadata, descriptors); property, hashtree, hash, kernel cmdline and chain partition descriptors | Strong: `AVB0` | None; the container is opaque (metadata only) and its descriptors are summarized in notes | AOSP [`external/avb` `76117860`](https://android.googlesource.com/platform/external/avb/+/761178607206f4cb2af79ed9eec52d8cbd814adb/libavb/avb_vbmeta_image.h) `libavb/avb_vbmeta_image.h`, `avb_vbmeta_image.c`, `avb_descriptor.h` and the descriptor headers |
 
 The JSON `format.variant_name` is the layout label (`Android boot image`,
 `BOOTLDR! bootloader pack`, `FBPK bootloader pack`, ...). The first note
@@ -30,8 +35,10 @@ names the header version or pack layout, and metadata records the header
 fields (`android_boot_header_version`, `android_boot_page_size`, load
 addresses, `android_os_version`, `android_os_patch_level`,
 `android_board_name`, `android_cmdline`, `android_sparse_*`,
-`android_ota_*`, `android_fbpk_platform`, `android_bootloader_version`) and
-one `android_component_<n>` entry per component.
+`android_ota_*`, `android_fbpk_platform`, `android_bootloader_version`,
+`android_super_*` for the geometry, groups, block devices and partitions,
+`android_dtbo_*` for the table and each entry, `android_vbmeta_*` for the
+header) and one `android_component_<n>` entry per component.
 
 ## Architecture evidence
 
@@ -42,7 +49,8 @@ partition names are never used as ISA evidence. The ISA comes from:
 - the decoded kernel's own header (arm64 or RISC-V `Image`, Arm `zImage`,
   x86 `bzImage`, ELF), through the kernel family;
 - nested containers (a `boot` partition in an OTA payload, a boot image in
-  a sparse image, a droidboot image in a fugu pack);
+  a sparse image, a droidboot image in a fugu pack, an EROFS or ext
+  partition in a `super` image, a `super` image in a sparse image);
 - the code model on the bytes of a component that is not a recognized
   format (second stage, IFWI, unrecognized pack members). A decoded cpio
   ramdisk is a CPIO container ([archives](archives.md)), which lists its
@@ -50,9 +58,12 @@ partition names are never used as ISA evidence. The ISA comes from:
 
 The first component with a known ISA becomes the container's primary
 result, with a note naming it; the kernel is listed first in boot images.
-Device trees, DTBO tables, bootconfig text, AVB vbmeta images, boot
-signatures, GKI certificates, FBPK partition tables and fugu splash screens
-are data and are marked opaque, so they never reach the code model.
+Device trees, recovery DTBOs inside boot images, bootconfig text, AVB
+vbmeta images, boot signatures, GKI certificates, FBPK partition tables and
+fugu splash screens are data and are marked opaque, so they never reach the
+code model. The device trees of a DTBO table image are classified by the
+device tree parser, which names no ISA; a blob that is not a device tree is
+opaque. A vbmeta image is an opaque container without members.
 
 ## Wire units and byte order
 
@@ -65,6 +76,9 @@ are data and are marked opaque, so they never reach the code model.
 | OTA payload header | Big-endian | Bytes; `data_offset` and `signatures_offset` relative to `blob_start` (end of the metadata signature) |
 | OTA manifest | Protobuf varints | Extents in blocks of `block_size` (default 4096) |
 | `BOOTLDR!`, meta image, FBPK | Little-endian | Bytes; entry offsets absolute except Qualcomm `BOOTLDR!` bodies (cumulative from `start_offset`) and FBPK v1 data (after its entry header) |
+| `super` metadata | Little-endian | Extents and `first_logical_sector` in 512-byte sectors; table offsets relative to the end of the metadata header; sizes in bytes |
+| DTB/DTBO table | Big-endian | `dt_offset` from the start of the table header; sizes in bytes |
+| vbmeta image, descriptors | Big-endian | Hash and signature offsets relative to the authentication block; public key, its metadata and descriptors relative to the auxiliary block |
 
 `os_version` is decoded as `(A << 25) | (B << 18) | (C << 11) | ((Y - 2000) << 4) | M`
 into "OS version A.B.C; security patch level Y-M", with "not set" for a zero
@@ -116,6 +130,38 @@ half.
   verified for every operation that has one, and `new_partition_info.hash`
   is verified for every partition that is reassembled completely; a
   mismatching operation hash leaves the partition opaque.
+- `super` images: the geometry is checked as `ParseGeometry` checks it
+  (magic, `struct_size` 52, SHA-256, slot count, `metadata_max_size` a
+  multiple of 512) and the metadata as `ReadMetadataHeader` and
+  `ParseMetadata` do (magic, major 10 and minor at most 2, header size 128
+  or 256, header SHA-256, every table inside `tables_size` with 64-bit
+  products, entry sizes 52, 24 and 48 B and block devices of at least
+  64 B, `tables_size <= metadata_max_size`, tables SHA-256, attributes per
+  version, extent and group indices, linear block device indices, at least
+  one block device, metadata region before the first logical sector). A
+  damaged primary geometry or slot-0 copy falls back to the backup, with a
+  note; other slots are not compared. Partitions with an extent on another
+  block device, beyond the file or of an unknown type are noted and not
+  extracted; partitions of several extents are assembled only when their
+  first 4 KiB are a recognized format, up to 64 MiB each and 256 MiB per
+  image.
+- DTBO tables: `header_size` and `dt_entry_size` 32, version 0 or 1,
+  `total_size` inside the file, the entry table inside `total_size`
+  (count checked against the bytes before reading), each blob after the
+  entry table and inside `total_size`. Shared blobs are listed once.
+  Compressed blobs are decoded within the extraction budget. Bytes after
+  `total_size` are explained (AVB footer) or noted.
+- vbmeta images: checked as `avb_vbmeta_image_verify` checks them (major
+  version 1, NUL-terminated release string, block sizes multiples of 64,
+  blocks inside the file, hash and signature inside the authentication
+  block, public key and its metadata inside the auxiliary block, known
+  algorithm, hash size of its digest), plus the descriptors inside the
+  auxiliary block. Descriptors are walked as `avb_descriptor_foreach`
+  walks them and checked as their `*_validate_and_byteswap` functions do;
+  at most 64 are summarized. The SHA-256 or SHA-512 of the header and the
+  auxiliary block is compared with the stored hash and reported as
+  matching or not; the RSA signature and the descriptors' digests are not
+  verified.
 - Packs list at most 4096 components (`MAX_COMPONENTS`). Qualcomm
   `BOOTLDR!` names must be printable ASCII terminated by a NUL inside their
   64 bytes, `start_offset` must not point into the table, and
@@ -139,6 +185,11 @@ half.
 | A9 | FBPK v2 `platform` and `slot_type` have no confirmed meaning; they are reported, never used | Headers of several Pixel 6 to 9 packs |
 | A10 | Pack members are independent images (often ELF, which carries `e_machine`; UNCONFIRMED per member) | Classify unpacked members of real packs |
 | A11 | A meta image with `meta_hdr_sz != 76` cannot be read: the CAF reader and Kaitai disagree where the table starts | A meta image with a header extension |
+| A12 | The geometry magic at 4096 identifies a full `super` image; the 4096 reserved bytes before it are not checked (ImageBuilder writes zeros there; devices are not established) | A `super` partition dump with nonzero reserved bytes |
+| A13 | Block device entries larger than 64 B are a stride, as liblp reads them; smaller ones are refused (liblp does not check and would read past the entry) | A table with `block_devices.entry_size != 64` |
+| A14 | Primary and backup metadata copies and all slots are identical in images built on a host (`ImageBuilder` writes the same blob to each); only slot 0 is read | A `super` partition dumped from a device after an A/B update |
+| A15 | DTBO blobs are device trees (`mkdtimg` checks `fdt_check_header`); ACPI tables (`ACPIO` magic `0x41435049`) are not recognized | An `acpio.img` built with `mkdtboimg --dt_type acpi` |
+| A16 | vbmeta images with `required_libavb_version_minor` above 3 keep the layout of 1.3 (accepted with a note) | A vbmeta image from a newer avbtool using a new descriptor or field |
 
 ## Known boundaries
 
@@ -147,14 +198,18 @@ half.
 | Boot image signatures, AVB vbmeta, GKI certificates, OTA metadata and payload signatures | Located and reported; not verified (no keys) |
 | Samsung PXA header, DHTB, Tegra `-SIGNED-BY-SIGNBLOB-`, `CHROMEOS`, NOOK/Acclaim/Amonet pre-headers | Not recognized: the file does not start with `ANDROID!` (PXA: unsupported page size error) |
 | MediaTek 512-byte payload header | Stripped from kernel and ramdisk sections with a note (Magisk `mtk_hdr`) |
-| DTBO table (`0xD7B7AB1E`) contents | Opaque; entries are not listed |
+| Recovery DTBO inside a boot image | Opaque component of the boot image (a standalone DTBO table image is parsed) |
+| ACPIO tables (`mkdtboimg --dt_type acpi`) | Not recognized |
+| `super` images on several block devices (retrofit), `super_<device>.img` | Only extents on block device 0 are in the file; others are noted |
+| vbmeta RSA signatures, descriptor digests, hashtrees | Not verified (no keys; partition data is not in the image) |
 | cpio ramdisks | Decoded and unpacked by the CPIO container; only members in a recognized format are listed |
 | OTA delta operations (MOVE, BSDIFF, SOURCE_COPY, SOURCE_BSDIFF, PUFFDIFF, BROTLI_BSDIFF, ZUCCHINI, LZ4DIFF_*) | The partition is opaque with a note; applying them needs the source partition |
 | Operation types outside 0 to 13 (the spec notes' type table; `REPLACE_ZSTD` is not in it) | Unknown types: the partition is opaque with a note |
 | OTA zip packaging (`payload.bin` inside the OTA zip) | The ZIP container lists `payload.bin` as an OTA payload member; `META-INF` signatures are not verified |
 | Sparse images beyond 64 MiB expanded | Only the first 64 MiB are expanded and analyzed |
 | FBPT partition tables | Opaque; the table is not decoded |
-| Ext4, EROFS, F2FS and `super` images inside sparse images and OTA partitions | Classified as raw until those families land |
+| EROFS, ext and `super` images inside sparse images and OTA partitions | Classified through their own families |
+| F2FS partitions | Classified as raw |
 
 ## Verification
 
@@ -171,3 +226,21 @@ committed AArch64 code sample and x86-64 ELF header plus the committed
 real Android image, OTA payload or bootloader pack was available: behavior
 on vendor files is not verified, and mkbootimg, img2simg and
 `delta_generator` were not available to cross-check the layouts.
+
+On 2026-10-13 (same platform and toolchain), the `super`, DTBO and vbmeta
+layouts were added: `tests/android_images.rs` (15 tests) passed, as did
+the 18 unit tests now in `src/formats/android` (5 of them for the new
+layouts) and the 30 tests of `tests/android.rs`. The new tests cover a
+full `super` image with a borrowed partition, an assembled partition of
+two out-of-order linear extents and a zero extent, an empty partition and
+one on a second block device; a `super_empty` image; geometry, header and
+table checksum failures with fallback to the backup copies; every prefix
+of the full image; a sparse image of a `super` image whose partition is
+the committed EROFS fixture; DTBO tables of versions 0 and 1 (shared,
+gzip and zlib blobs, an unknown compression, an AVB footer); vbmeta images
+with all five descriptor kinds, a hash mismatch and algorithm `NONE`; and
+mutation sweeps. `web/tests/android-images.test.mjs` (2 Chromium tests)
+passed through `/pkg/` and `/dist/`. These fixtures are synthetic too:
+lpmake, mkdtimg and avbtool were not installed, so the layouts were not
+cross-checked against images those tools write, and the vbmeta RSA
+signatures are placeholders.

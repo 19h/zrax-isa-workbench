@@ -778,6 +778,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::ZxSnapshot => "ZX Spectrum snapshot",
         FileFormat::WonderSwanRom => "WonderSwan ROM",
         FileFormat::NgpRom => "Neo Geo Pocket ROM",
+        FileFormat::AndroidSuper => "Android super image",
+        FileFormat::AndroidDtbo => "Android DTBO image",
+        FileFormat::AndroidVbmeta => "AVB vbmeta image",
+        FileFormat::Erofs => "EROFS",
     }
 }
 

@@ -35,6 +35,8 @@
 //!   LZMA-alone stream above, then the LZMA SDK `x86_Convert` filter with
 //!   start offset 0. These three have no magic and are decoded only where
 //!   a container names them.
+//! - `MicroLZMA` (EROFS LZMA pclusters): see [`microlzma`]. It has no magic
+//!   and is decoded only where a container names it.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -54,6 +56,7 @@ mod jffs2;
 mod lz4_block;
 mod lzo;
 mod lzss;
+mod microlzma;
 mod xz;
 
 /// gzip member magic (RFC 1952, section 2.3.1).
@@ -157,6 +160,10 @@ pub enum Codec {
     /// LZMA-alone stream whose output is x86 BCJ-filtered (EDK2 LZMA F86);
     /// no magic.
     LzmaX86,
+    /// `MicroLZMA`: raw LZMA with the properties in its first byte and no
+    /// size or end marker. [`decode_limited`] decodes exactly `limit`
+    /// bytes, the size its container states.
+    MicroLzma,
 }
 
 impl Codec {
@@ -184,6 +191,7 @@ impl Codec {
         Self::Efi,
         Self::Tiano,
         Self::LzmaX86,
+        Self::MicroLzma,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -211,6 +219,7 @@ impl Codec {
             Self::Efi => "EFI",
             Self::Tiano => "Tiano",
             Self::LzmaX86 => "LZMA x86",
+            Self::MicroLzma => "MicroLZMA",
         }
     }
 
@@ -238,6 +247,8 @@ impl Codec {
             // EFI, Tiano and LZMA x86 have no magic either; only the UEFI
             // sections that store them name them.
             Self::Efi | Self::Tiano | Self::LzmaX86 => FileFormat::Raw,
+            // MicroLZMA has no magic; only EROFS names it.
+            Self::MicroLzma => FileFormat::Raw,
         }
     }
 
@@ -266,6 +277,7 @@ impl Codec {
             Self::Efi => "EFI compressed stream",
             Self::Tiano => "Tiano compressed stream",
             Self::LzmaX86 => "LZMA-alone stream with x86 BCJ",
+            Self::MicroLzma => "MicroLZMA stream",
         }
     }
 
@@ -463,6 +475,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::Efi => efi::decode(data, efi::Variant::Efi, limit),
         Codec::Tiano => efi::decode(data, efi::Variant::Tiano, limit),
         Codec::LzmaX86 => xz::lzma_x86(data, limit),
+        Codec::MicroLzma => microlzma::decode(data, limit),
     }
 }
 

@@ -1,5 +1,6 @@
 //! Android images: boot and `vendor_boot` images, sparse images, A/B OTA
-//! update payloads and Pixel/Nexus bootloader packs.
+//! update payloads, Pixel/Nexus bootloader packs, dynamic-partition `super`
+//! images, DTB/DTBO table images and AVB vbmeta images.
 //!
 //! Primary sources, by layout (pinned revisions; see `docs/android.md`):
 //! - Boot images (`ANDROID!`, header versions 0 to 4) and `vendor_boot` images
@@ -25,6 +26,17 @@
 //!   `device/qcom/common/meta_image/meta_format.h` (`OnePlusOSS` mirror at
 //!   `018b5519`) and AOSP `device/huawei/angler` `releasetools.py` at
 //!   `cf92cd8e`.
+//! - `super` images: AOSP `platform/system/core` at `a3b721a3`,
+//!   `fs_mgr/liblp/include/liblp/metadata_format.h`, `fs_mgr/liblp/reader.cpp`,
+//!   `utility.cpp`, `images.cpp` and `writer.cpp`.
+//! - DTB/DTBO tables: AOSP `platform/system/libufdt` at `9b70f594`,
+//!   `utils/src/dt_table.h`, `utils/src/mkdtboimg.py` and
+//!   `utils/src/mkdtimg_core.c`.
+//! - vbmeta images: AOSP `platform/external/avb` at `76117860`,
+//!   `libavb/avb_vbmeta_image.h`, `avb_vbmeta_image.c` and the descriptor
+//!   headers (`avb_descriptor.h`, `avb_property_descriptor.h`,
+//!   `avb_hashtree_descriptor.h`, `avb_hash_descriptor.h`,
+//!   `avb_kernel_cmdline_descriptor.h`, `avb_chain_partition_descriptor.h`).
 //! - FBPK version 2: Google `fbpack.py` and `fbpacktool.py`, published on
 //!   source.android.com with the Pixel `fw_unpack` tools (2021). FBPK
 //!   version 1 has no Google source: `anestisb/qc_image_unpacker`
@@ -34,8 +46,9 @@
 //! No header in this family names a CPU. Load addresses, board, product
 //! and partition names are not ISA evidence, so the container target stays
 //! empty and every kernel, ramdisk, partition and pack member is classified
-//! from its own bytes. Device trees, DTBO tables, bootconfig text, AVB
-//! metadata, signatures and partition tables are data and stay opaque.
+//! from its own bytes. Bootconfig text, AVB metadata, signatures and
+//! partition tables are data and stay opaque; the device trees of a DTBO
+//! table are classified as device trees, which carry no ISA either.
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::compressed::{self, Codec};
@@ -46,8 +59,11 @@ use std::borrow::Cow;
 
 mod boot;
 mod bootloader;
+mod dtbo;
 mod ota;
 mod sparse;
+mod super_image;
+mod vbmeta;
 
 /// Boot image magic (`BOOT_MAGIC`).
 const BOOT_MAGIC: &[u8; 8] = b"ANDROID!";
@@ -70,6 +86,18 @@ const META_IMAGE_MAGIC: u32 = 0xce1a_d63c;
 
 /// FBPK pack magic (`FBPACK_MAGIC` `0x4B504246`, stored little-endian).
 const FBPK_MAGIC: &[u8; 4] = b"FBPK";
+
+/// Logical partition geometry magic (`LP_METADATA_GEOMETRY_MAGIC`, stored
+/// little-endian) and the size of the geometry block.
+const LP_METADATA_GEOMETRY_MAGIC: u32 = 0x616c_4467;
+const LP_METADATA_GEOMETRY_SIZE: usize = 4096;
+
+/// Bytes reserved at the start of a `super` block device
+/// (`LP_PARTITION_RESERVED_BYTES`); the primary geometry follows them.
+const LP_PARTITION_RESERVED_BYTES: usize = 4096;
+
+/// DTB/DTBO table magic (`DT_TABLE_MAGIC`, stored big-endian).
+const DT_TABLE_MAGIC: u32 = 0xd7b7_ab1e;
 
 /// AVB footer (`AvbFooter`, big-endian): magic, major and minor version,
 /// original image size, vbmeta offset and size, 28 reserved bytes. It
@@ -115,6 +143,13 @@ pub enum Layout {
     MetaImage,
     /// FBPK pack, versions 1 and 2.
     Fbpk,
+    /// Dynamic-partition `super` image or `super_empty` metadata image
+    /// (liblp geometry magic at 4096 or at 0).
+    Super,
+    /// DTB/DTBO table image (`0xD7B7AB1E`).
+    Dtbo,
+    /// AVB vbmeta image (`AVB0`).
+    Vbmeta,
 }
 
 impl Layout {
@@ -126,6 +161,9 @@ impl Layout {
             Self::Sparse => FileFormat::AndroidSparse,
             Self::Ota => FileFormat::AndroidOta,
             Self::Bootldr | Self::MetaImage | Self::Fbpk => FileFormat::AndroidBootloader,
+            Self::Super => FileFormat::AndroidSuper,
+            Self::Dtbo => FileFormat::AndroidDtbo,
+            Self::Vbmeta => FileFormat::AndroidVbmeta,
         }
     }
 
@@ -139,6 +177,9 @@ impl Layout {
             Self::Bootldr => "BOOTLDR! bootloader pack",
             Self::MetaImage => "Qualcomm meta image",
             Self::Fbpk => "FBPK bootloader pack",
+            Self::Super => "Android super image",
+            Self::Dtbo => "Android DTB/DTBO table image",
+            Self::Vbmeta => "AVB vbmeta image",
         }
     }
 
@@ -150,7 +191,8 @@ impl Layout {
 
 /// Strong recognition by magic. A file with one of these magics is an
 /// Android image even when the rest is damaged, so damage is a parse error
-/// rather than a raw-code guess.
+/// rather than a raw-code guess. The `super` geometry magic is at 0 in a
+/// `super_empty` image and after the 4096 reserved bytes in a full image.
 pub fn detect(data: &[u8]) -> Option<Layout> {
     let magic = data.get(..4)?;
     if data.starts_with(BOOT_MAGIC) {
@@ -167,9 +209,21 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
         Some(Layout::MetaImage)
     } else if magic == FBPK_MAGIC {
         Some(Layout::Fbpk)
+    } else if magic == DT_TABLE_MAGIC.to_be_bytes() {
+        Some(Layout::Dtbo)
+    } else if magic == AVB_VBMETA_MAGIC {
+        Some(Layout::Vbmeta)
+    } else if magic == LP_METADATA_GEOMETRY_MAGIC.to_le_bytes() || is_full_super(data) {
+        Some(Layout::Super)
     } else {
         None
     }
+}
+
+/// The primary `super` geometry magic after the reserved bytes.
+fn is_full_super(data: &[u8]) -> bool {
+    data.get(LP_PARTITION_RESERVED_BYTES..LP_PARTITION_RESERVED_BYTES + 4)
+        == Some(&LP_METADATA_GEOMETRY_MAGIC.to_le_bytes()[..])
 }
 
 /// Parse `data` as the given layout.
@@ -177,7 +231,9 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 /// # Errors
 ///
 /// [`ClassifierError::AndroidParseError`] for a truncated or inconsistent
-/// header, section, chunk, manifest or pack table.
+/// header, section, chunk, manifest, pack table, partition metadata
+/// (including a geometry, header or table SHA-256 mismatch), DTBO table or
+/// vbmeta image.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     match layout {
         Layout::Boot => boot::parse(data),
@@ -187,12 +243,33 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
         Layout::Bootldr => bootloader::parse_bootldr(data),
         Layout::MetaImage => bootloader::parse_meta_image(data),
         Layout::Fbpk => bootloader::parse_fbpk(data),
+        Layout::Super => super_image::parse(data),
+        Layout::Dtbo => dtbo::parse(data),
+        Layout::Vbmeta => vbmeta::parse(data),
     }
 }
 
 fn error(message: impl Into<String>) -> ClassifierError {
     ClassifierError::AndroidParseError {
         message: message.into(),
+    }
+}
+
+/// The message of an Android parse error, for errors that combine two or
+/// fall back from one copy to another.
+fn reason(e: &ClassifierError) -> String {
+    match e {
+        ClassifierError::AndroidParseError { message } => message.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// `count` with the singular or plural form of the noun after it.
+fn counted(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {plural}")
     }
 }
 
@@ -416,6 +493,14 @@ fn avb_footer(data: &[u8], notes: &mut Vec<String>) -> Option<AvbFooter> {
     })
 }
 
+/// The original image size an AVB footer in the last 64 bytes of a
+/// partition image records, for filesystem families that must accept the
+/// hashtree, vbmeta image and footer `avbtool` appends after the
+/// filesystem.
+pub(crate) fn avb_footer_original_size(data: &[u8]) -> Option<u64> {
+    avb_footer(data, &mut Vec::new()).map(|footer| footer.original_image_size)
+}
+
 /// What [`push_partition_tail`] found after the last section.
 struct Tail {
     /// An AVB footer was parsed.
@@ -503,7 +588,10 @@ mod tests {
     fn every_magic_selects_its_layout() {
         let mut sparse = SPARSE_MAGIC.to_le_bytes().to_vec();
         sparse.extend_from_slice(&[0; 4]);
-        let cases: [(&[u8], Layout); 7] = [
+        let super_empty = LP_METADATA_GEOMETRY_MAGIC.to_le_bytes();
+        let mut full_super = vec![0u8; LP_PARTITION_RESERVED_BYTES];
+        full_super.extend_from_slice(&LP_METADATA_GEOMETRY_MAGIC.to_le_bytes());
+        let cases: [(&[u8], Layout); 11] = [
             (b"ANDROID!\0\0\0\0", Layout::Boot),
             (b"VNDRBOOT\0\0\0\0", Layout::VendorBoot),
             (&sparse, Layout::Sparse),
@@ -511,6 +599,10 @@ mod tests {
             (b"BOOTLDR!\0\0\0\0", Layout::Bootldr),
             (&[0x3c, 0xd6, 0x1a, 0xce, 1, 0], Layout::MetaImage),
             (b"FBPK\x02\0\0\0", Layout::Fbpk),
+            (&super_empty, Layout::Super),
+            (&full_super, Layout::Super),
+            (&[0xd7, 0xb7, 0xab, 0x1e, 0, 0], Layout::Dtbo),
+            (b"AVB0\0\0\0\x01", Layout::Vbmeta),
         ];
         for (data, layout) in cases {
             assert_eq!(detect(data), Some(layout), "{layout:?}");
@@ -518,6 +610,7 @@ mod tests {
         }
         assert_eq!(detect(b"ANDROID"), None);
         assert_eq!(detect(b"\x7fELF\x02\x01\x01\0"), None);
+        assert_eq!(detect(&full_super[..LP_PARTITION_RESERVED_BYTES + 3]), None);
     }
 
     #[test]

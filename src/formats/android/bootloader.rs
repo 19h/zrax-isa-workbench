@@ -109,14 +109,6 @@ fn partition_name(field: &[u8], what: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(name).into_owned())
 }
 
-/// The message of an Android parse error, for errors that combine two.
-fn reason(e: &ClassifierError) -> String {
-    match e {
-        ClassifierError::AndroidParseError { message } => message.clone(),
-        other => other.to_string(),
-    }
-}
-
 /// A note about the bytes after `end` when they are not padding.
 fn push_trailing_note(c: &mut Container<'_>, data: &[u8], end: usize, what: &str) {
     let rest = data.get(end..).unwrap_or_default();

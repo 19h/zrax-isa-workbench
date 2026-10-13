@@ -62,6 +62,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an EROFS filesystem image.
+    #[error("EROFS parse error: {message}")]
+    ErofsParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a console or home-computer image (Master System,
     /// 32X, Saturn IP.BIN, Sega CD, MSX, Lynx, Atari 7800, C64 CRT, Atari
     /// ST program, ZX Spectrum snapshot, `WonderSwan`, Neo Geo Pocket).
