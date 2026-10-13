@@ -138,6 +138,7 @@ const FORMAT_NAMES = {
   rpm: 'RPM package',
   pyinstaller: 'PyInstaller archive', asar: 'Electron ASAR archive', dotnetbundle: '.NET single-file bundle',
   ntfs: 'NTFS volume',
+  wim: 'WIM image',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

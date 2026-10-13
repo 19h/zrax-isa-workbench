@@ -62,6 +62,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Windows Imaging Format (WIM) image (header, lookup
+    /// table or resources).
+    #[error("WIM image parse error: {message}")]
+    WimParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an APFS container (container superblock, checkpoint,
     /// object map, volume superblock or B-tree).
     #[error("APFS parse error: {message}")]

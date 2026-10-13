@@ -178,6 +178,8 @@ pub enum Kind {
     AppBundle(super::appbundle::Layout),
     /// An NTFS volume.
     Ntfs(super::ntfs::Layout),
+    /// A Windows Imaging Format (WIM) image or split WIM part.
+    Wim(super::wim::Layout),
 }
 
 impl Kind {
@@ -243,6 +245,7 @@ impl Kind {
             Self::Rpm(layout) => layout.format(),
             Self::AppBundle(layout) => layout.format(),
             Self::Ntfs(layout) => layout.format(),
+            Self::Wim(layout) => layout.format(),
         }
     }
 
@@ -308,6 +311,7 @@ impl Kind {
             Self::Rpm(layout) => layout.label(),
             Self::AppBundle(layout) => layout.label(),
             Self::Ntfs(layout) => layout.label(),
+            Self::Wim(layout) => layout.label(),
         }
     }
 
@@ -373,6 +377,7 @@ impl Kind {
             Self::Rpm(layout) => layout.is_weak(),
             Self::AppBundle(layout) => layout.is_weak(),
             Self::Ntfs(layout) => layout.is_weak(),
+            Self::Wim(layout) => layout.is_weak(),
         }
     }
 }
@@ -443,6 +448,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Rpm(layout) => super::rpm::parse_container(data, layout),
         Kind::AppBundle(layout) => super::appbundle::parse_container(data, layout),
         Kind::Ntfs(layout) => super::ntfs::parse_container(data, layout),
+        Kind::Wim(layout) => super::wim::parse_container(data, layout),
     }
 }
 

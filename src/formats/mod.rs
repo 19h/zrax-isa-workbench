@@ -119,6 +119,7 @@ pub mod uefi;
 pub mod vbf;
 pub mod vdisk;
 pub mod wasm;
+pub mod wim;
 pub mod wince;
 pub mod xcoff;
 pub mod zxtape;
@@ -552,6 +553,18 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = cab::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Cab(layout),
+        };
+    }
+
+    // WIM images: `MSWIM\0\0\0` and the header size 208 in the first 12
+    // bytes, which no format above starts with. Before the families that
+    // probe offsets inside the input (SNDH at 12, headers at 0x100, the tar
+    // magic at 257, superblocks at 0x400 and 0x438, descriptors at 0x8000,
+    // trailers at the end), whose keys the stored file data of an
+    // uncompressed WIM may hold from offset 208 on.
+    if let Some(layout) = wim::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Wim(layout),
         };
     }
 

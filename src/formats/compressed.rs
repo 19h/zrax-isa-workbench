@@ -48,6 +48,9 @@
 //!   window size the cabinet gives.
 //! - LZNT1 as NTFS compressed attributes store it: see [`lznt1`]. No
 //!   magic; decoded only where an NTFS compression unit names it.
+//! - XPRESS (the [MS-XCA] LZ77+Huffman variant), LZX and LZMS as WIM
+//!   resources store them, one chunk per stream: see [`xpress`], [`lzx`]
+//!   and [`lzms`]. No magic; decoded only where a WIM header names them.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -64,13 +67,16 @@ use std::io::{self, Read, Write};
 mod adc;
 mod blz;
 mod efi;
+mod huffman;
 mod jffs2;
 mod lz4_block;
+mod lzms;
 mod lzo;
 mod lzss;
 mod lznt1;
 mod lzx;
 mod microlzma;
+mod xpress;
 mod xz;
 
 /// gzip member magic (RFC 1952, section 2.3.1).
@@ -194,6 +200,21 @@ pub enum Codec {
     /// LZNT1 chunks ([MS-XCA] section 2.5), as NTFS compression units store
     /// them; no magic.
     Lznt1,
+    /// XPRESS, the [MS-XCA] LZ77+Huffman variant, in one 64 KiB block as a
+    /// WIM chunk stores it; no magic. [`decode_limited`] decodes exactly
+    /// `limit` bytes, at most 64 KiB, the chunk size its resource states.
+    XpressHuffman,
+    /// LZX as one WIM chunk stores it: no E8 header, a fixed E8
+    /// translation size and no 32 KiB frames; no magic. [`decode_limited`]
+    /// decodes exactly `limit` bytes, the chunk size its resource states.
+    LzxWim {
+        /// Window size in bits: 15 to 21 (32 KiB to 2 MiB), the chunk size
+        /// rounded up to a power of two.
+        window_bits: u8,
+    },
+    /// LZMS, as WIM chunks store it; no magic. [`decode_limited`] decodes
+    /// exactly `limit` bytes, the chunk size its resource states.
+    Lzms,
 }
 
 impl Codec {
@@ -228,6 +249,11 @@ impl Codec {
             window_bits: lzx::MAX_WINDOW_BITS,
         },
         Self::Lznt1,
+        Self::XpressHuffman,
+        Self::LzxWim {
+            window_bits: lzx::MIN_WINDOW_BITS,
+        },
+        Self::Lzms,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -260,6 +286,9 @@ impl Codec {
             Self::Lzvn => "LZVN",
             Self::Lzx { .. } => "LZX",
             Self::Lznt1 => "LZNT1",
+            Self::XpressHuffman => "XPRESS",
+            Self::LzxWim { .. } => "LZX",
+            Self::Lzms => "LZMS",
         }
     }
 
@@ -297,6 +326,9 @@ impl Codec {
             Self::Lzx { .. } => FileFormat::Raw,
             // LZNT1 has no magic; only NTFS compressed attributes name it.
             Self::Lznt1 => FileFormat::Raw,
+            // XPRESS, WIM LZX and LZMS chunks have no magic; only WIM headers
+            // name them.
+            Self::XpressHuffman | Self::LzxWim { .. } | Self::Lzms => FileFormat::Raw,
         }
     }
 
@@ -330,6 +362,9 @@ impl Codec {
             Self::Lzvn => "raw LZVN stream",
             Self::Lzx { .. } => "LZX stream",
             Self::Lznt1 => "LZNT1 stream",
+            Self::XpressHuffman => "XPRESS Huffman stream",
+            Self::LzxWim { .. } => "WIM LZX chunk",
+            Self::Lzms => "LZMS chunk",
         }
     }
 
@@ -532,6 +567,9 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::Lzvn => lzss::lzvn_raw(data, limit),
         Codec::Lzx { window_bits } => lzx::decode(data, window_bits, limit),
         Codec::Lznt1 => lznt1::decode(data, limit),
+        Codec::XpressHuffman => xpress::decode(data, limit),
+        Codec::LzxWim { window_bits } => lzx::decode_wim(data, window_bits, limit),
+        Codec::Lzms => lzms::decode(data, limit),
     }
 }
 

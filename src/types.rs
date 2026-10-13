@@ -1249,6 +1249,9 @@ pub enum FileFormat {
     // NTFS volumes
     /// NTFS volume (`NTFS    ` boot sector and master file table)
     Ntfs,
+    // Windows Imaging Format
+    /// Windows Imaging Format (WIM) image or split WIM part (`MSWIM`)
+    Wim,
 }
 
 impl fmt::Display for FileFormat {
@@ -1585,6 +1588,7 @@ impl fmt::Display for FileFormat {
             FileFormat::DotnetBundle => write!(f, ".NET single-file bundle"),
             // NTFS volumes
             FileFormat::Ntfs => write!(f, "NTFS volume"),
+            FileFormat::Wim => write!(f, "WIM image"),
         }
     }
 }

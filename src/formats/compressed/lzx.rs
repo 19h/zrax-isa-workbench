@@ -1,4 +1,5 @@
-//! LZX as Microsoft cabinet folders store it (`typeCompress` 3).
+//! LZX as Microsoft cabinet folders store it (`typeCompress` 3), and as WIM
+//! resources store it in independent chunks.
 //!
 //! Sources: the Cabinet SDK's "Microsoft LZX Data Compression Format"
 //! (Microsoft Learn `bb267310(v=vs.85)`, 1997), corrected by [MS-PATCH]
@@ -37,13 +38,49 @@
 //! names it, with the window size (2^15 to 2^21 bytes) its `typeCompress`
 //! field gives. [`decode`] produces exactly `limit` bytes: the cabinet
 //! states its folder's size, and only the folder's last frame is short.
+//!
+//! WIM chunks ([`decode_wim`]; wimlib v1.14.5 `src/lzx_decompress.c`,
+//! `src/lzx_common.c` and `include/wimlib/lzx_constants.h`, cross-checked
+//! with 7-Zip 26.03 `CPP/7zip/Compress/LzxDecoder.cpp` in its WIM mode)
+//! use the same blocks, trees, slots and matches with these differences:
+//! - Each chunk is a stream of its own: the repeated offsets start as 1 and
+//!   the previous code lengths as 0, and the window is the chunk (2^15 to
+//!   2^21 bytes, wimlib `lzx_get_window_order`).
+//! - There is no E8 header bit: E8 translation is always undone, over the
+//!   whole chunk with positions counted from its start and a translation
+//!   size of 12,000,000 (`LZX_WIM_MAGIC_FILESIZE`); a `CALL` cannot start
+//!   in the chunk's last 10 bytes.
+//! - A block size is one set bit for 32,768 bytes (`LZX_DEFAULT_BLOCK_SIZE`)
+//!   or a clear bit and 16 bits, followed by 8 more bits when the window is
+//!   2^16 bytes or larger.
+//! - There are no 32 KiB frames: the bitstream does not realign inside a
+//!   chunk. A block may not be empty or run past the chunk's end, and an
+//!   uncompressed block may not set a repeated offset to 0 (wimlib
+//!   `lzx_read_block_header` and `lzx_decompress`).
 
+use super::huffman::{Bits, Huffman};
 use super::*;
 
+/// Codec name in error messages.
+const CODEC: &str = "LZX";
+
 /// Cabinet LZX windows are 2^15 to 2^21 bytes (SDK "Window Size";
-/// libmspack `lzxd_init`).
+/// libmspack `lzxd_init`), as are WIM chunks (wimlib
+/// `LZX_MIN_WINDOW_ORDER`, `LZX_MAX_WINDOW_ORDER`).
 pub(super) const MIN_WINDOW_BITS: u8 = 15;
 pub(super) const MAX_WINDOW_BITS: u8 = 21;
+
+/// The translation size that WIM chunks always use for E8 translation
+/// (wimlib `LZX_WIM_MAGIC_FILESIZE`).
+const WIM_E8_FILE_SIZE: i32 = 12_000_000;
+
+/// The block size that a set first size bit codes in a WIM chunk (wimlib
+/// `LZX_DEFAULT_BLOCK_SIZE`).
+const WIM_DEFAULT_BLOCK_SIZE: usize = 32_768;
+
+/// WIM chunks with windows of at least 2^16 bytes code block sizes with 8
+/// more bits (wimlib `lzx_read_block_header`).
+const WIM_LONG_SIZE_WINDOW_BITS: u8 = 16;
 
 /// Output frame size (SDK "Cab Block Size"; [MS-PATCH] 2.2.1).
 const FRAME_SIZE: usize = 32 << 10;
@@ -113,9 +150,6 @@ const LENGTH_MODULUS: u16 = 17;
 /// Longest Huffman code ([MS-PATCH] 2.5).
 const MAX_CODE_LENGTH: u32 = 16;
 
-/// Codes up to this length are decoded by one table lookup.
-const TABLE_BITS: u32 = 10;
-
 /// libmspack builds its main and length tables over more symbols than a
 /// cabinet stream codes: the main tree over the 290 position slots of the
 /// largest LZX DELTA window (`LZX_MAINTREE_MAXSYMBOLS`) and the length tree
@@ -149,10 +183,6 @@ const POSITION_BASE: [u32; POSITION_SLOT_LIMIT] = position_bases();
 /// The repeated offsets R0, R1 and R2 start as 1 ([MS-PATCH] 2.1.4).
 const INITIAL_REPEATED: [u32; 3] = [1, 1, 1];
 
-/// Zero bytes the bit reader supplies after the end of the input (one
-/// 16-bit word, libmspack `read_input`).
-const END_PADDING: usize = 2;
-
 const fn extra_bits(slot: usize) -> u8 {
     if slot < EXTRA_BITS.len() {
         EXTRA_BITS[slot]
@@ -171,242 +201,6 @@ const fn position_bases() -> [u32; POSITION_SLOT_LIMIT] {
     bases
 }
 
-fn truncated(pos: usize) -> ClassifierError {
-    error(format!("Truncated LZX stream at 0x{pos:X}"))
-}
-
-/// The bitstream reader.
-struct Bits<'a> {
-    data: &'a [u8],
-    /// Next unread byte; at most [`END_PADDING`] past the input's end.
-    pos: usize,
-    /// Buffered bits, most significant first.
-    buffer: u32,
-    /// Number of buffered bits.
-    count: u32,
-}
-
-impl<'a> Bits<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        Self {
-            data,
-            pos: 0,
-            buffer: 0,
-            count: 0,
-        }
-    }
-
-    /// The next byte of the byte stream, or a padding zero.
-    fn byte(&mut self) -> Result<u8> {
-        let byte = match self.data.get(self.pos) {
-            Some(&byte) => byte,
-            None if self.pos < self.data.len() + END_PADDING => 0,
-            None => return Err(truncated(self.pos)),
-        };
-        self.pos += 1;
-        Ok(byte)
-    }
-
-    /// Buffer at least `n` bits (at most 17), a 16-bit word at a time.
-    fn ensure(&mut self, n: u32) -> Result<()> {
-        while self.count < n {
-            let low = self.byte()?;
-            let high = self.byte()?;
-            let word = u32::from(u16::from_le_bytes([low, high]));
-            self.buffer |= word << (16 - self.count);
-            self.count += 16;
-        }
-        Ok(())
-    }
-
-    /// The next `n` bits (1 to 16) without consuming them; call
-    /// [`Self::ensure`] first.
-    fn peek(&self, n: u32) -> u32 {
-        self.buffer >> (32 - n)
-    }
-
-    fn remove(&mut self, n: u32) {
-        self.buffer = if n >= 32 { 0 } else { self.buffer << n };
-        self.count -= n;
-    }
-
-    /// The next `n` bits (0 to 17) as a number.
-    fn read(&mut self, n: u32) -> Result<u32> {
-        if n == 0 {
-            return Ok(0);
-        }
-        self.ensure(n)?;
-        let value = self.peek(n);
-        self.remove(n);
-        Ok(value)
-    }
-
-    /// Drop the rest of the current 16-bit word, as at every frame end.
-    fn align_frame(&mut self) -> Result<()> {
-        if self.count > 0 {
-            self.ensure(16)?;
-        }
-        self.remove(self.count & 15);
-        Ok(())
-    }
-
-    /// Switch to the byte stream of an uncompressed block: drop 1-16 bits,
-    /// a whole word when the stream is already aligned.
-    fn start_bytes(&mut self) -> Result<()> {
-        if self.count == 0 {
-            self.ensure(16)?;
-        }
-        self.buffer = 0;
-        self.count = 0;
-        Ok(())
-    }
-
-    /// Copy `out.len()` bytes of the byte stream into `out`.
-    fn copy_bytes(&mut self, out: &mut [u8]) -> Result<()> {
-        let end = self
-            .pos
-            .checked_add(out.len())
-            .filter(|&end| end <= self.data.len() + END_PADDING)
-            .ok_or_else(|| truncated(self.pos))?;
-        let available = self.data.len().min(end).saturating_sub(self.pos);
-        out[..available].copy_from_slice(&self.data[self.pos..self.pos + available]);
-        out[available..].fill(0);
-        self.pos = end;
-        Ok(())
-    }
-
-    /// A little-endian 32-bit value from the byte stream.
-    fn le_u32(&mut self) -> Result<u32> {
-        let mut bytes = [0u8; 4];
-        self.copy_bytes(&mut bytes)?;
-        Ok(u32::from_le_bytes(bytes))
-    }
-
-    /// Input bytes consumed, without a buffered word that was not used.
-    fn consumed(&self) -> usize {
-        let buffered = usize::try_from(self.count / 8).unwrap_or(0);
-        self.pos.saturating_sub(buffered).min(self.data.len())
-    }
-}
-
-/// One entry of a decoding table.
-#[derive(Debug, Clone, Copy, Default)]
-struct Entry {
-    symbol: u16,
-    /// Code length; 0 when the code is longer than [`TABLE_BITS`].
-    length: u8,
-}
-
-/// A canonical Huffman code: codes are assigned shortest first and, within
-/// a length, by increasing symbol, read most significant bit first.
-struct Huffman {
-    /// Indexed by the next [`TABLE_BITS`] bits.
-    table: Vec<Entry>,
-    /// Per code length: the first code, the number of codes and the index
-    /// of the first symbol in `sorted`.
-    first_code: [u32; 17],
-    count: [u32; 17],
-    first_index: [usize; 17],
-    /// Symbols ordered by code length, then by value.
-    sorted: Vec<u16>,
-}
-
-impl Huffman {
-    /// The code with these lengths (0 means unused). `None` when every
-    /// length is zero. A code that is incomplete or over-subscribed is an
-    /// error, as in libmspack's `make_decode_table`.
-    fn build(lengths: &[u8], tree: &str) -> Result<Option<Self>> {
-        let mut count = [0u32; 17];
-        for &length in lengths {
-            *count.get_mut(usize::from(length)).ok_or_else(|| {
-                error(format!("Invalid LZX {tree} tree: code length {length}"))
-            })? += 1;
-        }
-        count[0] = 0;
-        if count.iter().all(|&n| n == 0) {
-            return Ok(None);
-        }
-        // Kraft: the codes must fill the code space exactly.
-        let mut left: i64 = 1;
-        for &n in &count[1..] {
-            left = left * 2 - i64::from(n);
-            if left < 0 {
-                return Err(error(format!(
-                    "Invalid LZX {tree} tree: over-subscribed code"
-                )));
-            }
-        }
-        if left != 0 {
-            return Err(error(format!("Invalid LZX {tree} tree: incomplete code")));
-        }
-        let mut first_code = [0u32; 17];
-        let mut first_index = [0usize; 17];
-        let mut code = 0u32;
-        let mut index = 0usize;
-        for length in 1..17 {
-            code = (code + count[length - 1]) << 1;
-            first_code[length] = code;
-            first_index[length] = index;
-            index += count[length] as usize;
-        }
-        let mut sorted = vec![0u16; index];
-        let mut next = first_index;
-        for (symbol, &length) in lengths.iter().enumerate() {
-            if length > 0 {
-                let slot = &mut next[usize::from(length)];
-                sorted[*slot] =
-                    u16::try_from(symbol).expect("tables have fewer than 65536 symbols");
-                *slot += 1;
-            }
-        }
-        let mut table = vec![Entry::default(); 1 << TABLE_BITS];
-        for length in 1..=TABLE_BITS as usize {
-            let start = first_index[length];
-            for (i, &symbol) in sorted[start..start + count[length] as usize]
-                .iter()
-                .enumerate()
-            {
-                let code = first_code[length] as usize + i;
-                let shift = TABLE_BITS as usize - length;
-                let entry = Entry {
-                    symbol,
-                    length: u8::try_from(length).expect("lengths are at most 16"),
-                };
-                table[code << shift..(code + 1) << shift].fill(entry);
-            }
-        }
-        Ok(Some(Self {
-            table,
-            first_code,
-            count,
-            first_index,
-            sorted,
-        }))
-    }
-
-    /// Decode one symbol.
-    fn decode(&self, bits: &mut Bits<'_>) -> Result<u16> {
-        bits.ensure(MAX_CODE_LENGTH)?;
-        let next = bits.peek(MAX_CODE_LENGTH);
-        let entry = self.table[(next >> (MAX_CODE_LENGTH - TABLE_BITS)) as usize];
-        if entry.length > 0 {
-            bits.remove(u32::from(entry.length));
-            return Ok(entry.symbol);
-        }
-        for length in TABLE_BITS + 1..=MAX_CODE_LENGTH {
-            let code = next >> (MAX_CODE_LENGTH - length);
-            let at = length as usize;
-            let index = code.wrapping_sub(self.first_code[at]);
-            if code >= self.first_code[at] && index < self.count[at] {
-                bits.remove(length);
-                return Ok(self.sorted[self.first_index[at] + index as usize]);
-            }
-        }
-        // Unreachable for a complete code, which `build` requires.
-        Err(error("Invalid LZX code"))
-    }
-}
-
 /// The kind of the current block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockKind {
@@ -417,9 +211,21 @@ enum BlockKind {
     Uncompressed,
 }
 
+/// How a stream is framed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Framing {
+    /// A cabinet folder: an E8 header, 24-bit block sizes and 32 KiB
+    /// frames.
+    Cabinet,
+    /// A WIM chunk: no header, block sizes with a default-size bit, no
+    /// frames.
+    Wim,
+}
+
 /// The decoder's state across blocks and frames.
 struct Decoder<'a> {
     bits: Bits<'a>,
+    framing: Framing,
     /// The sliding window, a power of two in size; matches copy from it.
     window: Vec<u8>,
     /// Write position in the window.
@@ -446,10 +252,11 @@ struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
-    fn new(data: &'a [u8], window_bits: u8) -> Self {
+    fn new(data: &'a [u8], window_bits: u8, framing: Framing) -> Self {
         let slots = POSITION_SLOTS[usize::from(window_bits - MIN_WINDOW_BITS)];
         Self {
-            bits: Bits::new(data),
+            bits: Bits::new(data, CODEC),
+            framing,
             window: vec![0; 1 << window_bits],
             window_pos: 0,
             decoded: 0,
@@ -486,15 +293,46 @@ impl<'a> Decoder<'a> {
                 continue;
             }
             let run = self.block_remaining.min(needed);
-            match self.kind {
-                BlockKind::Verbatim | BlockKind::Aligned => self.decode_tokens(run)?,
-                BlockKind::Uncompressed => self.copy_uncompressed(run)?,
-                BlockKind::None => return Err(error("Invalid LZX stream: no block")),
-            }
-            self.block_remaining -= run;
+            self.decode_run(run)?;
             needed -= run;
         }
         Ok(())
+    }
+
+    /// Decode `run` more bytes of the current block.
+    fn decode_run(&mut self, run: usize) -> Result<()> {
+        match self.kind {
+            BlockKind::Verbatim | BlockKind::Aligned => self.decode_tokens(run)?,
+            BlockKind::Uncompressed => self.copy_uncompressed(run)?,
+            BlockKind::None => return Err(error("Invalid LZX stream: no block")),
+        }
+        self.block_remaining -= run;
+        Ok(())
+    }
+
+    /// The uncompressed size of a block, after its type: 24 bits in a
+    /// cabinet; in a WIM chunk a set bit for 32 KiB, otherwise 16 bits and,
+    /// with a window of 2^16 bytes or more, 8 more.
+    fn block_size(&mut self) -> Result<usize> {
+        let size = match self.framing {
+            Framing::Cabinet => {
+                let high = self.bits.read(BLOCK_SIZE_HIGH_BITS)?;
+                let low = self.bits.read(BLOCK_SIZE_LOW_BITS)?;
+                high << BLOCK_SIZE_LOW_BITS | low
+            }
+            Framing::Wim => {
+                if self.bits.read(1)? == 1 {
+                    return Ok(WIM_DEFAULT_BLOCK_SIZE);
+                }
+                let short = self.bits.read(BLOCK_SIZE_HIGH_BITS)?;
+                if self.window.len() >= 1 << WIM_LONG_SIZE_WINDOW_BITS {
+                    short << BLOCK_SIZE_LOW_BITS | self.bits.read(BLOCK_SIZE_LOW_BITS)?
+                } else {
+                    short
+                }
+            }
+        };
+        Ok(usize::try_from(size).expect("24-bit size"))
     }
 
     /// Read a block header and the block's trees or repeated offsets.
@@ -504,9 +342,7 @@ impl<'a> Decoder<'a> {
         }
         let at = self.bits.pos;
         let kind = self.bits.read(BLOCK_TYPE_BITS)?;
-        let high = self.bits.read(BLOCK_SIZE_HIGH_BITS)?;
-        let low = self.bits.read(BLOCK_SIZE_LOW_BITS)?;
-        let size = usize::try_from(high << BLOCK_SIZE_LOW_BITS | low).expect("24-bit size");
+        let size = self.block_size()?;
         self.kind = match kind {
             BLOCK_VERBATIM => {
                 self.read_trees()?;
@@ -519,7 +355,7 @@ impl<'a> Decoder<'a> {
                         u8::try_from(self.bits.read(ALIGNED_LENGTH_BITS)?).expect("3-bit length");
                 }
                 self.aligned = Some(
-                    Huffman::build(&lengths, "aligned offset")?
+                    Huffman::build(&lengths, CODEC, "aligned offset", MAX_CODE_LENGTH)?
                         .ok_or_else(|| error("Invalid LZX aligned offset tree: no codes"))?,
                 );
                 self.read_trees()?;
@@ -528,7 +364,15 @@ impl<'a> Decoder<'a> {
             BLOCK_UNCOMPRESSED => {
                 self.bits.start_bytes()?;
                 for r in &mut self.repeated {
-                    *r = self.bits.le_u32()?;
+                    *r = match self.framing {
+                        Framing::Cabinet => self.bits.le_u32()?,
+                        Framing::Wim => self.bits.input_le_u32()?,
+                    };
+                }
+                if self.framing == Framing::Wim && self.repeated.contains(&0) {
+                    return Err(error(format!(
+                        "Invalid LZX uncompressed block near 0x{at:X}: a repeated offset is 0"
+                    )));
                 }
                 BlockKind::Uncompressed
             }
@@ -550,8 +394,13 @@ impl<'a> Decoder<'a> {
         read_lengths(&mut self.bits, &mut self.main_lengths, 0, NUM_CHARS)?;
         read_lengths(&mut self.bits, &mut self.main_lengths, NUM_CHARS, main_end)?;
         self.main = Some(
-            Huffman::build(&self.main_lengths[..MAIN_TABLE_SYMBOLS], "main")?
-                .ok_or_else(|| error("Invalid LZX main tree: no codes"))?,
+            Huffman::build(
+                &self.main_lengths[..MAIN_TABLE_SYMBOLS],
+                CODEC,
+                "main",
+                MAX_CODE_LENGTH,
+            )?
+            .ok_or_else(|| error("Invalid LZX main tree: no codes"))?,
         );
         read_lengths(
             &mut self.bits,
@@ -559,7 +408,12 @@ impl<'a> Decoder<'a> {
             0,
             NUM_SECONDARY_LENGTHS,
         )?;
-        self.length = Huffman::build(&self.length_lengths[..LENGTH_TABLE_SYMBOLS], "length")?;
+        self.length = Huffman::build(
+            &self.length_lengths[..LENGTH_TABLE_SYMBOLS],
+            CODEC,
+            "length",
+            MAX_CODE_LENGTH,
+        )?;
         Ok(())
     }
 
@@ -675,8 +529,11 @@ impl<'a> Decoder<'a> {
         if end > self.window.len() {
             return Err(error("Invalid LZX block: it runs past the window end"));
         }
-        self.bits
-            .copy_bytes(&mut self.window[self.window_pos..end])?;
+        let bytes = &mut self.window[self.window_pos..end];
+        match self.framing {
+            Framing::Cabinet => self.bits.copy_bytes(bytes)?,
+            Framing::Wim => self.bits.copy_input(bytes)?,
+        }
         self.window_pos = end;
         self.decoded += run;
         Ok(())
@@ -692,7 +549,7 @@ fn read_lengths(bits: &mut Bits<'_>, lengths: &mut [u8], first: usize, last: usi
     for length in &mut pretree_lengths {
         *length = u8::try_from(bits.read(PRETREE_LENGTH_BITS)?).expect("4-bit length");
     }
-    let pretree = Huffman::build(&pretree_lengths, "pretree")?
+    let pretree = Huffman::build(&pretree_lengths, CODEC, "pretree", MAX_CODE_LENGTH)?
         .ok_or_else(|| error("Invalid LZX pretree: no codes"))?;
     let mut x = first;
     while x < last {
@@ -778,7 +635,7 @@ pub(super) fn decode(data: &[u8], window_bits: u8, limit: usize) -> Result<Decod
             "Unsupported LZX window of 2^{window_bits} B (cabinets use 2^15 to 2^21 B)"
         )));
     }
-    let mut decoder = Decoder::new(data, window_bits);
+    let mut decoder = Decoder::new(data, window_bits, Framing::Cabinet);
     let mut out = Vec::new();
     if limit == 0 {
         return Ok(Decoded {
@@ -807,6 +664,51 @@ pub(super) fn decode(data: &[u8], window_bits: u8, limit: usize) -> Result<Decod
     Ok(Decoded {
         data: out,
         consumed: Some(decoder.bits.consumed()),
+        check: None,
+    })
+}
+
+/// Decode one WIM chunk of exactly `limit` bytes with a window of
+/// 2^`window_bits` bytes, the chunk size rounded up to a power of two.
+///
+/// # Errors
+///
+/// An unsupported window size, a chunk larger than the window, an empty
+/// block or one that runs past the chunk, an invalid tree or match, or a
+/// stream that ends before `limit` bytes are decoded.
+pub(super) fn decode_wim(data: &[u8], window_bits: u8, limit: usize) -> Result<Decoded> {
+    if !(MIN_WINDOW_BITS..=MAX_WINDOW_BITS).contains(&window_bits) {
+        return Err(error(format!(
+            "Unsupported LZX window of 2^{window_bits} B (WIM chunks use 2^15 to 2^21 B)"
+        )));
+    }
+    let mut decoder = Decoder::new(data, window_bits, Framing::Wim);
+    if limit > decoder.window.len() {
+        return Err(error(format!(
+            "Invalid LZX chunk of {} for a {} window",
+            size_text(limit),
+            size_text(decoder.window.len())
+        )));
+    }
+    while decoder.decoded < limit {
+        let at = decoder.decoded;
+        decoder.start_block()?;
+        let remaining = limit - at;
+        if decoder.block_size == 0 || decoder.block_size > remaining {
+            return Err(error(format!(
+                "Invalid LZX block of {} B at output 0x{at:X}: {remaining} B remain in the chunk",
+                decoder.block_size
+            )));
+        }
+        decoder.decode_run(decoder.block_size)?;
+    }
+    let consumed = decoder.bits.consumed();
+    let mut out = decoder.window;
+    out.truncate(limit);
+    undo_e8(&mut out, 0, WIM_E8_FILE_SIZE);
+    Ok(Decoded {
+        data: out,
+        consumed: Some(consumed),
         check: None,
     })
 }
@@ -863,43 +765,6 @@ mod tests {
     }
 
     #[test]
-    fn huffman_codes_must_be_complete() {
-        assert!(Huffman::build(&[1, 1], "test").unwrap().is_some());
-        assert!(Huffman::build(&[0, 0, 0], "test").unwrap().is_none());
-        assert!(Huffman::build(&[1], "test").is_err());
-        assert!(Huffman::build(&[1, 1, 1], "test").is_err());
-        assert!(Huffman::build(&[1, 2, 3, 3], "test").unwrap().is_some());
-    }
-
-    #[test]
-    fn canonical_codes_decode_short_and_long_symbols() {
-        // Lengths 1, 2, ..., 15, 16, 16: codes 0, 10, 110, ..., 1111111111111110,
-        // 1111111111111111 (MSB first).
-        let mut lengths: Vec<u8> = (1..=16).collect();
-        lengths.push(16);
-        let code = Huffman::build(&lengths, "test").unwrap().unwrap();
-        // Symbol 0 (`0`), symbol 1 (`10`), symbol 16 (sixteen ones), then
-        // symbol 12 (twelve ones and a zero): the words 0101111111111111
-        // and 1111111111111110, stored little-endian; the last decode
-        // peeks into the padding word.
-        let stream = [0xff, 0x5f, 0xfe, 0xff];
-        let mut bits = Bits::new(&stream);
-        assert_eq!(code.decode(&mut bits).unwrap(), 0);
-        assert_eq!(code.decode(&mut bits).unwrap(), 1);
-        assert_eq!(code.decode(&mut bits).unwrap(), 16);
-        assert_eq!(code.decode(&mut bits).unwrap(), 12);
-    }
-
-    #[test]
-    fn the_bit_reader_pads_one_word_and_then_fails() {
-        let mut bits = Bits::new(&[0x34, 0x12]);
-        assert_eq!(bits.read(4).unwrap(), 0x1);
-        assert_eq!(bits.read(12).unwrap(), 0x234);
-        assert_eq!(bits.read(16).unwrap(), 0);
-        assert!(bits.read(1).is_err());
-    }
-
-    #[test]
     fn length_deltas_are_taken_modulo_17() {
         assert_eq!(delta_length(0, 0), 0);
         assert_eq!(delta_length(0, 1), 16);
@@ -943,7 +808,94 @@ mod tests {
         for window in MIN_WINDOW_BITS..=MAX_WINDOW_BITS {
             for end in [0, 1, 2, 7, 64, 1000, noise.len()] {
                 let _ = decode(&noise[..end], window, 70_000);
+                let _ = decode_wim(&noise[..end], window, 1 << MIN_WINDOW_BITS);
             }
+        }
+    }
+
+    /// The three repeated offsets of an uncompressed block, all 1.
+    const ONES: [u8; 12] = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
+
+    /// A WIM chunk of `bytes` in one uncompressed block for a 2^15 window
+    /// (wimlib `lzx_read_block_header`): type 3, a clear default-size bit,
+    /// the 16-bit size, 12 padding bits to the word boundary, R0-R2 and
+    /// the bytes.
+    fn wim_uncompressed(bytes: &[u8]) -> Vec<u8> {
+        let size = u32::try_from(bytes.len()).unwrap();
+        let header = BLOCK_UNCOMPRESSED << 29 | size << 12;
+        let mut chunk = Vec::new();
+        chunk.extend_from_slice(&u16::try_from(header >> 16).unwrap().to_le_bytes());
+        chunk.extend_from_slice(&u16::try_from(header & 0xffff).unwrap().to_le_bytes());
+        chunk.extend_from_slice(&ONES);
+        chunk.extend_from_slice(bytes);
+        chunk
+    }
+
+    #[test]
+    fn wim_chunks_have_no_e8_header_and_short_block_sizes() {
+        let chunk = wim_uncompressed(b"abc");
+        assert_eq!(&chunk[..4], &[0x00, 0x60, 0x00, 0x30]);
+        let decoded = decode_wim(&chunk, 15, 3).unwrap();
+        assert_eq!(decoded.data, b"abc");
+        assert_eq!(decoded.consumed, Some(chunk.len()));
+        // A cabinet reads the first bit as the E8 flag and fails.
+        assert!(decode(&chunk, 15, 3).is_err());
+        // A window of 2^16 reads 8 more size bits: 3 << 8 | 0.
+        assert!(decode_wim(&chunk, 16, 3).is_err());
+        let mut long = vec![0x00, 0x60, 0x30, 0x00];
+        long.extend_from_slice(&ONES);
+        long.extend_from_slice(b"abc");
+        assert_eq!(decode_wim(&long, 16, 3).unwrap().data, b"abc");
+    }
+
+    #[test]
+    fn a_set_size_bit_codes_a_32_kib_block() {
+        let bytes: Vec<u8> = (0..WIM_DEFAULT_BLOCK_SIZE)
+            .map(|i| u8::try_from(i % 199).unwrap())
+            .collect();
+        let mut chunk = vec![0x00, 0x70];
+        chunk.extend_from_slice(&ONES);
+        chunk.extend_from_slice(&bytes);
+        assert_eq!(
+            decode_wim(&chunk, 15, WIM_DEFAULT_BLOCK_SIZE).unwrap().data,
+            bytes
+        );
+    }
+
+    #[test]
+    fn wim_chunks_undo_e8_translation_with_the_fixed_size() {
+        // An absolute target 0x100 at a CALL at chunk offset 1 becomes
+        // 0x100 - 1; -8 at offset 12 becomes 12,000,000 - 8; a CALL in the
+        // last 10 bytes stays.
+        let mut bytes = vec![0x90u8; 32];
+        bytes[1] = E8_OPCODE;
+        bytes[2..6].copy_from_slice(&0x100i32.to_le_bytes());
+        bytes[12] = E8_OPCODE;
+        bytes[13..17].copy_from_slice(&(-8i32).to_le_bytes());
+        bytes[22] = E8_OPCODE;
+        bytes[23..27].copy_from_slice(&0x100i32.to_le_bytes());
+        let decoded = decode_wim(&wim_uncompressed(&bytes), 15, bytes.len()).unwrap();
+        assert_eq!(&decoded.data[2..6], &0xffi32.to_le_bytes());
+        assert_eq!(&decoded.data[13..17], &(12_000_000i32 - 8).to_le_bytes());
+        assert_eq!(&decoded.data[23..27], &0x100i32.to_le_bytes());
+    }
+
+    #[test]
+    fn wim_blocks_must_fit_the_chunk_and_keep_nonzero_offsets() {
+        let chunk = wim_uncompressed(b"abc");
+        assert!(decode_wim(&chunk, 15, 2).is_err());
+        assert!(decode_wim(&chunk, 15, 4).is_err());
+        assert!(decode_wim(&chunk, 15, 40_000).is_err());
+        assert!(decode_wim(&chunk, 14, 3).is_err());
+        assert!(decode_wim(&chunk, 22, 3).is_err());
+        let empty = wim_uncompressed(b"");
+        assert!(decode_wim(&empty, 15, 1).is_err());
+        let mut zero_offset = chunk.clone();
+        zero_offset[4] = 0;
+        assert!(decode_wim(&zero_offset, 15, 3).is_err());
+        assert_eq!(decode_wim(&chunk, 15, 0).unwrap().data, b"");
+        for end in 0..chunk.len() {
+            assert!(decode_wim(&chunk[..end], 15, 3).is_err(), "prefix {end}");
         }
     }
 }

@@ -83,7 +83,11 @@ both byte orders; concatenated initramfs) are implemented; see
 [archives](archives.md). Microsoft cabinets followed (stored, MSZIP and
 LZX folders; CFDATA checksums verified; files listed by name; Quantum
 folders, joining cabinet sets and signature verification not implemented);
-see [Microsoft cabinets](cab.md). RPM packages followed (lead, signature
+see [Microsoft cabinets](cab.md). WIM images followed (stored, XPRESS, LZX,
+LZMS and solid resources through new XPRESS Huffman, WIM LZX and LZMS
+codecs; per-image file listing with SHA-1 verification; integrity table);
+encrypted ESDs are opaque and split parts are not joined; see [WIM
+images](wim.md). RPM packages followed (lead, signature
 and main headers, digests and the newc or stripped cpio payload in all five
 rpm codecs); Debian `.deb` packages were already classified through `ar`,
 the codec family and tar. With them, ar members that fail to classify no

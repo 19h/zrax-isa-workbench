@@ -846,6 +846,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Asar => "Electron ASAR archive",
         FileFormat::DotnetBundle => ".NET single-file bundle",
         FileFormat::Ntfs => "NTFS volume",
+        FileFormat::Wim => "WIM image",
     }
 }
 
