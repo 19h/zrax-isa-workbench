@@ -33,6 +33,7 @@ pub mod bflt;
 pub mod blackfin_ldr;
 pub mod bitstream;
 pub mod bootmisc;
+pub mod capsule;
 pub mod checksum;
 pub mod chiptune;
 pub mod coff;
@@ -858,6 +859,28 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = sis::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Sis(layout),
+        };
+    }
+
+    // UEFI capsules: a documented 128-bit capsule GUID at offset 0 whose
+    // header sizes are consistent. No check above matches a capsule header,
+    // and the body (often a firmware volume or flash image) starts at
+    // `HeaderSize`, not at offset 0, so it cannot be claimed instead.
+    if let Some(layout) = capsule::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Capsule(layout),
+        };
+    }
+
+    // Nested FMP capsules have a platform-defined outer GUID, so they are
+    // weak: the FMP capsule at `HeaderSize` must parse completely. Checked
+    // here rather than with the weak checks below, because its inner FMP
+    // GUID is as specific as a magic, while the heuristic and searching
+    // checks below (COFF, FMAP search, flash device images) could claim the
+    // firmware it wraps.
+    if let Some(layout) = capsule::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Capsule(layout),
         };
     }
 

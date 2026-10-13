@@ -119,6 +119,7 @@ const FORMAT_NAMES = {
   psyqobject: 'PsyQ object',
   armaif: 'ARM AIF',
   symbiansis: 'Symbian SIS package',
+  ueficapsule: 'UEFI capsule',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

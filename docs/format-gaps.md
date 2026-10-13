@@ -168,7 +168,10 @@ followed; see [Symbian SIS packages](sis.md). LE/LX headers without an MZ
 stub (weak; header, object table, page table and page extents validated;
 the CPU type is the ISA evidence) and PE images whose DOS header starts
 with `ZM` (only with the PE signature at `e_lfanew`) followed; see
-[DOS-family headers](mz.md).
+[DOS-family headers](mz.md). UEFI capsules (FMP, nested FMP,
+`EFI_CAPSULE_GUID`, JSON, Windows UX, Intel, Lenovo, Toshiba and AMI Aptio;
+signatures not verified, Framework split capsules not supported) followed;
+see [UEFI capsules](capsule.md).
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

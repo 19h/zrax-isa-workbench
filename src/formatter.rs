@@ -803,6 +803,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::PsyqObject => "PsyQ object",
         FileFormat::ArmAif => "ARM AIF",
         FileFormat::SymbianSis => "Symbian SIS package",
+        FileFormat::UefiCapsule => "UEFI capsule",
     }
 }
 

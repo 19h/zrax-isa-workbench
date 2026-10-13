@@ -76,6 +76,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a UEFI capsule (FMP, JSON, Windows UX or vendor
+    /// capsule header and body).
+    #[error("UEFI capsule parse error: {message}")]
+    CapsuleParseError {
+        /// What is wrong with the capsule.
+        message: String,
+    },
+
     /// Error parsing a partition table (MBR, GPT or Apple Partition Map).
     #[error("Partition table parse error: {message}")]
     PartitionParseError {

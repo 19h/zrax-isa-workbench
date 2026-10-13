@@ -1140,6 +1140,10 @@ pub enum FileFormat {
     // Symbian SIS
     /// Symbian OS v9 software installation package (`.sis`, `.sisx`)
     SymbianSis,
+    // UEFI capsules
+    /// UEFI capsule (`EFI_CAPSULE_HEADER`: FMP, JSON, Windows UX or vendor
+    /// capsule)
+    UefiCapsule,
 }
 
 impl fmt::Display for FileFormat {
@@ -1414,6 +1418,8 @@ impl fmt::Display for FileFormat {
             FileFormat::ArmAif => write!(f, "ARM AIF"),
             // Symbian SIS
             FileFormat::SymbianSis => write!(f, "Symbian SIS package"),
+            // UEFI capsules
+            FileFormat::UefiCapsule => write!(f, "UEFI capsule"),
         }
     }
 }
