@@ -52,12 +52,26 @@ With all eleven readings applicable, `k = 12`: 4 more bits per window and a
 twelvefold allowance. Strong windows (a margin of at least 1 bit per byte)
 still count in full.
 
+The penalty keeps noise inconclusive, but structured input that the model
+cannot place raw (code of an unmodelled ISA extension, file headers) can
+still resemble some class after a rearrangement. A transformed reading is
+therefore accepted only when:
+
+- its confidence is at least 0.9: genuinely mis-ordered code decides at the
+  0.99 cap (the AArch64 and RISC-V fixtures under every transform), while
+  the readings that won on IDA's test corpus without this rule were at 0.6
+  to 0.8 or bytecode;
+- it names an ISA that a memory dump can hold: JVM, Dalvik, WebAssembly,
+  CLR, EBC and BPF bytecode live in files, and their weak byte statistics
+  matched rearranged structured data.
+
 ## Assumption register
 
 | ID | Assumption | Falsification probe |
 | --- | --- | --- |
 | T1 | A transform is applied only when the stored order is inconclusive | Code in execution order never gets a `transform_applied` entry (`fixtures_classify_in_execution_order`) |
 | T2 | The union-bound penalty keeps noise inconclusive | Deterministic noise of several sizes, including NAND-shaped lengths, stays inconclusive (`noise_stays_inconclusive_after_every_transform`) |
+| T3 | A genuine transformed reading is decisive (confidence at least 0.9) and native code | On 2026-10-13, IDA's test corpus (`tests/input`, 7,327 files) had two files decided only by a transform, both wrong (`mipsb_mips3d.bin` as ST20 at 0.60 after a 16-bit swap, `pc_bad_nimports.lx` as JVM at 0.98 after a 4-lane interleave); with the rule both are inconclusive again, and the transform tests still recover every scrambled fixture |
 | T3 | A spare-area geometry that lets a recognized container parse is the dump's geometry | uImage inside a 2048+64 B NAND read parses after removal (`a_nand_dump_of_a_container_parses_after_spare_removal`) |
 
 ## Known boundaries

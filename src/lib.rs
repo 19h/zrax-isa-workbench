@@ -218,9 +218,28 @@ struct Transformed {
     candidates: Vec<IsaCandidate>,
 }
 
+/// Least confidence a transformed reading needs. Nothing in the bytes
+/// declares a transform, so the reading must be decisive: genuinely
+/// mis-ordered code decides at the 0.99 cap, while the readings that won on
+/// IDA's test corpus without it were structured non-code or unmodelled
+/// code at 0.6-0.8.
+const MIN_TRANSFORM_CONFIDENCE: f64 = 0.9;
+
+/// Can code of this ISA sit in a byte-swapped, lane-split or NAND dump?
+/// Transforms undo how memory chips are wired and read; bytecode for a
+/// virtual machine lives in files, and its weak byte statistics matched
+/// rearranged structured data.
+fn is_dumpable_isa(isa: Isa) -> bool {
+    !matches!(
+        isa,
+        Isa::Jvm | Isa::Dalvik | Isa::Wasm | Isa::Clr | Isa::Ebc | Isa::Bpf
+    )
+}
+
 /// Try every applicable transform on an inconclusive raw input and keep the
 /// most confident code-model result. Every attempt pays the union-bound
-/// penalty for the number of readings tried, the original one included.
+/// penalty for the number of readings tried, the original one included,
+/// and must be decisive and name an ISA that dumps hold.
 fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transformed> {
     let applicable: Vec<transform::Transform> = transform::CANDIDATES
         .iter()
@@ -242,6 +261,9 @@ fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transfo
         let Ok(result) = result else {
             continue;
         };
+        if result.confidence < MIN_TRANSFORM_CONFIDENCE || !is_dumpable_isa(result.isa) {
+            continue;
+        }
         if best
             .as_ref()
             .is_some_and(|b| b.result.confidence >= result.confidence)
