@@ -84,6 +84,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an application bundle (`PyInstaller` archive, Electron
+    /// ASAR archive or .NET single-file bundle).
+    #[error("Application bundle parse error: {message}")]
+    AppBundleParseError {
+        /// What is wrong with the bundle.
+        message: String,
+    },
+
     /// Error parsing a Symbian E32 image (EPOC executable or library).
     #[error("Symbian E32 image parse error: {message}")]
     EpocParseError {

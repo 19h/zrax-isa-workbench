@@ -26,6 +26,7 @@ pub mod android;
 pub mod aof;
 pub mod aout;
 pub mod apfs;
+pub mod appbundle;
 pub mod apple;
 pub mod apple2;
 pub mod ar;
@@ -1079,6 +1080,19 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = rpm::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Rpm(layout),
+        };
+    }
+
+    // Application bundle files: a PyInstaller archive whose 88-byte `MEI`
+    // cookie ends the input and declares its length, or an ASAR Pickle
+    // header whose sizes agree and whose JSON opens the root `files`
+    // object. Bundles inside an ELF, PE or Mach-O host are not claimed: the
+    // executable checks above keep the host's format. Before the compressed
+    // streams, because a PyInstaller archive starts with its first entry's
+    // zlib stream.
+    if let Some(layout) = appbundle::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::AppBundle(layout),
         };
     }
 

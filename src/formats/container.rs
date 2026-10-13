@@ -173,6 +173,9 @@ pub enum Kind {
     Ffu(super::ffu::Layout),
     /// An RPM package.
     Rpm(super::rpm::Layout),
+    /// An application bundle: `PyInstaller` archive, Electron ASAR archive or
+    /// .NET single-file bundle.
+    AppBundle(super::appbundle::Layout),
 }
 
 impl Kind {
@@ -236,6 +239,7 @@ impl Kind {
             Self::Cab(layout) => layout.format(),
             Self::Ffu(layout) => layout.format(),
             Self::Rpm(layout) => layout.format(),
+            Self::AppBundle(layout) => layout.format(),
         }
     }
 
@@ -299,6 +303,7 @@ impl Kind {
             Self::Cab(layout) => layout.label(),
             Self::Ffu(layout) => layout.label(),
             Self::Rpm(layout) => layout.label(),
+            Self::AppBundle(layout) => layout.label(),
         }
     }
 
@@ -362,6 +367,7 @@ impl Kind {
             Self::Cab(layout) => layout.is_weak(),
             Self::Ffu(layout) => layout.is_weak(),
             Self::Rpm(layout) => layout.is_weak(),
+            Self::AppBundle(layout) => layout.is_weak(),
         }
     }
 }
@@ -430,6 +436,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Cab(layout) => super::cab::parse_container(data, layout),
         Kind::Ffu(layout) => super::ffu::parse_container(data, layout),
         Kind::Rpm(layout) => super::rpm::parse_container(data, layout),
+        Kind::AppBundle(layout) => super::appbundle::parse_container(data, layout),
     }
 }
 

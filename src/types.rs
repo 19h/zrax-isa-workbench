@@ -1237,6 +1237,15 @@ pub enum FileFormat {
     // RPM packages
     /// RPM package: lead, signature header, main header and payload
     Rpm,
+    // Application bundles
+    /// `PyInstaller` archive (CArchive): bundled files, a table of contents
+    /// and the `MEI` cookie
+    PyInstaller,
+    /// Electron ASAR archive: a Pickle-framed JSON directory tree and the
+    /// file data
+    Asar,
+    /// .NET single-file bundle: files and a manifest appended to an apphost
+    DotnetBundle,
 }
 
 impl fmt::Display for FileFormat {
@@ -1567,6 +1576,10 @@ impl fmt::Display for FileFormat {
             FileFormat::Ffu => write!(f, "Full Flash Update image"),
             // RPM packages
             FileFormat::Rpm => write!(f, "RPM package"),
+            // Application bundles
+            FileFormat::PyInstaller => write!(f, "PyInstaller archive"),
+            FileFormat::Asar => write!(f, "Electron ASAR archive"),
+            FileFormat::DotnetBundle => write!(f, ".NET single-file bundle"),
         }
     }
 }

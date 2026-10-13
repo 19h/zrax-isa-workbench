@@ -842,6 +842,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::MsCab => "Microsoft cabinet",
         FileFormat::Ffu => "Full Flash Update image",
         FileFormat::Rpm => "RPM package",
+        FileFormat::PyInstaller => "PyInstaller archive",
+        FileFormat::Asar => "Electron ASAR archive",
+        FileFormat::DotnetBundle => ".NET single-file bundle",
     }
 }
 

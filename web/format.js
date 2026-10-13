@@ -136,6 +136,7 @@ const FORMAT_NAMES = {
   mscab: 'Microsoft cabinet',
   ffu: 'Full Flash Update image',
   rpm: 'RPM package',
+  pyinstaller: 'PyInstaller archive', asar: 'Electron ASAR archive', dotnetbundle: '.NET single-file bundle',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }
