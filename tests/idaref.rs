@@ -232,9 +232,45 @@ enum Outcome {
 }
 
 fn read_limited(path: &Path) -> std::io::Result<Vec<u8>> {
+    read_prefix(path, MAX_READ)
+}
+
+fn read_prefix(path: &Path, limit: usize) -> std::io::Result<Vec<u8>> {
     let mut buf = Vec::new();
-    std::fs::File::open(path)?.take(MAX_READ as u64).read_to_end(&mut buf)?;
+    std::fs::File::open(path)?
+        .take(limit as u64)
+        .read_to_end(&mut buf)?;
     Ok(buf)
+}
+
+/// Largest file read whole when its first [`MAX_READ`] bytes fail to parse:
+/// a container that declares more bytes than the prefix holds is a
+/// truncation the harness made, not a classification error.
+const MAX_FULL_READ: usize = 64 << 20;
+
+/// Classify `data`, the prefix of the file at `path`; when the prefix is a
+/// parse error and the file is longer, classify the file read whole.
+fn classify_file(
+    path: &Path,
+    data: &[u8],
+    options: &ClassifierOptions,
+) -> zrax::Result<zrax::DetectionPayload> {
+    let result = detect_payload(data, options);
+    let truncated_by_us = data.len() == MAX_READ
+        && matches!(
+            result,
+            Err(ref e) if !matches!(
+                e,
+                ClassifierError::HeuristicInconclusive { .. } | ClassifierError::FileTooSmall { .. }
+            )
+        );
+    if !truncated_by_us {
+        return result;
+    }
+    match read_prefix(path, MAX_FULL_READ) {
+        Ok(whole) if whole.len() > data.len() => detect_payload(&whole, options),
+        _ => result,
+    }
 }
 
 #[test]
@@ -272,7 +308,7 @@ fn idaref_classification_suite() {
             continue;
         };
         let data = read_limited(&dir.join(name)).expect("read");
-        let r = detect_payload(&data, &options);
+        let r = classify_file(&dir.join(name), &data, &options);
         let (outcome, got) = match (expect, r) {
             (Is(isas), Ok(p)) => {
                 let hit = isas.contains(&p.primary.isa) || p.slices.iter().any(|s| isas.contains(&s.isa));
