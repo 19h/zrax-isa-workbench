@@ -116,6 +116,7 @@ const FORMAT_NAMES = {
   minidump: 'Windows minidump', windowskerneldump: 'Windows kernel dump',
   netwarenlm: 'NetWare NLM',
   geosgeode: 'PC/GEOS geode',
+  psyqobject: 'PsyQ object',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

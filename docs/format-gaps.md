@@ -157,7 +157,9 @@ target field; packed NLMPACK modules opaque, not decoded) followed; see
 [NetWare modules](nlm.md). PC/GEOS geodes (2.0 and 1.x headers; `HAF_CODE`
 resources as 16-bit x86; relocations counted, not applied; GEOS VM and
 data files recognized but not parsed) followed; see [PC/GEOS
-geodes](geos.md).
+geodes](geos.md). Psy-Q LNK objects (PROGRAMTYPE as the target; `.text` as
+code; `LIB` archives and relocation application not implemented) followed;
+see [Psy-Q objects](psyq.md).
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

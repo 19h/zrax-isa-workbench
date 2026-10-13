@@ -112,6 +112,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Psy-Q (SN Systems) LNK object file.
+    #[error("PsyQ object parse error: {message}")]
+    PsyqParseError {
+        /// What is wrong with the object file.
+        message: String,
+    },
+
     /// Error parsing an Espressif firmware image or flash dump (ESP32
     /// family, ESP8266, ESP-IDF partition table).
     #[error("Espressif image parse error: {message}")]

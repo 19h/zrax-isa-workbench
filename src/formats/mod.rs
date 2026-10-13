@@ -78,6 +78,7 @@ pub mod partitions;
 pub mod pcfw;
 pub mod pe;
 pub mod pef;
+pub mod psyq;
 pub mod qnx;
 pub mod retro;
 pub mod retro2;
@@ -822,6 +823,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = geos::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Geos(layout),
+        };
+    }
+
+    // PsyQ LNK objects: `LNK`, version 2 and a documented first record
+    // opcode.
+    if let Some(layout) = psyq::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Psyq(layout),
         };
     }
 

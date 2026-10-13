@@ -129,6 +129,8 @@ pub enum Kind {
     Nlm(super::nlm::Layout),
     /// A PC/GEOS geode.
     Geos(super::geos::Layout),
+    /// A Psy-Q (SN Systems) LNK object file.
+    Psyq(super::psyq::Layout),
 }
 
 impl Kind {
@@ -172,6 +174,7 @@ impl Kind {
             Self::Minidump(layout) => layout.format(),
             Self::Nlm(layout) => layout.format(),
             Self::Geos(layout) => layout.format(),
+            Self::Psyq(layout) => layout.format(),
         }
     }
 
@@ -215,6 +218,7 @@ impl Kind {
             Self::Minidump(layout) => layout.label(),
             Self::Nlm(layout) => layout.label(),
             Self::Geos(layout) => layout.label(),
+            Self::Psyq(layout) => layout.label(),
         }
     }
 
@@ -258,6 +262,7 @@ impl Kind {
             Self::Minidump(layout) => layout.is_weak(),
             Self::Nlm(layout) => layout.is_weak(),
             Self::Geos(layout) => layout.is_weak(),
+            Self::Psyq(layout) => layout.is_weak(),
         }
     }
 }
@@ -306,6 +311,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Minidump(layout) => super::minidump::parse_container(data, layout),
         Kind::Nlm(layout) => super::nlm::parse_container(data, layout),
         Kind::Geos(layout) => super::geos::parse_container(data, layout),
+        Kind::Psyq(layout) => super::psyq::parse_container(data, layout),
     }
 }
 

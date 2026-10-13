@@ -1130,6 +1130,9 @@ pub enum FileFormat {
     // PC/GEOS
     /// PC/GEOS geode (`.geo` application, library or driver)
     GeosGeode,
+    // PsyQ
+    /// Psy-Q (SN Systems) LNK object file
+    PsyqObject,
 }
 
 impl fmt::Display for FileFormat {
@@ -1398,6 +1401,8 @@ impl fmt::Display for FileFormat {
             FileFormat::NetWareNlm => write!(f, "NetWare NLM"),
             // PC/GEOS
             FileFormat::GeosGeode => write!(f, "PC/GEOS geode"),
+            // PsyQ
+            FileFormat::PsyqObject => write!(f, "PsyQ object"),
         }
     }
 }

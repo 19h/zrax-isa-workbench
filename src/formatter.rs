@@ -800,6 +800,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::WindowsKernelDump => "Windows kernel dump",
         FileFormat::NetWareNlm => "NetWare NLM",
         FileFormat::GeosGeode => "PC/GEOS geode",
+        FileFormat::PsyqObject => "PsyQ object",
     }
 }
 
