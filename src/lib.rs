@@ -1448,7 +1448,6 @@ fn detected_to_format(detected: &formats::DetectedFormat) -> FormatDetection {
         DetectedFormat::Som => FormatDetection::new(FileFormat::Som),
         DetectedFormat::Aof => FormatDetection::new(FileFormat::Aof),
         DetectedFormat::Epoc => FormatDetection::new(FileFormat::Epoc),
-        DetectedFormat::Esp => FormatDetection::new(FileFormat::EspFirmware),
         DetectedFormat::Palm => FormatDetection::new(FileFormat::PalmPdb),
         DetectedFormat::AmigaHunk => FormatDetection::new(FileFormat::AmigaHunk),
         DetectedFormat::Tds => FormatDetection::new(FileFormat::Tds),

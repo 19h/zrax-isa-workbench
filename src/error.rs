@@ -54,6 +54,14 @@ pub enum ClassifierError {
         limit: usize,
     },
 
+    /// Error parsing an Espressif firmware image or flash dump (ESP32
+    /// family, ESP8266, ESP-IDF partition table).
+    #[error("Espressif image parse error: {message}")]
+    EspParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an FPGA configuration bitstream (Xilinx, Lattice,
     /// Intel).
     #[error("FPGA bitstream parse error: {message}")]

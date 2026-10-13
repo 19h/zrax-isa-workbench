@@ -237,8 +237,6 @@ pub enum DetectedFormat {
     Aof,
     /// Symbian EPOC/E32 image
     Epoc,
-    /// Espressif firmware image
-    Esp,
     /// Palm PDB/PRC container
     Palm,
     /// Amiga Hunk format
@@ -666,6 +664,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Espressif flash dumps: the partition table at 0x8000 has a magic on
+    // every record up to its terminator.
+    if let Some(layout) = esp::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Esp(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -763,11 +769,6 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     // OS-9 modules
     if os9::detect(data) {
         return DetectedFormat::Os9;
-    }
-
-    // Espressif firmware image
-    if esp::detect(data) {
-        return DetectedFormat::Esp;
     }
 
     // Palm containers
@@ -902,6 +903,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Espressif images: the magic is one byte (0xE9 also starts x86
+    // `JMP rel32` code), so the whole segment walk, the checksum, the digest
+    // the header flags, the entry point and the trailing bytes must validate.
+    if let Some(layout) = esp::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Esp(layout),
+        };
+    }
+
     // zlib and LZMA-alone: two-byte or properties-only signatures,
     // recognized only from a complete decode.
     if let Some(codec) = compressed::detect_weak(data) {
@@ -946,7 +956,6 @@ pub fn parse_detected(data: &[u8], format: &DetectedFormat) -> Result<Classifica
         DetectedFormat::Som => som::parse(data),
         DetectedFormat::Aof => aof::parse(data),
         DetectedFormat::Epoc => epoc::parse(data),
-        DetectedFormat::Esp => esp::parse(data),
         DetectedFormat::Palm => palm::parse(data),
         DetectedFormat::AmigaHunk => amiga_hunk::parse(data),
         DetectedFormat::Tds => tds::parse(data),

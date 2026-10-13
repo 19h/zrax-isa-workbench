@@ -17,6 +17,8 @@
 //! used by iSCSI and the ext4 `metadata_csum` feature, which keeps the raw
 //! register without the final XOR (Linux v6.11 `fs/ext4/ext4.h`,
 //! `ext4_chksum`).
+//! MD5 is RFC 1321, used only to check the ESP-IDF partition table MD5
+//! record, which detects corruption and is never evidence of authenticity.
 
 /// Reflected IEEE 802.3 CRC-32 polynomial.
 const CRC32_POLYNOMIAL: u32 = 0xedb8_8320;
@@ -295,9 +297,138 @@ impl Sha1 {
     }
 }
 
+/// MD5 initial state A, B, C, D (RFC 1321, section 3.3).
+const MD5_INITIAL: [u32; 4] = [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476];
+
+/// MD5 sine table `T[1..64]`, `floor(2^32 * abs(sin(i)))` (RFC 1321,
+/// section 3.4).
+#[rustfmt::skip]
+const MD5_SINE_TABLE: [u32; 64] = [
+    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee,
+    0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
+    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be,
+    0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
+    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa,
+    0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
+    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed,
+    0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
+    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c,
+    0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
+    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05,
+    0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
+    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039,
+    0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
+    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1,
+    0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
+];
+
+/// MD5 left-rotation amounts for the four steps of rounds 1 to 4 (RFC
+/// 1321, section 3.4).
+const MD5_SHIFTS: [[u32; 4]; 4] = [
+    [7, 12, 17, 22],
+    [5, 9, 14, 20],
+    [4, 11, 16, 23],
+    [6, 10, 15, 21],
+];
+
+/// MD5 message block size in bytes.
+const MD5_BLOCK: usize = 64;
+
+/// Incremental MD5 (RFC 1321), for checksums that formats store to detect
+/// corruption (the ESP-IDF partition table MD5 record). It is not collision
+/// resistant and is never evidence of authenticity.
+#[derive(Debug, Clone)]
+pub struct Md5 {
+    state: [u32; 4],
+    block: [u8; MD5_BLOCK],
+    filled: usize,
+    length: u64,
+}
+
+impl Default for Md5 {
+    fn default() -> Self {
+        Self {
+            state: MD5_INITIAL,
+            block: [0; MD5_BLOCK],
+            filled: 0,
+            length: 0,
+        }
+    }
+}
+
+impl Md5 {
+    /// A hasher with no input.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append `data` to the message.
+    pub fn update(&mut self, mut data: &[u8]) {
+        self.length = self.length.wrapping_add(data.len() as u64);
+        while !data.is_empty() {
+            let take = (MD5_BLOCK - self.filled).min(data.len());
+            self.block[self.filled..self.filled + take].copy_from_slice(&data[..take]);
+            self.filled += take;
+            data = &data[take..];
+            if self.filled == MD5_BLOCK {
+                let block = self.block;
+                self.compress(&block);
+                self.filled = 0;
+            }
+        }
+    }
+
+    /// The 16-byte digest: the message, a one bit, zero padding and the
+    /// 64-bit little-endian message length in bits (RFC 1321, sections
+    /// 3.1, 3.2 and 3.5).
+    pub fn finish(mut self) -> [u8; 16] {
+        let bits = self.length.wrapping_mul(8);
+        self.update(&[0x80]);
+        while self.filled != MD5_BLOCK - 8 {
+            self.update(&[0]);
+        }
+        self.update(&bits.to_le_bytes());
+        let mut digest = [0u8; 16];
+        for (out, word) in digest.chunks_exact_mut(4).zip(self.state) {
+            out.copy_from_slice(&word.to_le_bytes());
+        }
+        digest
+    }
+
+    /// Process one 64-byte block (RFC 1321, section 3.4).
+    fn compress(&mut self, block: &[u8; MD5_BLOCK]) {
+        let mut words = [0u32; 16];
+        for (word, bytes) in words.iter_mut().zip(block.chunks_exact(4)) {
+            *word = u32::from_le_bytes(bytes.try_into().expect("four bytes"));
+        }
+        // The working variables a, b, c and d of RFC 1321, section 3.4.
+        let mut working = self.state;
+        for (step, &sine) in MD5_SINE_TABLE.iter().enumerate() {
+            let [first, second, third, fourth] = working;
+            let round = step / 16;
+            let (mix, word) = match round {
+                0 => ((second & third) | (!second & fourth), step),
+                1 => ((second & fourth) | (third & !fourth), (5 * step + 1) % 16),
+                2 => (second ^ third ^ fourth, (3 * step + 5) % 16),
+                _ => (third ^ (second | !fourth), (7 * step) % 16),
+            };
+            let rotated = first
+                .wrapping_add(mix)
+                .wrapping_add(sine)
+                .wrapping_add(words[word])
+                .rotate_left(MD5_SHIFTS[round][step % 4]);
+            working = [fourth, second.wrapping_add(rotated), second, third];
+        }
+        for (state, value) in self.state.iter_mut().zip(working) {
+            *state = state.wrapping_add(value);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write;
 
     /// FIPS 180-4 example messages (NIST CSRC "Examples with intermediate
     /// values", SHA-1) and the one-million-'a' test of RFC 3174.
@@ -341,6 +472,48 @@ mod tests {
                 0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09
             ]
         );
+    }
+
+    /// The test suite of RFC 1321, appendix A.5, hashed whole and split
+    /// across block boundaries.
+    #[test]
+    fn md5_matches_the_rfc_1321_test_suite() {
+        let hex = |digest: [u8; 16]| {
+            let mut text = String::new();
+            for b in digest {
+                write!(text, "{b:02x}").expect("writing to a String cannot fail");
+            }
+            text
+        };
+        let vectors: [(&[u8], &str); 7] = [
+            (b"", "d41d8cd98f00b204e9800998ecf8427e"),
+            (b"a", "0cc175b9c0f1b6a831c399e269772661"),
+            (b"abc", "900150983cd24fb0d6963f7d28e17f72"),
+            (b"message digest", "f96b697d7cb7938d525a2f31aaf161d0"),
+            (
+                b"abcdefghijklmnopqrstuvwxyz",
+                "c3fcd3d76192e4007dfb496cca67e13b",
+            ),
+            (
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                "d174ab98d277d9f5a5611c2c9f419d9f",
+            ),
+            (
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                "57edf4a22be3c955ac49da2e2107b67a",
+            ),
+        ];
+        for (message, expected) in vectors {
+            let mut whole = Md5::new();
+            whole.update(message);
+            assert_eq!(hex(whole.finish()), expected);
+            for split in 0..message.len() {
+                let mut parts = Md5::new();
+                parts.update(&message[..split]);
+                parts.update(&message[split..]);
+                assert_eq!(hex(parts.finish()), expected, "split at {split}");
+            }
+        }
     }
 
     /// Check values from the CRC RevEng catalogue and RFC 1950 for the

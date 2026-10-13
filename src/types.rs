@@ -709,7 +709,7 @@ pub enum FileFormat {
     Aof,
     /// Symbian E32 image container (EPOC)
     Epoc,
-    /// Espressif firmware image (ESP)
+    /// Espressif application or bootloader image (ESP32 family, ESP8266)
     EspFirmware,
     /// Palm database/resource container (PDB/PRC)
     PalmPdb,
@@ -994,6 +994,10 @@ pub enum FileFormat {
     Seama,
     /// TP-Link firmware image (`mktplinkfw` headers and `SafeLoader`)
     TpLink,
+    // Espressif
+    /// Espressif flash dump: bootloader, ESP-IDF partition table and
+    /// partitions
+    EspFlash,
 }
 
 impl fmt::Display for FileFormat {
@@ -1189,6 +1193,8 @@ impl fmt::Display for FileFormat {
             FileFormat::NetgearChk => write!(f, "Netgear CHK"),
             FileFormat::Seama => write!(f, "D-Link SEAMA"),
             FileFormat::TpLink => write!(f, "TP-Link firmware"),
+            // Espressif
+            FileFormat::EspFlash => write!(f, "ESP flash dump"),
         }
     }
 }

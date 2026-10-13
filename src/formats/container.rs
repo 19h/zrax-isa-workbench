@@ -92,6 +92,8 @@ pub enum Kind {
     Coreboot(coreboot::Layout),
     /// A router firmware wrapper.
     Router(router::Layout),
+    /// An Espressif image or flash dump.
+    Esp(super::esp::Layout),
 }
 
 impl Kind {
@@ -120,6 +122,7 @@ impl Kind {
             Self::Uefi(layout) => layout.format(),
             Self::Coreboot(layout) => layout.format(),
             Self::Router(layout) => layout.format(),
+            Self::Esp(layout) => layout.format(),
         }
     }
 
@@ -148,6 +151,7 @@ impl Kind {
             Self::Uefi(layout) => layout.label(),
             Self::Coreboot(layout) => layout.label(),
             Self::Router(layout) => layout.label(),
+            Self::Esp(layout) => layout.label(),
         }
     }
 
@@ -176,6 +180,7 @@ impl Kind {
             Self::Uefi(layout) => layout.is_weak(),
             Self::Coreboot(layout) => layout.is_weak(),
             Self::Router(layout) => layout.is_weak(),
+            Self::Esp(layout) => layout.is_weak(),
         }
     }
 }
@@ -209,6 +214,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Uefi(layout) => uefi::parse_container(data, layout),
         Kind::Coreboot(layout) => coreboot::parse_container(data, layout),
         Kind::Router(layout) => router::parse_container(data, layout),
+        Kind::Esp(layout) => super::esp::parse_container(data, layout),
     }
 }
 
