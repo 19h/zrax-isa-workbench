@@ -782,6 +782,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::AndroidDtbo => "Android DTBO image",
         FileFormat::AndroidVbmeta => "AVB vbmeta image",
         FileFormat::Erofs => "EROFS",
+        FileFormat::Mbr => "MBR partition table",
+        FileFormat::Gpt => "GPT partition table",
+        FileFormat::ApplePartitionMap => "Apple Partition Map",
     }
 }
 

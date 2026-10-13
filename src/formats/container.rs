@@ -112,6 +112,8 @@ pub enum Kind {
     Retro2(super::retro2::Layout),
     /// An EROFS filesystem image.
     Erofs(erofs::Layout),
+    /// A partition table: MBR, GPT or Apple Partition Map.
+    Partitions(super::partitions::Layout),
 }
 
 impl Kind {
@@ -147,6 +149,7 @@ impl Kind {
             Self::BootMisc(layout) => layout.format(),
             Self::Retro2(layout) => layout.format(),
             Self::Erofs(layout) => layout.format(),
+            Self::Partitions(layout) => layout.format(),
         }
     }
 
@@ -182,6 +185,7 @@ impl Kind {
             Self::BootMisc(layout) => layout.label(),
             Self::Retro2(layout) => layout.label(),
             Self::Erofs(layout) => layout.label(),
+            Self::Partitions(layout) => layout.label(),
         }
     }
 
@@ -217,6 +221,7 @@ impl Kind {
             Self::BootMisc(layout) => layout.is_weak(),
             Self::Retro2(layout) => layout.is_weak(),
             Self::Erofs(layout) => layout.is_weak(),
+            Self::Partitions(layout) => layout.is_weak(),
         }
     }
 }
@@ -257,6 +262,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::BootMisc(layout) => super::bootmisc::parse_container(data, layout),
         Kind::Retro2(layout) => super::retro2::parse_container(data, layout),
         Kind::Erofs(layout) => erofs::parse_container(data, layout),
+        Kind::Partitions(layout) => super::partitions::parse_container(data, layout),
     }
 }
 

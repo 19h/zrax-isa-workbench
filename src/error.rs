@@ -54,6 +54,13 @@ pub enum ClassifierError {
         limit: usize,
     },
 
+    /// Error parsing a partition table (MBR, GPT or Apple Partition Map).
+    #[error("Partition table parse error: {message}")]
+    PartitionParseError {
+        /// What is wrong with the table.
+        message: String,
+    },
+
     /// Error parsing an Espressif firmware image or flash dump (ESP32
     /// family, ESP8266, ESP-IDF partition table).
     #[error("Espressif image parse error: {message}")]

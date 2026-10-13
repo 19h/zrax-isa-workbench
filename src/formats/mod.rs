@@ -67,6 +67,7 @@ pub mod omf;
 pub mod optionrom;
 pub mod os9;
 pub mod palm;
+pub mod partitions;
 pub mod pcfw;
 pub mod pe;
 pub mod pef;
@@ -744,6 +745,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Partition tables with a magic: the GPT header `EFI PART` at LBA 1 (512-
+    // or 4096-byte blocks) and the Apple driver descriptor `ER` with a `PM`
+    // map entry at block 1. After the filesystem and firmware formats, which
+    // describe their own first sectors.
+    if let Some(layout) = partitions::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Partitions(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -1010,6 +1021,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = retro2::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Retro2(layout),
+        };
+    }
+
+    // MBR: only the two-byte boot signature that boot sectors share, so last
+    // among the weak checks for disk images; FAT, exFAT and NTFS boot
+    // sectors are refused, and a protective MBR is reported as GPT.
+    if let Some(layout) = partitions::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Partitions(layout),
         };
     }
 

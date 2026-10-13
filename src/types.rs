@@ -1084,6 +1084,14 @@ pub enum FileFormat {
     // EROFS
     /// EROFS filesystem image
     Erofs,
+
+    // Partition tables
+    /// PC master boot record partition table, with extended boot records
+    Mbr,
+    /// GUID Partition Table (UEFI)
+    Gpt,
+    /// Apple Partition Map
+    ApplePartitionMap,
 }
 
 impl fmt::Display for FileFormat {
@@ -1325,6 +1333,10 @@ impl fmt::Display for FileFormat {
             FileFormat::AndroidVbmeta => write!(f, "AVB vbmeta image"),
             // EROFS
             FileFormat::Erofs => write!(f, "EROFS"),
+            // Partition tables
+            FileFormat::Mbr => write!(f, "MBR partition table"),
+            FileFormat::Gpt => write!(f, "GPT partition table"),
+            FileFormat::ApplePartitionMap => write!(f, "Apple Partition Map"),
         }
     }
 }
