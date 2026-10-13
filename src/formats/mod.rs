@@ -67,6 +67,7 @@ pub mod minidump;
 pub mod mtd;
 pub mod mz;
 pub mod nintendo;
+pub mod nlm;
 pub mod ols;
 pub mod omf;
 pub mod optionrom;
@@ -804,6 +805,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = minidump::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Minidump(layout),
+        };
+    }
+
+    // NetWare Loadable Modules: a target signature at offset 0, or the
+    // Alpha prefix magic and the Alpha signature where the prefix points.
+    if let Some(layout) = nlm::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Nlm(layout),
         };
     }
 

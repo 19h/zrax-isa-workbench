@@ -798,6 +798,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::NordicInitPacket => "Nordic DFU init packet",
         FileFormat::Minidump => "Windows minidump",
         FileFormat::WindowsKernelDump => "Windows kernel dump",
+        FileFormat::NetWareNlm => "NetWare NLM",
     }
 }
 

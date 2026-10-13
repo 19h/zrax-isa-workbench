@@ -1124,6 +1124,9 @@ pub enum FileFormat {
     Minidump,
     /// Windows kernel crash dump (`PAGEDUMP`, `PAGEDU64`)
     WindowsKernelDump,
+    // NetWare
+    /// `NetWare` Loadable Module (NLM)
+    NetWareNlm,
 }
 
 impl fmt::Display for FileFormat {
@@ -1388,6 +1391,8 @@ impl fmt::Display for FileFormat {
             // Windows minidumps
             FileFormat::Minidump => write!(f, "Windows minidump"),
             FileFormat::WindowsKernelDump => write!(f, "Windows kernel dump"),
+            // NetWare
+            FileFormat::NetWareNlm => write!(f, "NetWare NLM"),
         }
     }
 }

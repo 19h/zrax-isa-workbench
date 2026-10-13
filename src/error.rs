@@ -96,6 +96,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a `NetWare` Loadable Module (i386, SPARC, PowerPC or
+    /// Alpha NLM).
+    #[error("NetWare module parse error: {message}")]
+    NlmParseError {
+        /// What is wrong with the module.
+        message: String,
+    },
+
     /// Error parsing an Espressif firmware image or flash dump (ESP32
     /// family, ESP8266, ESP-IDF partition table).
     #[error("Espressif image parse error: {message}")]

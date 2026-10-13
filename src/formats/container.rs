@@ -125,6 +125,8 @@ pub enum Kind {
     JavaImage(super::javaimage::Layout),
     /// A Windows minidump or kernel crash dump.
     Minidump(super::minidump::Layout),
+    /// A `NetWare` Loadable Module.
+    Nlm(super::nlm::Layout),
 }
 
 impl Kind {
@@ -166,6 +168,7 @@ impl Kind {
             Self::Discs(layout) => layout.format(),
             Self::JavaImage(layout) => layout.format(),
             Self::Minidump(layout) => layout.format(),
+            Self::Nlm(layout) => layout.format(),
         }
     }
 
@@ -207,6 +210,7 @@ impl Kind {
             Self::Discs(layout) => layout.label(),
             Self::JavaImage(layout) => layout.label(),
             Self::Minidump(layout) => layout.label(),
+            Self::Nlm(layout) => layout.label(),
         }
     }
 
@@ -248,6 +252,7 @@ impl Kind {
             Self::Discs(layout) => layout.is_weak(),
             Self::JavaImage(layout) => layout.is_weak(),
             Self::Minidump(layout) => layout.is_weak(),
+            Self::Nlm(layout) => layout.is_weak(),
         }
     }
 }
@@ -294,6 +299,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Discs(layout) => super::discs::parse_container(data, layout),
         Kind::JavaImage(layout) => super::javaimage::parse_container(data, layout),
         Kind::Minidump(layout) => super::minidump::parse_container(data, layout),
+        Kind::Nlm(layout) => super::nlm::parse_container(data, layout),
     }
 }
 

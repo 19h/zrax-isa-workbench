@@ -151,7 +151,10 @@ firmware](router.md). Windows minidumps (`ProcessorArchitecture` as the
 target; module memory as code, limited to executable sections when PE
 headers are dumped, other memory opaque; checked against three
 real dumps) and kernel crash dump headers (`PAGEDUMP`, `PAGEDU64`; bodies
-not parsed) followed; see [Windows crash dumps](minidump.md).
+not parsed) followed; see [Windows crash dumps](minidump.md). NetWare
+Loadable Modules (the i386, SPARC, PowerPC and Alpha signatures as the
+target field; packed NLMPACK modules opaque, not decoded) followed; see
+[NetWare modules](nlm.md).
 
 | Impact | Format | Identification | Architecture evidence | Notes |
 | --- | --- | --- | --- | --- |

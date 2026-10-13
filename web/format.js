@@ -114,6 +114,7 @@ const FORMAT_NAMES = {
   jimage: 'Java jimage', jmod: 'JMOD',
   dfusuffix: 'USB DFU file', silabsebl: 'Silicon Labs EBL', nordicinitpacket: 'Nordic DFU init packet',
   minidump: 'Windows minidump', windowskerneldump: 'Windows kernel dump',
+  netwarenlm: 'NetWare NLM',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }
