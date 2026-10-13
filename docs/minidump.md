@@ -5,7 +5,9 @@ minidumps and the header of Windows kernel crash dumps into the shared
 container model ([compressed streams and the container model](compressed-streams.md)).
 The processor architecture recorded in the dump is its target; dumped
 memory that lies inside a listed module image is classified as code for
-that target, and all other memory (stacks, heaps, mapped data) is opaque.
+that target, unless the module's PE headers are in the dump and place the
+range outside every executable section. That memory and all other memory
+(stacks, heaps, mapped data) is opaque.
 
 ## Implemented layouts
 
@@ -24,6 +26,7 @@ Pinned sources:
 | Win32 metadata as generated into `windows-rs`: `Win32/System/Diagnostics/Debug/mod.rs` (packed `MINIDUMP_*` structures, `MINIDUMP_VERSION`, `DUMP_HEADER32`, `DUMP_HEADER64`, `DUMP_TYPE_*`, `DMP_*` sizes) and `Win32/System/SystemInformation/mod.rs` (`PROCESSOR_ARCHITECTURE_*`) | `windows-rs` tag `0.58.0`; SHA-256 `7ef3ec757f2254c595a129700f0bd5be2f5bcc8f3041cac590497e73c1298f7b` and `a91bf11f9ab1f2f6a0c9c65bf2f2d7d30662bc811ec4990ab6dee1b17a22e4de` |
 | Google Breakpad `src/google_breakpad/common/minidump_format.h` and `src/processor/minidump.cc` | tag `v2024.02.16`; SHA-256 `6e88e2f06e4fe60b8a3dee7f1e39e001c799f69ac3f244d3e36295c38c834c3c` and `c97563995de2d442d6b7b4a195dabfe991824c7a65c889a2dd0b0bd80bfaa651` |
 | rust-minidump `minidump-common/src/format.rs` and `minidump/src/minidump.rs` | tag `v0.22.0`; SHA-256 `4d9baaa3b3b52b4311efaadb12921088141becba8890ae977f0a2807eaa7f820` and `93bedd27718981ec0f30d061d9ef87efcb0b53d4a2ab6409f7947f235ca94a43` |
+| Microsoft "PE Format" (`desktop-src/Debug/pe-format.md`): the PE signature offset at 0x3C, the COFF file header (`NumberOfSections`, `SizeOfOptionalHeader`, the 96-section loader limit), the section table (`VirtualSize`, `VirtualAddress`, `SizeOfRawData`, `Characteristics`) and the section flags `IMAGE_SCN_CNT_CODE` and `IMAGE_SCN_MEM_EXECUTE` | MicrosoftDocs/win32 commit `ca8274decead49403d70ceeed4af8d4ca74eaf11`; SHA-256 `b17271a341f9b6e3204cf3f04ed905c25c03fd4cadb7a57bd4aaf38cf56a2fe0` |
 | QEMU `include/qemu/win_dump_defs.h` and `dump/win_dump.c` | tag `v8.2.0`; SHA-256 `5317ba7740854dd0f811c8e5de96262238deffd061ad607d1fddf9d967c2111a` and `ff334a23a420d9627f0c2cb06cb7adede37afe0434d5210900ba377cae9538b9` |
 
 ### Processor architectures
@@ -70,6 +73,16 @@ otherwise taken from the first module-memory component of the same family
   module's file name and classified by the code model as raw code, never
   as a nested container (a mapped PE image is not in file layout). When the
   dump names a target, it is the component's target.
+- When the range holding a module's base address starts with a PE header
+  (`MZ`, the PE signature at the offset at 0x3C, at most 96 section headers
+  inside the range), only module ranges that overlap a section with
+  `IMAGE_SCN_CNT_CODE` or `IMAGE_SCN_MEM_EXECUTE` are code. A section
+  spans `VirtualSize` or `SizeOfRawData` bytes from the image base plus its
+  `VirtualAddress`, whichever is larger. The module's other ranges (its
+  headers, data and resources) are opaque. Section tables are read for the
+  first 4,096 modules, which bounds the memory a dump of many modules
+  sharing one header can claim; later modules, and modules whose headers
+  are not dumped, keep all their ranges as code.
 - Every other range is opaque. A range inside a thread's stack descriptor
   is labeled `(thread 0x<id> stack)`.
 - A kernel dump has one opaque component: everything after the header.
@@ -80,8 +93,9 @@ Notes: the byte-swapped layout, a non-zero header checksum (not
 verified), the processor architecture with OS version, platform ID and
 processor count, the thread count, the exception code and address (with
 the module that contains the address) and thread, the module count, and
-the memory range tally (code and opaque ranges, empty ranges skipped,
-ranges past the component limit). Metadata keys start with `minidump_`:
+the memory range tally (code and opaque ranges, module ranges outside the
+executable sections, empty ranges skipped, ranges past the component
+limit). Metadata keys start with `minidump_`:
 `version_high`, `flags`, `timestamp`, `checksum`, `streams` (stream
 types in directory order), `processor_architecture`, `processor_level`,
 `processor_revision`, `processors`, `os_version`, `platform_id`,
@@ -137,7 +151,8 @@ byte order.
 
 | ID | Assumption | Falsification probe |
 | --- | --- | --- |
-| M1 | Memory inside a listed module image is that module's code or data, and only such memory is worth classifying | `memory_outside_modules_is_opaque_and_without_modules_nothing_is_code`; on 2026-10-13 IDA's full-memory sample `pc_windbg_windmp.windmp` gave 66 module ranges classified x86 and 29 opaque |
+| M1 | Memory inside a listed module image is that module's code or data, and only such memory is worth classifying | `memory_outside_modules_is_opaque_and_without_modules_nothing_is_code`; on 2026-10-13 IDA's full-memory sample `pc_windbg_windmp.windmp` gave 66 module ranges classified x86 and 29 opaque before section tables were read (M7) |
+| M7 | A module's dumped PE header describes the module as loaded, so a range outside its executable sections holds no code | `dumped_pe_headers_limit_module_code_to_executable_sections`; on 2026-10-13 `pc_windbg_windmp.windmp` kept 14 module ranges as code and 52 became opaque, its ISA unchanged (x86), and the "ISA unknown" warnings on module ranges fell from 53 to 1. Self-modifying or unpacked code outside the listed sections would falsify it |
 | M2 | A byte-swapped signature means big-endian fields throughout (Breakpad, rust-minidump) | `byte_swapped_dump_reads_big_endian_and_takes_code_order_from_the_code`; no big-endian dump from a real big-endian host was available: not verified on real data |
 | M3 | The dump's byte order is not the code byte order; the code supplies it where the architecture leaves it open | The same test: a byte-swapped MIPS dump takes big-endian code order from the MIPS code, not from the header |
 | M4 | 4 padding bytes after a list count are alignment, not data (Breakpad, rust-minidump) | `list_counts_may_carry_four_padding_bytes` |
@@ -188,3 +203,8 @@ Java image and MCU wrapper families on the same day, `cargo test
 corpus (4,621 files), `pc_windbg_bitness_64.windmp` and
 `pc_windbg_windmp_highdll.windmp` went from inconclusive to the expected
 x86-64 and x86; no other file changed.
+
+With section tables read from dumped PE headers (same day), the suite
+passed 1,771 tests with 6 ignored, including 19 in `tests/minidump.rs`
+(the IDA sample test run with `IDA_INPUT_DIR` set) and 3 unit tests in
+`src/formats/minidump/image.rs`; every corpus outcome was unchanged.

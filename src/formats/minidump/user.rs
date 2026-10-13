@@ -8,6 +8,7 @@
 //! `TimeDateStamp` (0x14), `Flags` (0x18, u64 `MINIDUMP_TYPE`). Directory
 //! entries (12 B): `StreamType`, `DataSize`, `Rva`.
 
+use super::image::{executable_sections, Section};
 use super::regions::Regions;
 use super::streams::{
     Exception, MemoryRange, Module, Stream, SystemInfo, Thread, EXCEPTION_STREAM,
@@ -100,7 +101,7 @@ pub(super) fn parse(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     report_system(&mut c, streams.system.as_ref());
     let modules = streams.modules.as_deref().unwrap_or_default();
     let threads = streams.threads.as_deref().unwrap_or_default();
-    let map = AddressMap::new(modules, threads);
+    let map = AddressMap::new(reader, modules, threads, &streams.memory);
     if let Some(threads) = &streams.threads {
         report_threads(&mut c, threads);
     }
@@ -367,12 +368,20 @@ fn report_system(c: &mut Container<'_>, system: Option<&SystemInfo>) {
 struct AddressMap<'m> {
     modules: &'m [Module],
     module_images: Regions,
+    /// Per module, the executable sections its dumped PE headers list, or
+    /// `None` when the headers are not in the dump (or not a PE header).
+    module_code: Vec<Option<Vec<Section>>>,
     threads: &'m [Thread],
     stacks: Regions,
 }
 
 impl<'m> AddressMap<'m> {
-    fn new(modules: &'m [Module], threads: &'m [Thread]) -> Self {
+    fn new(
+        reader: Reader<'_>,
+        modules: &'m [Module],
+        threads: &'m [Thread],
+        memory: &[MemoryRange],
+    ) -> Self {
         let module_images = Regions::new(modules.iter().map(|m| (m.base, m.end())));
         let stacks = Regions::new(threads.iter().map(|t| {
             let end = t.stack_address.saturating_add(u64::from(t.stack_size));
@@ -381,8 +390,21 @@ impl<'m> AddressMap<'m> {
         Self {
             modules,
             module_images,
+            module_code: module_code(reader, modules, memory),
             threads,
             stacks,
+        }
+    }
+
+    /// Whether `range`, inside the image of module `index`, may hold code:
+    /// it overlaps an executable section, or the module's section table is
+    /// not known.
+    fn may_hold_code(&self, index: usize, range: &MemoryRange) -> bool {
+        match self.module_code.get(index) {
+            Some(Some(sections)) => sections
+                .iter()
+                .any(|s| s.overlaps(range.address, range.end())),
+            _ => true,
         }
     }
 
@@ -398,6 +420,41 @@ impl<'m> AddressMap<'m> {
             .containing(start, end)
             .map(|index| &threads[index])
     }
+}
+
+/// The executable sections of the first [`MAX_COMPONENTS`] modules, read
+/// from the PE headers in the memory range that holds each module's base
+/// address. The cap bounds the section lists a dump of many modules that
+/// share one header can make. A range whose bytes are not in the file is
+/// skipped here; `push_memory` reports it in list order.
+fn module_code(
+    reader: Reader<'_>,
+    modules: &[Module],
+    memory: &[MemoryRange],
+) -> Vec<Option<Vec<Section>>> {
+    let ranges = Regions::new(memory.iter().map(|r| (r.address, r.end())));
+    modules
+        .iter()
+        .take(MAX_COMPONENTS)
+        .map(|module| dumped_sections(reader, &ranges, memory, module))
+        .collect()
+}
+
+/// The executable sections of `module`, from the PE headers at its base
+/// address in the dumped memory, if the dump holds them.
+fn dumped_sections(
+    reader: Reader<'_>,
+    ranges: &Regions,
+    memory: &[MemoryRange],
+    module: &Module,
+) -> Option<Vec<Section>> {
+    let index = ranges.containing(module.base, module.base.checked_add(1)?)?;
+    let range = &memory[index];
+    let bytes = reader
+        .bytes(range.offset, range.size, "memory range")
+        .ok()?;
+    let skip = usize::try_from(module.base - range.address).ok()?;
+    executable_sections(bytes.get(skip..)?, module.base)
 }
 
 /// The thread count note and metadata.
@@ -494,6 +551,8 @@ fn report_modules(c: &mut Container<'_>, modules: Option<&[Module]>) {
 #[derive(Debug, Default)]
 struct MemoryTally {
     code: usize,
+    /// Ranges inside a module image but outside its executable sections.
+    module_data: usize,
     opaque: usize,
     empty: usize,
     unlisted: usize,
@@ -502,8 +561,9 @@ struct MemoryTally {
 }
 
 /// One child per non-empty memory range, at its stored offset. Ranges
-/// inside a module image are code for the dump's target; the rest
-/// (stacks, heaps, mapped data) are opaque.
+/// inside a module image are code for the dump's target, unless the
+/// module's PE headers place them outside every executable section; those
+/// and the rest (stacks, heaps, mapped data) are opaque.
 fn push_memory<'a>(
     c: &mut Container<'a>,
     reader: Reader<'a>,
@@ -527,11 +587,16 @@ fn push_memory<'a>(
         let place = format!("Memory at 0x{:X}", range.address);
         let child = if let Some(index) = map.module_index(range.address, range.end()) {
             let label = format!("{place} ({})", module_label(&map.modules[index], index));
-            tally.code += 1;
-            let code = Child::stored(label, range.offset, bytes).as_code();
-            match c.target {
-                Some(target) => code.with_target(target),
-                None => code,
+            if map.may_hold_code(index, range) {
+                tally.code += 1;
+                let code = Child::stored(label, range.offset, bytes).as_code();
+                match c.target {
+                    Some(target) => code.with_target(target),
+                    None => code,
+                }
+            } else {
+                tally.module_data += 1;
+                Child::opaque(label, range.offset, bytes)
             }
         } else {
             let label = match map.stack_owner(range.address, range.end()) {
@@ -555,6 +620,12 @@ fn report_memory(c: &mut Container<'_>, ranges: usize, tally: &MemoryTally) {
         tally.code,
         tally.opaque
     ));
+    if tally.module_data > 0 {
+        c.notes.push(format!(
+            "{} inside module images but outside the executable sections their PE headers list opaque",
+            count(tally.module_data, "range", "ranges")
+        ));
+    }
     if tally.empty > 0 {
         c.notes
             .push(format!("{} empty memory ranges skipped", tally.empty));

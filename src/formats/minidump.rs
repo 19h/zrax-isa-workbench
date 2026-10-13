@@ -30,13 +30,16 @@
 //! `ProcessorArchitecture` is the dump's own target field, and a kernel
 //! dump's `MachineImageType` is read as an `IMAGE_FILE_MACHINE_*` value
 //! (an assumption recorded in `docs/minidump.md`). Memory that lies inside
-//! a listed module image goes to the code model under that target; every
-//! other range (stacks, heaps, mapped data) is opaque.
+//! a listed module image goes to the code model under that target, unless
+//! the module's PE headers are in the dump and place the range outside its
+//! executable sections; that memory and every other range (stacks, heaps,
+//! mapped data) is opaque.
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::container::{Container, Target};
 use crate::types::{Endianness, FileFormat, Isa};
 
+mod image;
 mod kernel;
 mod regions;
 mod streams;

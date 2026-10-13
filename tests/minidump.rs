@@ -1,10 +1,11 @@
-//! Windows minidumps and kernel crash dumps: the header, stream directory
-//! and streams (system information, threads, modules with names and file
-//! versions, the exception, the memory and 64-bit memory lists), the
-//! processor architecture as target, module memory as code components and
-//! other memory as opaque components, byte-swapped dumps, corrupted fields,
-//! kernel dump headers, truncation and mutation sweeps, and the real
-//! samples in `IDA_INPUT_DIR`.
+//! Windows minidumps and kernel crash dumps: the header, stream directory and
+//! streams (system information, threads, modules with names and file versions,
+//! the exception, the memory and 64-bit memory lists), the processor
+//! architecture as target, module memory as code components (limited to
+//! executable sections when the module's PE headers are dumped) and other
+//! memory as opaque components, byte-swapped dumps, corrupted fields, kernel
+//! dump headers, truncation and mutation sweeps, and the real samples in
+//! `IDA_INPUT_DIR`.
 
 use zrax::{
     detect_payload, ClassifierOptions, ContainedArch, DetectionPayload, Endianness, FileFormat,
@@ -750,6 +751,145 @@ fn memory_outside_modules_is_opaque_and_without_modules_nothing_is_code() {
     });
     let p = classify(&straddling.data);
     assert!(p.slices.iter().all(|s| matches!(s.isa, Isa::Unknown(_))));
+}
+
+/// `IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ` and
+/// `IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ |
+/// IMAGE_SCN_MEM_WRITE` (Microsoft "PE Format", "Section Flags").
+const SECTION_TEXT: u32 = 0x6000_0020;
+const SECTION_DATA: u32 = 0xC000_0040;
+/// Where the PE header page's section table starts: `e_lfanew` 0x80, the
+/// 4-byte signature, the 20-byte COFF header and a 0xF0-byte optional
+/// header.
+const SECTION_TABLE: usize = 0x80 + 4 + 20 + 0xF0;
+
+/// One section header: `VirtualAddress` relative to the image base,
+/// `VirtualSize` and `Characteristics`.
+struct PeSection {
+    address: u32,
+    size: u32,
+    characteristics: u32,
+}
+
+/// The first page of a loaded PE image (Microsoft "PE Format"): `MZ`,
+/// `e_lfanew` 0x80 at 0x3C, `PE\0\0` at 0x80, the COFF header
+/// (`Machine` AMD64, `NumberOfSections`, `SizeOfOptionalHeader` 0xF0),
+/// then 40-byte section headers (`VirtualSize` at 8, `VirtualAddress` at
+/// 12, `SizeOfRawData` at 16, `Characteristics` at 36).
+fn pe_header_page(sections: &[PeSection]) -> Vec<u8> {
+    let mut page = vec![0u8; 0x1000];
+    page[..2].copy_from_slice(b"MZ");
+    put_u32(&mut page, 0x3C, 0x80);
+    page[0x80..0x84].copy_from_slice(b"PE\0\0");
+    page[0x84..0x86].copy_from_slice(&0x8664u16.to_le_bytes());
+    let count = u16::try_from(sections.len()).expect("few sections");
+    page[0x86..0x88].copy_from_slice(&count.to_le_bytes());
+    page[0x94..0x96].copy_from_slice(&0xF0u16.to_le_bytes());
+    for (i, section) in sections.iter().enumerate() {
+        let entry = SECTION_TABLE + i * 40;
+        put_u32(&mut page, entry + 8, section.size);
+        put_u32(&mut page, entry + 12, section.address);
+        put_u32(&mut page, entry + 16, section.size);
+        put_u32(&mut page, entry + 36, section.characteristics);
+    }
+    page
+}
+
+/// The default process with `app.exe`'s header page dumped, and a data
+/// page at `APP_BASE + 0x3000`: `.text` covers the code range, `.data`
+/// the data page.
+fn dump_with_app_headers(sections: &[PeSection]) -> Dump {
+    let mut spec = amd64_spec();
+    spec.memory.insert(
+        0,
+        RangeSpec {
+            address: APP_BASE,
+            bytes: pe_header_page(sections),
+        },
+    );
+    spec.memory.push(RangeSpec {
+        address: APP_BASE + 0x3000,
+        bytes: vec![0; 0x200],
+    });
+    minidump(&spec)
+}
+
+fn app_sections() -> [PeSection; 2] {
+    [
+        PeSection {
+            address: 0x1000,
+            size: 0x2000,
+            characteristics: SECTION_TEXT,
+        },
+        PeSection {
+            address: 0x3000,
+            size: 0x1000,
+            characteristics: SECTION_DATA,
+        },
+    ]
+}
+
+#[test]
+fn dumped_pe_headers_limit_module_code_to_executable_sections() {
+    let dump = dump_with_app_headers(&app_sections());
+    let p = classify(&dump.data);
+    assert_eq!(p.primary.isa, Isa::X86_64);
+    assert_eq!(slice(&p, CODE_LABEL).isa, Isa::X86_64);
+    let header = slice(&p, "Memory at 0x140000000 (app.exe)");
+    assert!(matches!(header.isa, Isa::Unknown(_)));
+    assert_eq!(header.offset, dump.range_offsets[0] as u64);
+    let data = slice(&p, "Memory at 0x140003000 (app.exe)");
+    assert!(matches!(data.isa, Isa::Unknown(_)));
+    assert!(has_note(
+        &p,
+        "1 inside module images classified as code, 2 other ranges (stacks, heaps, data) opaque"
+    ));
+    assert!(has_note(
+        &p,
+        "2 ranges inside module images but outside the executable sections their PE headers list opaque"
+    ));
+    assert!(!p.notes.iter().any(|n| n.message.contains("ISA unknown")));
+}
+
+#[test]
+fn module_memory_stays_code_without_a_usable_section_table() {
+    // No executable section: the code range is module data.
+    let data_only = dump_with_app_headers(&[PeSection {
+        address: 0x3000,
+        size: 0x1000,
+        characteristics: SECTION_DATA,
+    }]);
+    let p = classify(&data_only.data);
+    assert!(matches!(slice(&p, CODE_LABEL).isa, Isa::Unknown(_)));
+    assert!(has_note(&p, "3 ranges inside module images but outside"));
+    // A header page without `MZ` says nothing: every module range is code.
+    let mut spec = amd64_spec();
+    spec.memory.insert(
+        0,
+        RangeSpec {
+            address: APP_BASE,
+            bytes: vec![0; 0x1000],
+        },
+    );
+    let p = classify(&minidump(&spec).data);
+    assert_eq!(slice(&p, CODE_LABEL).isa, Isa::X86_64);
+    assert!(has_note(&p, "2 inside module images classified as code"));
+    assert!(!has_note(&p, "outside the executable sections"));
+}
+
+#[test]
+fn pe_header_mutations_never_panic() {
+    let dump = dump_with_app_headers(&app_sections());
+    let header = dump.range_offsets[0];
+    let end = header + SECTION_TABLE + 2 * 40;
+    for at in header..end {
+        for value in [0x00, 0xFF, dump.data[at] ^ 0x01, dump.data[at] ^ 0x80] {
+            let mut mutated = dump.data.clone();
+            mutated[at] = value;
+            let p = classify(&mutated);
+            assert_eq!(p.format.format, FileFormat::Minidump, "byte 0x{at:X}");
+        }
+    }
 }
 
 #[test]
