@@ -321,6 +321,17 @@ fn add_efi_stub(data: &mut [u8], machine: u16) {
 }
 
 #[test]
+fn powerpc_uboot_binaries_with_the_magic_word_are_not_uimages() {
+    // U-Boot ppc4xx start.S: the magic word, then the version string.
+    let mut binary = 0x2705_1956u32.to_be_bytes().to_vec();
+    binary.extend_from_slice(b"U-Boot 2015.10 (Oct 28 2025 - 15:24:48)\0");
+    binary.resize(0x200, 0);
+    let uimage = uimage(ARCH_ARM, TYPE_KERNEL, COMP_NONE, &[0; 16]);
+    assert!(format!("{:?}", zrax::formats::detect_format(&uimage)).contains("UImage"));
+    assert!(!format!("{:?}", zrax::formats::detect_format(&binary)).contains("UImage"));
+}
+
+#[test]
 fn efi_stub_kernels_are_kernel_images_unless_only_headers_are_present() {
     let mut image = bzimage(0x020f, 0x0001, &gzip(&elf(2, false, EM_X86_64)));
     add_efi_stub(&mut image, 0x8664);

@@ -649,13 +649,25 @@ pub fn detect_pe_wrapped(data: &[u8]) -> Option<KernelFormat> {
     }
 }
 
+/// What PowerPC U-Boot binaries put after the magic word: the start of
+/// `version_string`.
+const UBOOT_VERSION_PREFIX: &[u8; 7] = b"U-Boot ";
+
+/// Is this a raw PowerPC U-Boot binary rather than a uImage? U-Boot's
+/// `arch/powerpc/cpu/ppc4xx/start.S` (v2015.10) emits `.long 0x27051956`
+/// and then `version_string`, which starts with `U-Boot `; in a uImage
+/// those bytes are the header CRC.
+fn is_uboot_binary(data: &[u8]) -> bool {
+    data.get(4..4 + UBOOT_VERSION_PREFIX.len()) == Some(UBOOT_VERSION_PREFIX.as_slice())
+}
+
 /// Detect kernel/boot format.
 pub fn detect(data: &[u8]) -> Option<KernelFormat> {
     if data.len() < 4 {
         return None;
     }
     let magic_be = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-    if magic_be == UIMAGE_MAGIC && data.len() >= UIMAGE_HEADER_SIZE {
+    if magic_be == UIMAGE_MAGIC && data.len() >= UIMAGE_HEADER_SIZE && !is_uboot_binary(data) {
         return Some(KernelFormat::UImage {
             arch: data[0x1D],
             os: data[0x1C],

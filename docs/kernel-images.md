@@ -81,6 +81,7 @@ BE8 kernels) is not cross-checked against it.
 | x86 kernels before boot protocol 2.08 | ISA x86 from the boot code; kernel width not determined |
 | Arm zImages without a decodable payload | Classified from the header and decompressor code only |
 | Old gzip magic `1F 9E` | Not decoded |
+| Raw PowerPC U-Boot binaries, which start with the uImage magic followed by `U-Boot ` (U-Boot `arch/powerpc/cpu/ppc4xx/start.S`) | Not taken for a uImage; classified as raw code (QEMU's `u-boot-sam460.bin` reports PowerPC on 2026-10-13) |
 
 ## Verification
 
