@@ -20,6 +20,7 @@
 //! - Raw binary analysis
 
 pub mod aif;
+pub mod adf;
 pub mod amiga_hunk;
 pub mod android;
 pub mod aof;
@@ -508,6 +509,22 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     // TI C55x serial boot table: validate structure because the magic is only 16 bits.
     if ti_c55x::detect(data) {
         return DetectedFormat::TiC55xBoot;
+    }
+
+    // Amiga disk images: `DOS` at offset 0 with a valid root block checksum
+    // in the middle of an exact floppy or hardfile size (or a valid boot
+    // block checksum over boot code), or `RDSK` with a valid checksum in one
+    // of the first 16 blocks (after block 0 also a valid first partition
+    // block, so a disk image inside a tar archive stays the archive's
+    // member). Before the container families that probe
+    // offsets inside the image (SNDH at 12, headers at 0x100, superblocks at
+    // 0x400 and 0x438, descriptors at 0x8000): the boot code and the files
+    // stored in FFS data blocks may hold their bytes, while this check
+    // cannot claim their inputs.
+    if let Some(layout) = adf::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Adf(layout),
+        };
     }
 
     // Automotive flash containers: ODX root element, CUW magic, or an RWD

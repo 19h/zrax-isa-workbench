@@ -61,6 +61,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an Amiga disk image (ADF floppy, Rigid Disk Block hard
+    /// disk or hardfile).
+    #[error("Amiga disk image parse error: {message}")]
+    AdfParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a Commodore disk or tape image (D64, D71, D81, T64).
     #[error("Commodore image parse error: {message}")]
     CbmParseError {

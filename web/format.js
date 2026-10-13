@@ -123,6 +123,7 @@ const FORMAT_NAMES = {
   qcow2: 'QCOW2 disk image', vmdk: 'VMDK disk image', vhd: 'VHD disk image', vhdx: 'VHDX disk image', vdi: 'VDI disk image',
   gcz: 'GCZ disc image', ciso: 'CISO disc image', wbfs: 'WBFS image', cso: 'CSO disc image',
   d64: 'D64 disk image', d71: 'D71 disk image', d81: 'D81 disk image', t64: 'T64 tape image',
+  adf: 'Amiga disk image (ADF)', amigahdf: 'Amiga hard disk image',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

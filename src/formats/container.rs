@@ -144,6 +144,8 @@ pub enum Kind {
     DiscImage(super::discimg::Layout),
     /// A Commodore disk or tape image: D64, D71, D81 or T64.
     Cbm(super::cbm::Layout),
+    /// An Amiga disk image: ADF floppy, Rigid Disk Block disk or hardfile.
+    Adf(super::adf::Layout),
 }
 
 impl Kind {
@@ -194,6 +196,7 @@ impl Kind {
             Self::VirtualDisk(layout) => layout.format(),
             Self::DiscImage(layout) => layout.format(),
             Self::Cbm(layout) => layout.format(),
+            Self::Adf(layout) => layout.format(),
         }
     }
 
@@ -244,6 +247,7 @@ impl Kind {
             Self::VirtualDisk(layout) => layout.label(),
             Self::DiscImage(layout) => layout.label(),
             Self::Cbm(layout) => layout.label(),
+            Self::Adf(layout) => layout.label(),
         }
     }
 
@@ -294,6 +298,7 @@ impl Kind {
             Self::VirtualDisk(layout) => layout.is_weak(),
             Self::DiscImage(layout) => layout.is_weak(),
             Self::Cbm(layout) => layout.is_weak(),
+            Self::Adf(layout) => layout.is_weak(),
         }
     }
 }
@@ -349,6 +354,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::VirtualDisk(layout) => super::vdisk::parse_container(data, layout),
         Kind::DiscImage(layout) => super::discimg::parse_container(data, layout),
         Kind::Cbm(layout) => super::cbm::parse_container(data, layout),
+        Kind::Adf(layout) => super::adf::parse_container(data, layout),
     }
 }
 

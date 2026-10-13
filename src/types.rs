@@ -1174,6 +1174,11 @@ pub enum FileFormat {
     D81,
     /// Commodore T64 tape image (`.t64`)
     T64,
+    // Amiga disk images
+    /// Amiga Disk File: a floppy image (OFS or FFS volume, or bootable)
+    Adf,
+    /// Amiga hard disk image: Rigid Disk Block disk or hardfile
+    AmigaHdf,
 }
 
 impl fmt::Display for FileFormat {
@@ -1466,6 +1471,9 @@ impl fmt::Display for FileFormat {
             FileFormat::D71 => write!(f, "D71 disk image"),
             FileFormat::D81 => write!(f, "D81 disk image"),
             FileFormat::T64 => write!(f, "T64 tape image"),
+            // Amiga disk images
+            FileFormat::Adf => write!(f, "Amiga disk image (ADF)"),
+            FileFormat::AmigaHdf => write!(f, "Amiga hard disk image"),
         }
     }
 }

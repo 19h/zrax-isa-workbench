@@ -225,7 +225,11 @@ containers decode their discs; see [disc image containers](discimg.md).
 Commodore disk and tape images followed: D64 (35 and 40 tracks), D71, D81
 and T64, with PRG files as 6502-family code after their load address;
 42-track D64, D67, D80/D82, G64/P64, X64 and the CMD formats are not
-implemented; see [Commodore disk and tape images](cbm.md).
+implemented; see [Commodore disk and tape images](cbm.md). Amiga disk
+images followed: ADF floppies (OFS/FFS, `DOS\0`-`DOS\7`; strong on `DOS`
+plus the root block checksum; boot block code as 68000 code), bootable
+non-DOS floppies, Rigid Disk Block disks and unpartitioned hardfiles; see
+[Amiga disk images](adf.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as

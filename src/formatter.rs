@@ -817,6 +817,8 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::D71 => "D71 disk image",
         FileFormat::D81 => "D81 disk image",
         FileFormat::T64 => "T64 tape image",
+        FileFormat::Adf => "Amiga disk image (ADF)",
+        FileFormat::AmigaHdf => "Amiga hard disk image",
     }
 }
 
