@@ -21,9 +21,11 @@
 //! (space for text, `*` for binary), the file name and a newline (GNU
 //! coreutils 9.5 manual, "md5sum invocation" and "cksum output modes").
 //! That convention comes from the tools that flash such packages (Odin,
-//! Heimdall), not from a Samsung publication; the digest is not verified.
+//! Heimdall), not from a Samsung publication. The digest is checked
+//! against the archive bytes; a mismatch is noted.
 
 use super::*;
+use std::fmt::Write as _;
 
 /// Header and data block size.
 const BLOCK_SIZE: usize = 512;
@@ -300,9 +302,14 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     push_notes(format_name, &tally, zero_blocks, &mut c);
     match md5sum_trailer(&data[c.consumed..]) {
         Some(trailer) => {
+            let computed = hex_text(&checksum::md5(&data[..c.consumed]));
+            let check = if computed.eq_ignore_ascii_case(trailer.digest) {
+                "MD5 of the archive verified"
+            } else {
+                "MD5 does not match the archive"
+            };
             c.notes.push(format!(
-                "md5sum line for {} after the archive (Samsung .tar.md5 convention); MD5 not \
-                 verified",
+                "md5sum line for {} after the archive (Samsung .tar.md5 convention); {check}",
                 trailer.name
             ));
             c.push_metadata("tar_md5_trailer", "MD5 in the trailer line", trailer.digest);
@@ -317,6 +324,14 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
 
 fn is_zero(block: &[u8]) -> bool {
     block.iter().all(|b| *b == 0)
+}
+
+/// Lowercase hex text of `bytes`.
+fn hex_text(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut text, b| {
+        let _ = write!(text, "{b:02x}");
+        text
+    })
 }
 
 /// An `md5sum` line after the archive.

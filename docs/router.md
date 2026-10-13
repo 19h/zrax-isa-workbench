@@ -21,10 +21,10 @@ directory `src/`.
 | --- | --- | --- | --- | --- |
 | `trx` | Broadcom TRX `HDR0`: length, CRC-32, flags, version 1 (28-byte header, three partition offsets) or 2 (32-byte header, four offsets, the fourth a Cybertan code header) | Strong: `HDR0` at offset 0 | CRC-32 verified | `trx.c` ("mjn3's trx replacement - v0.81.1"), `otrx.c`, `asustrx.c`; Linux v6.12 `drivers/mtd/parsers/parser_trx.c` (partition roles); Broadcom `include/trxhdr.h` (flag names, 36-byte `BCMTRXV2` header) |
 | `netgearchk` | Netgear CHK: header length, region and version digits, kernel and root filesystem lengths and checksums, image and header checksums, board ID | Strong: `2A 23 24 5E` at offset 0 | All four Netgear checksums verified | `mkchkimg.c` |
-| `seama` | D-Link SEAMA entity (header, MD5, metadata, image) or seal (header with image size 0, metadata, then whole entities) | Strong: `5E A3 A4 17` at offset 0 | MD5 present, not verified (the crate has no MD5 implementation) | `seama.h`, `seama.c`, `oseama.c` |
-| `tplink` | TP-Link header, `mktplinkfw` layout (version word 1, or 2 with `-m 2`): vendor and firmware version strings, hardware ID and revision, region, load and entry address, kernel at 0x200, root filesystem | Weak: complete header structure | Salted MD5 present, not verified | `mktplinkfw.c`, `mktplinkfw-lib.c` |
-| `tplink` | TP-Link header, `mktplinkfw2` layout (version word 2 or 3): firmware version string, hardware ID, revision and additional version, constants `0x55AA` and `0xA5`, optional prepended bootloader | Weak: complete header structure | Salted MD5 present, not verified | `mktplinkfw2.c`, `mktplinkfw-lib.c` |
-| `tplink` | TP-Link SafeLoader factory image: size, salted MD5, vendor, cloud or unspecified header, `fwup-ptn` partition table at 0x1014 | Weak: size, header type, table and partition bounds | Salted MD5 present, not verified | `tplink-safeloader.c` (`generate_factory_image`, `put_partitions`, `safeloader_parse_image`, `read_partition_table`) |
+| `seama` | D-Link SEAMA entity (header, MD5, metadata, image) or seal (header with image size 0, metadata, then whole entities) | Strong: `5E A3 A4 17` at offset 0 | Image MD5 verified (a mismatch is a parse error, as `seama -x` rejects it) | `seama.h`, `seama.c`, `oseama.c` |
+| `tplink` | TP-Link header, `mktplinkfw` layout (version word 1, or 2 with `-m 2`): vendor and firmware version strings, hardware ID and revision, region, load and entry address, kernel at 0x200, root filesystem | Weak: complete header structure | Salted MD5 verified with the `mktplinkfw.c` salts (normal or bootloader by `boot_len`); a mismatch is noted, since other tools may salt differently | `mktplinkfw.c`, `mktplinkfw-lib.c` |
+| `tplink` | TP-Link header, `mktplinkfw2` layout (version word 2 or 3): firmware version string, hardware ID, revision and additional version, constants `0x55AA` and `0xA5`, optional prepended bootloader | Weak: complete header structure | Salted MD5 verified with the `mktplinkfw2.c` salts, which differ from `mktplinkfw`'s; a mismatch is noted | `mktplinkfw2.c`, `mktplinkfw-lib.c` |
+| `tplink` | TP-Link SafeLoader factory image: size, salted MD5, vendor, cloud or unspecified header, `fwup-ptn` partition table at 0x1014 | Weak: size, header type, table and partition bounds | MD5 of the salt and the bytes from 0x14 verified (`put_md5`); a mismatch is noted | `tplink-safeloader.c` (`generate_factory_image`, `put_partitions`, `safeloader_parse_image`, `read_partition_table`) |
 
 The format variant (`format.variant_name`) is the layout label: `Broadcom
 TRX`, `Netgear CHK`, `D-Link SEAMA`, `TP-Link header (mktplinkfw layout)`,
@@ -113,8 +113,15 @@ header byte order is reported as code byte order.
   bits; derived check value `0x091501DD` for `123456789`) of the kernel, the
   root filesystem, both together, and the 40-byte header with its checksum
   field zero followed by the board ID. Every mismatch is a parse error.
-- SEAMA MD5, TP-Link salted MD5 and SafeLoader salted MD5 are listed in
-  notes and metadata as not verified.
+- SEAMA: the MD5 of the image is verified; a mismatch is a parse error.
+- TP-Link `mktplinkfw` and `mktplinkfw2`: as `inspect_fw` does, the MD5
+  field is replaced by the layout's salt (the bootloader salt when
+  `boot_len` is not zero) and the whole file is hashed. SafeLoader: the MD5
+  of `md5_salt` followed by the bytes from 0x14 to the image size
+  (`put_md5`). Both are recognized from their structure, so a mismatch is
+  a note, not an error. On 2026-10-13 the tool-made fixtures `tplink-v1.bin`,
+  `tplink-v2.bin`, `safeloader.bin` and the entity in `image.seama` all
+  verified.
 
 All of these are integrity checks; none authenticates the image.
 
@@ -173,7 +180,7 @@ All of these are integrity checks; none authenticates the image.
 
 | Boundary | Behavior |
 | --- | --- |
-| MD5 digests (SEAMA, TP-Link, SafeLoader) | Reported as present and not verified; the crate has no MD5 implementation |
+| TP-Link bootloader salts | Taken from firmware-utils `0179ab1e` source; no fixture with a bootloader exercises them |
 | Broadcom 36-byte TRX v2 header (`TRX_V2_MAX_OFFSETS 5`) | A first partition at 0x24 gets a note; the fifth offset is not read and its bytes stay in the fourth partition; its CRC convention is not established |
 | ASUS TRX tail (`asustrx`) | The CRC to the end of the file is accepted; the 64-byte tail (version, product ID) is not parsed |
 | Alternate TRX magics (`brcm,trx-magic`, `trx -M`) | Not recognized |

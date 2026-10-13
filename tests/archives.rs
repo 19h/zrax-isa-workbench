@@ -1201,18 +1201,28 @@ fn data_after_the_tar_end_is_padding_a_recognized_component_or_an_error() {
     assert!(has_note(&p, "are listed as a separate component"));
 
     // Samsung `.tar.md5` packages append the archive's md5sum line.
+    let digest = zrax::formats::checksum::md5(&archive)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     let mut samsung = archive.clone();
-    samsung.extend_from_slice(b"0123456789abcdef0123456789ABCDEF  AP_TEST.tar\n");
+    samsung.extend_from_slice(format!("{digest}  AP_TEST.tar\n").as_bytes());
     let p = classify(&samsung).unwrap();
     assert_eq!(p.format.format, FileFormat::Tar);
     assert!(has_note(
         &p,
-        "md5sum line for AP_TEST.tar after the archive (Samsung .tar.md5 convention); MD5 not \
-         verified"
+        "md5sum line for AP_TEST.tar after the archive (Samsung .tar.md5 convention); MD5 of the \
+         archive verified"
     ));
     assert!(matches!(
         metadata(&p, "tar_md5_trailer"),
-        Some(MetadataValue::String(s)) if s == "0123456789abcdef0123456789ABCDEF"
+        Some(MetadataValue::String(s)) if *s == digest
+    ));
+    let mut stale = archive.clone();
+    stale.extend_from_slice(b"0123456789abcdef0123456789ABCDEF  AP_TEST.tar\n");
+    assert!(has_note(
+        &classify(&stale).unwrap(),
+        "MD5 does not match the archive"
     ));
     for bad in [
         &b"0123456789abcdef0123456789abcde  short.tar\n"[..],

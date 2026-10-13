@@ -109,8 +109,9 @@ file as Linux initramfs counts them. No archive field is a code byte order.
   `Data after the archive` (a second tar, a compressed initramfs archive).
   A tar archive may instead be followed by exactly one `md5sum` line (32
   hex digits, two spaces or a space and `*`, a printable ASCII name of up
-  to 255 B, a newline), as Samsung `.tar.md5` packages are; it is noted
-  and its digest reported as `tar_md5_trailer` metadata, not verified.
+  to 255 B, a newline), as Samsung `.tar.md5` packages are; it is noted,
+  its digest is reported as `tar_md5_trailer` metadata and compared with
+  the MD5 of the archive bytes before it (a mismatch is noted).
   Anything else is an error.
 - A member is listed only when its first 4 KiB, and then its whole
   contents, are a recognized format.

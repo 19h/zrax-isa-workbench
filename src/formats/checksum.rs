@@ -334,6 +334,13 @@ const MD5_SHIFTS: [[u32; 4]; 4] = [
 /// MD5 message block size in bytes.
 const MD5_BLOCK: usize = 64;
 
+/// MD5 (RFC 1321) of `data`.
+pub fn md5(data: &[u8]) -> [u8; 16] {
+    let mut hasher = Md5::new();
+    hasher.update(data);
+    hasher.finish()
+}
+
 /// Incremental MD5 (RFC 1321), for checksums that formats store to detect
 /// corruption (the ESP-IDF partition table MD5 record). It is not collision
 /// resistant and is never evidence of authenticity.

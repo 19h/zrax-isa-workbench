@@ -3,7 +3,8 @@
 //!
 //! Header, network byte order: magic `0x5EA3A417` (0), reserved (4, 16
 //! bits), metadata size (6, 16 bits), image size (8). An entity (image size
-//! above zero) continues with the MD5 digest of the image (12, 16 bytes),
+//! above zero) continues with the MD5 digest of the image (12, 16 bytes;
+//! verified, as `seama.c` `parse_seama_header` does),
 //! the metadata and the image. A seal (image size zero) has no digest; its
 //! metadata is followed by entities, each a complete SEAMA file
 //! (`seama -s` copies them in whole). Metadata is NUL-terminated
@@ -96,17 +97,26 @@ fn entity<'a>(data: &'a [u8], header: &Header) -> Result<Container<'a>> {
         )));
     }
 
+    // `seama -x` rejects an entity whose digest does not match its image.
+    let computed = checksum::md5(image);
+    if computed[..] != *digest {
+        return Err(error(format!(
+            "Invalid SEAMA image MD5 {}, computed {}",
+            hex_digest(digest),
+            hex_digest(&computed)
+        )));
+    }
     let digest = hex_digest(digest);
     let mut c = Container::new(FileFormat::Seama, "D-Link SEAMA entity", "seama");
     c.consumed = end;
     c.notes.push(format!(
-        "D-Link SEAMA entity; {} image; image MD5 {digest} not verified (no MD5 implementation); the header names no architecture",
+        "D-Link SEAMA entity; {} image; image MD5 {digest} verified (an integrity check, not authentication); the header names no architecture",
         size_text(header.image_size)
     ));
     if let Some(note) = metadata_note(metadata) {
         c.notes.push(note);
     }
-    c.push_metadata("seama_md5", "Image MD5 (not verified)", digest);
+    c.push_metadata("seama_md5", "Image MD5 (verified)", digest);
     c.push_metadata(
         "seama_metadata_size",
         "Metadata size (B)",

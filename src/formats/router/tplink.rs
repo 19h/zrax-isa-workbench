@@ -76,6 +76,25 @@ const V2_UNSET: u32 = 0xffff_ffff;
 
 const MD5_SIZE: usize = 16;
 
+/// What `mktplinkfw` stores in the MD5 field while it hashes the whole
+/// file: one salt for images without a bootloader, one for images with one
+/// (firmware-utils `0179ab1e`, `mktplinkfw.c` `md5salt_normal` and
+/// `md5salt_boot`, used by `fill_header` and checked by `inspect_fw`).
+const V1_SALT_NORMAL: [u8; MD5_SIZE] = [
+    0xdc, 0xd7, 0x3a, 0xa5, 0xc3, 0x95, 0x98, 0xfb, 0xdd, 0xf9, 0xe7, 0xf4, 0x0e, 0xae, 0x47, 0x38,
+];
+const V1_SALT_BOOT: [u8; MD5_SIZE] = [
+    0x8c, 0xef, 0x33, 0x5b, 0xd5, 0xc5, 0xce, 0xfa, 0xa7, 0x9c, 0x28, 0xda, 0xb2, 0xe9, 0x0f, 0x42,
+];
+
+/// The `mktplinkfw2.c` salts, which differ from `mktplinkfw`'s in four bytes.
+const V2_SALT_NORMAL: [u8; MD5_SIZE] = [
+    0xdc, 0xd7, 0x3a, 0xa5, 0xc3, 0x95, 0x98, 0xfb, 0xdc, 0xf9, 0xe7, 0xf4, 0x0e, 0xae, 0x47, 0x37,
+];
+const V2_SALT_BOOT: [u8; MD5_SIZE] = [
+    0x8c, 0xef, 0x33, 0x5f, 0xd5, 0xc5, 0xce, 0xfa, 0xac, 0x9c, 0x28, 0xda, 0xb2, 0xe9, 0x0f, 0x42,
+];
+
 /// JFFS2 end-of-filesystem mark that `-j` writes at 4 KiB and 64 KiB
 /// boundaries after the root filesystem (`pad_jffs2` in
 /// `mktplinkfw-lib.c`).
@@ -465,14 +484,42 @@ pub(super) fn is_valid(data: &[u8], generation: Generation) -> bool {
     read_header(data, generation).is_ok()
 }
 
-/// The MD5 note: unset in combined v1 images, otherwise present and not
-/// checked.
-fn md5_text(md5: &[u8]) -> String {
+/// Does the stored MD5 match the salted MD5 of the whole file? As
+/// `inspect_fw` checks it, the MD5 field holds the layout's salt for the
+/// header's bootloader length while the file is hashed.
+fn has_salted_md5(data: &[u8], header: &Header<'_>) -> Result<bool> {
+    let fields = match header.generation {
+        Generation::V1 => &V1_FIELDS,
+        Generation::V2 => &V2_FIELDS,
+    };
+    let with_bootloader = be_u32(data, fields.boot_len)? != 0;
+    let salt = match (header.generation, with_bootloader) {
+        (Generation::V1, false) => &V1_SALT_NORMAL,
+        (Generation::V1, true) => &V1_SALT_BOOT,
+        (Generation::V2, false) => &V2_SALT_NORMAL,
+        (Generation::V2, true) => &V2_SALT_BOOT,
+    };
+    let mut hasher = checksum::Md5::new();
+    hasher.update(&data[..fields.md5]);
+    hasher.update(salt);
+    hasher.update(&data[fields.md5 + MD5_SIZE..]);
+    Ok(hasher.finish()[..] == *header.md5)
+}
+
+/// The MD5 note: unset in combined v1 images, otherwise whether the salted
+/// digest matches. A mismatch is not an error: vendor tools that use
+/// other salts write the same layout.
+fn md5_text(md5: &[u8], matches: bool) -> String {
     if md5.iter().all(|&b| b == 0) {
         "MD5 field is zero (combined images leave it unset)".to_string()
+    } else if matches {
+        format!(
+            "salted MD5 {} verified (an integrity check, not authentication)",
+            hex_digest(md5)
+        )
     } else {
         format!(
-            "salted MD5 {} not verified (no MD5 implementation)",
+            "salted MD5 {} does not match the mktplinkfw salted digest; the image may use another salt",
             hex_digest(md5)
         )
     }
@@ -489,7 +536,7 @@ pub(super) fn parse(data: &[u8], generation: Generation) -> Result<Container<'_>
     c.notes.push(format!(
         "TP-Link firmware header, {tool} layout, version {}; {}",
         header.version,
-        md5_text(header.md5)
+        md5_text(header.md5, has_salted_md5(data, &header)?)
     ));
     c.notes.push(header.fields.identity.clone());
     c.notes.push(format!(
@@ -545,11 +592,7 @@ pub(super) fn parse(data: &[u8], generation: Generation) -> Result<Container<'_>
         "Kernel entry point",
         format!("0x{:08X}", header.kernel_entry),
     );
-    c.push_metadata(
-        "tplink_md5",
-        "Salted MD5 (not verified)",
-        hex_digest(header.md5),
-    );
+    c.push_metadata("tplink_md5", "Salted MD5", hex_digest(header.md5));
 
     let mut extractor = Extractor::default();
     if let Some(boot) = header.bootloader {
@@ -601,8 +644,9 @@ mod tests {
     }
 
     #[test]
-    fn md5_text_distinguishes_unset_digests() {
-        assert!(md5_text(&[0; MD5_SIZE]).contains("zero"));
-        assert!(md5_text(&[1; MD5_SIZE]).contains("not verified"));
+    fn md5_text_distinguishes_unset_verified_and_other_digests() {
+        assert!(md5_text(&[0; MD5_SIZE], false).contains("zero"));
+        assert!(md5_text(&[1; MD5_SIZE], true).contains("verified"));
+        assert!(md5_text(&[1; MD5_SIZE], false).contains("does not match"));
     }
 }

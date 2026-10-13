@@ -22,6 +22,7 @@
 //! each classified from its own bytes.
 
 use crate::error::{ClassifierError, Result};
+use crate::formats::checksum;
 use crate::formats::compressed::{self, Codec};
 use crate::formats::container::{Child, Container, MAX_COMPONENTS, MAX_EXTRACTED};
 use crate::types::FileFormat;

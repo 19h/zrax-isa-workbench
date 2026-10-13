@@ -16,6 +16,12 @@
 
 use super::*;
 
+/// What `tplink-safeloader` hashes before the image data from 0x14
+/// (firmware-utils `0179ab1e`, `tplink-safeloader.c` `md5_salt`, `put_md5`).
+const MD5_SALT: [u8; 16] = [
+    0x7a, 0x2b, 0x15, 0xed, 0x9b, 0x98, 0x59, 0x6d, 0xe5, 0x04, 0xab, 0x44, 0xac, 0x2a, 0x9f, 0x4e,
+];
+
 /// Image size and MD5.
 const PREAMBLE_SIZE: usize = 0x14;
 const MD5_OFFSET: usize = 4;
@@ -328,6 +334,22 @@ fn support_list_note(data: &[u8]) -> Option<String> {
 pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let image = read_image(data)?;
     let md5 = &data[MD5_OFFSET..MD5_OFFSET + MD5_SIZE];
+    let mut hasher = checksum::Md5::new();
+    hasher.update(&MD5_SALT);
+    hasher.update(&data[PREAMBLE_SIZE..image.size]);
+    // A mismatch is noted, not an error: the layout is recognized from its
+    // structure, and other vendor tools may salt differently.
+    let md5_note = if hasher.finish()[..] == *md5 {
+        format!(
+            "MD5 {} of the salt and the bytes from 0x14 verified (an integrity check, not authentication)",
+            hex_digest(md5)
+        )
+    } else {
+        format!(
+            "MD5 {} does not match the tplink-safeloader salted digest of the bytes from 0x14",
+            hex_digest(md5)
+        )
+    };
     let mut c = Container::new(
         FileFormat::TpLink,
         Layout::TpLinkSafeLoader.label(),
@@ -335,10 +357,9 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     );
     c.consumed = image.size;
     c.notes.push(format!(
-        "TP-Link SafeLoader factory image, {} header; {} partitions in the fwup-ptn table (bases relative to 0x1014); MD5 {} of the salt and the bytes from 0x14 not verified (no MD5 implementation)",
+        "TP-Link SafeLoader factory image, {} header; {} partitions in the fwup-ptn table (bases relative to 0x1014); {md5_note}",
         image.header_type.name(),
-        image.entries.len(),
-        hex_digest(md5)
+        image.entries.len()
     ));
     if let HeaderType::Vendor { len } = image.header_type {
         let vendor = &data[VENDOR_TEXT..VENDOR_TEXT + len];
@@ -354,7 +375,7 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
         "Header type",
         image.header_type.name(),
     );
-    c.push_metadata("tplink_md5", "Salted MD5 (not verified)", hex_digest(md5));
+    c.push_metadata("tplink_md5", "Salted MD5", hex_digest(md5));
 
     let mut extractor = Extractor::default();
     let mut unnamed_roles = Vec::new();

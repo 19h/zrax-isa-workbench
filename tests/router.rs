@@ -3,7 +3,7 @@
 //! `mktplinkfw`/`mktplinkfw2` headers and SafeLoader factory images, with
 //! raw LZMA kernels decoded, truncation and mutation sweeps.
 
-use zrax::formats::checksum::crc32_update;
+use zrax::formats::checksum::{crc32_update, md5};
 use zrax::{detect_payload, ClassifierOptions, DetectionPayload, FileFormat, Isa};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/router");
@@ -434,14 +434,14 @@ fn seama_meta(strings: &[&str]) -> Vec<u8> {
     meta
 }
 
-/// An entity: magic, reserved, metadata size, image size, an MD5 field
-/// (a fixed pattern: the parser does not verify it), metadata, image.
+/// An entity: magic, reserved, metadata size, image size, the MD5 of the
+/// image (RFC 1321, as `seama.c` writes it), metadata, image.
 fn seama_entity(meta: &[&str], image: &[u8]) -> Vec<u8> {
     let meta = seama_meta(meta);
     let mut entity = vec![0x5e, 0xa3, 0xa4, 0x17, 0, 0];
     entity.extend_from_slice(&(meta.len() as u16).to_be_bytes());
     entity.extend_from_slice(&(image.len() as u32).to_be_bytes());
-    entity.extend_from_slice(&[0xa5; 16]);
+    entity.extend_from_slice(&md5(image));
     entity.extend_from_slice(&meta);
     entity.extend_from_slice(image);
     entity
@@ -476,7 +476,10 @@ fn seama_seal_entities_are_classified_as_nested_seama_images() {
     assert!(has_note(&inner, "D-Link SEAMA entity; 79 B image"));
     let payload = slice(&inner, "Image");
     assert_eq!((payload.offset, payload.isa), (64, Isa::Mips));
-    assert!(has_note(&inner, "not verified (no MD5 implementation)"));
+    assert!(has_note(
+        &inner,
+        "image MD5 87705B1907E7282054D962B8BD5A82B2 verified (an integrity check, not authentication)"
+    ));
     assert!(has_note(
         &inner,
         "Metadata: dev=/dev/mtdblock/1; type=firmware"
@@ -506,6 +509,10 @@ fn seama_ranges_and_trailing_data_are_checked() {
     let mut oversized = entity.clone();
     put_be32(&mut oversized, 8, 0x0100_0000);
     assert!(error_text(&oversized).contains("Truncated SEAMA image"));
+    let mut corrupt = entity.clone();
+    let last = corrupt.len() - 1;
+    corrupt[last] ^= 1;
+    assert!(error_text(&corrupt).contains("Invalid SEAMA image MD5"));
     let mut seal = seama_seal(&[], &[entity]);
     seal[12] = 0;
     assert!(error_text(&seal).contains("Missing SEAMA magic at 0xC"));
@@ -624,7 +631,10 @@ fn tplink_v1_header_names_no_isa_and_the_kernel_supplies_it() {
         &p,
         "Vendor TP-LINK Technologies; firmware version string ver. 1.0"
     ));
-    assert!(has_note(&p, "not verified (no MD5 implementation)"));
+    assert!(has_note(
+        &p,
+        "salted MD5 656B7217C029A10811F7C6042EDA9D60 verified (an integrity check, not authentication)"
+    ));
     assert!(p
         .metadata
         .iter()
@@ -644,6 +654,10 @@ fn tplink_header_without_code_reports_an_unknown_isa() {
 fn tplink_v2_layouts_cover_combined_and_bootloader_images() {
     let image = fixture("tplink-v2.bin");
     let p = classify(&image);
+    assert!(has_note(
+        &p,
+        "salted MD5 709A222F5CD18377815B03DC2BF643FD verified (an integrity check, not authentication)"
+    ));
     assert_eq!(
         p.format.variant_name.as_deref(),
         Some("TP-Link header (mktplinkfw2 layout)")
@@ -778,6 +792,10 @@ fn safeloader_partitions_are_classified_by_role() {
     let image = fixture("safeloader.bin");
     let p = classify(&image);
     assert_eq!(p.format.format, FileFormat::TpLink);
+    assert!(has_note(
+        &p,
+        "MD5 6CF8AF24712121BC10117BDB1F8DCCFC of the salt and the bytes from 0x14 verified"
+    ));
     assert_eq!(
         p.format.variant_name.as_deref(),
         Some("TP-Link SafeLoader factory image")
