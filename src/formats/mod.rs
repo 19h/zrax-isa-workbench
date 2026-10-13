@@ -19,6 +19,7 @@
 //! - Archive formats (ar)
 //! - Raw binary analysis
 
+pub mod aif;
 pub mod amiga_hunk;
 pub mod android;
 pub mod aof;
@@ -831,6 +832,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = psyq::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Psyq(layout),
+        };
+    }
+
+    // ARM Image Format: NOP or BL header words and the program exit
+    // instruction at 0x10 (`SWI 0x11` or `B .`) in either byte order. No
+    // format above starts with them. The Arm zImage (kernel images, below)
+    // also starts with NOPs, but eight of them, so it has no exit
+    // instruction at 0x10.
+    if let Some(layout) = aif::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Aif(layout),
         };
     }
 

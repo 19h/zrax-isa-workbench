@@ -801,6 +801,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::NetWareNlm => "NetWare NLM",
         FileFormat::GeosGeode => "PC/GEOS geode",
         FileFormat::PsyqObject => "PsyQ object",
+        FileFormat::ArmAif => "ARM AIF",
     }
 }
 

@@ -54,6 +54,13 @@ pub enum ClassifierError {
         limit: usize,
     },
 
+    /// Error parsing an ARM Image Format (AIF) executable image.
+    #[error("ARM AIF parse error: {message}")]
+    AifParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a partition table (MBR, GPT or Apple Partition Map).
     #[error("Partition table parse error: {message}")]
     PartitionParseError {

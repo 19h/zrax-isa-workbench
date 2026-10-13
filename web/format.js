@@ -117,6 +117,7 @@ const FORMAT_NAMES = {
   netwarenlm: 'NetWare NLM',
   geosgeode: 'PC/GEOS geode',
   psyqobject: 'PsyQ object',
+  armaif: 'ARM AIF',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

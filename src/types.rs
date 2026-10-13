@@ -1133,6 +1133,10 @@ pub enum FileFormat {
     // PsyQ
     /// Psy-Q (SN Systems) LNK object file
     PsyqObject,
+    // ARM AIF
+    /// ARM Image Format (AIF) executable image (`.axf`, `.aif`, RISC OS
+    /// `!RunImage`)
+    ArmAif,
 }
 
 impl fmt::Display for FileFormat {
@@ -1403,6 +1407,8 @@ impl fmt::Display for FileFormat {
             FileFormat::GeosGeode => write!(f, "PC/GEOS geode"),
             // PsyQ
             FileFormat::PsyqObject => write!(f, "PsyQ object"),
+            // ARM AIF
+            FileFormat::ArmAif => write!(f, "ARM AIF"),
         }
     }
 }
