@@ -1179,6 +1179,11 @@ pub enum FileFormat {
     Adf,
     /// Amiga hard disk image: Rigid Disk Block disk or hardfile
     AmigaHdf,
+    // Atari 8-bit
+    /// Atari 8-bit ATR disk image
+    Atr,
+    /// Atari 8-bit DOS binary load file (`.xex`, `.com`)
+    AtariXex,
 }
 
 impl fmt::Display for FileFormat {
@@ -1474,6 +1479,9 @@ impl fmt::Display for FileFormat {
             // Amiga disk images
             FileFormat::Adf => write!(f, "Amiga disk image (ADF)"),
             FileFormat::AmigaHdf => write!(f, "Amiga hard disk image"),
+            // Atari 8-bit
+            FileFormat::Atr => write!(f, "Atari ATR disk image"),
+            FileFormat::AtariXex => write!(f, "Atari binary load file"),
         }
     }
 }

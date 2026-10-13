@@ -146,6 +146,8 @@ pub enum Kind {
     Cbm(super::cbm::Layout),
     /// An Amiga disk image: ADF floppy, Rigid Disk Block disk or hardfile.
     Adf(super::adf::Layout),
+    /// An Atari 8-bit ATR disk image or DOS binary load file.
+    Atari8(super::atari8::Layout),
 }
 
 impl Kind {
@@ -197,6 +199,7 @@ impl Kind {
             Self::DiscImage(layout) => layout.format(),
             Self::Cbm(layout) => layout.format(),
             Self::Adf(layout) => layout.format(),
+            Self::Atari8(layout) => layout.format(),
         }
     }
 
@@ -248,6 +251,7 @@ impl Kind {
             Self::DiscImage(layout) => layout.label(),
             Self::Cbm(layout) => layout.label(),
             Self::Adf(layout) => layout.label(),
+            Self::Atari8(layout) => layout.label(),
         }
     }
 
@@ -299,6 +303,7 @@ impl Kind {
             Self::DiscImage(layout) => layout.is_weak(),
             Self::Cbm(layout) => layout.is_weak(),
             Self::Adf(layout) => layout.is_weak(),
+            Self::Atari8(layout) => layout.is_weak(),
         }
     }
 }
@@ -355,6 +360,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::DiscImage(layout) => super::discimg::parse_container(data, layout),
         Kind::Cbm(layout) => super::cbm::parse_container(data, layout),
         Kind::Adf(layout) => super::adf::parse_container(data, layout),
+        Kind::Atari8(layout) => super::atari8::parse_container(data, layout),
     }
 }
 

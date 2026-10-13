@@ -229,7 +229,10 @@ implemented; see [Commodore disk and tape images](cbm.md). Amiga disk
 images followed: ADF floppies (OFS/FFS, `DOS\0`-`DOS\7`; strong on `DOS`
 plus the root block checksum; boot block code as 68000 code), bootable
 non-DOS floppies, Rigid Disk Block disks and unpartitioned hardfiles; see
-[Amiga disk images](adf.md).
+[Amiga disk images](adf.md). Atari 8-bit ATR disk images (DOS 2.x files as
+children; binary load files and boot sectors as 6502) and DOS binary load
+files followed; XFD, DCM, ATX, PRO and CAS images and MyDOS/SpartaDOS file
+systems are not implemented; see [Atari 8-bit](atari8.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as

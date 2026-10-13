@@ -819,6 +819,8 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::T64 => "T64 tape image",
         FileFormat::Adf => "Amiga disk image (ADF)",
         FileFormat::AmigaHdf => "Amiga hard disk image",
+        FileFormat::Atr => "Atari ATR disk image",
+        FileFormat::AtariXex => "Atari binary load file",
     }
 }
 

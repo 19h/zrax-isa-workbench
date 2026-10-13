@@ -28,6 +28,7 @@ pub mod aout;
 pub mod apple;
 pub mod ar;
 pub mod archives;
+pub mod atari8;
 pub mod automotive;
 pub mod bcf;
 pub mod bflt;
@@ -935,6 +936,16 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Atari 8-bit ATR disk images: the 16-bit magic `96 02` at offset 0, a
+    // documented sector size and a declared size of whole sectors. No format
+    // above starts with that magic; the ones keyed at later offsets would
+    // need their structures inside the disk's sectors.
+    if let Some(layout) = atari8::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Atari8(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -1242,6 +1253,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     // validate. Stubbed files are claimed by the DOS header check above.
     if let Some(variant) = mz::detect_bare(data) {
         return DetectedFormat::Mz { variant };
+    }
+
+    // Atari DOS binary load files have only the marker `FF FF`: every
+    // segment must be valid and the segments must tile the file exactly.
+    if let Some(layout) = atari8::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Atari8(layout),
+        };
     }
 
     // zlib and LZMA-alone: two-byte or properties-only signatures,

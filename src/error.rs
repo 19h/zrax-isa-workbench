@@ -61,6 +61,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an Atari 8-bit ATR disk image or DOS binary load file.
+    #[error("Atari 8-bit image parse error: {message}")]
+    Atari8ParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an Amiga disk image (ADF floppy, Rigid Disk Block hard
     /// disk or hardfile).
     #[error("Amiga disk image parse error: {message}")]
