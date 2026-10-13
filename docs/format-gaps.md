@@ -222,6 +222,10 @@ table; AES partitions opaque) and Xbox XDVDFS (XISO, XGD1, XGD2, XGD3);
 Wii decryption and the WIA, RVZ and NKit containers are not implemented;
 see [console disc images](discs.md). GCZ, CISO, WBFS and PSP CSO/ZSO
 containers decode their discs; see [disc image containers](discimg.md).
+Commodore disk and tape images followed: D64 (35 and 40 tracks), D71, D81
+and T64, with PRG files as 6502-family code after their load address;
+42-track D64, D67, D80/D82, G64/P64, X64 and the CMD formats are not
+implemented; see [Commodore disk and tape images](cbm.md).
 
 These follow the existing SPC, DOL, XBE, XEX, SELF and NSO support. The headers
 also identify code slices for model classes Zrax already has, so they double as

@@ -61,6 +61,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Commodore disk or tape image (D64, D71, D81, T64).
+    #[error("Commodore image parse error: {message}")]
+    CbmParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing a virtual disk image (QCOW2, VMDK, VHD, VHDX or VDI).
     #[error("Virtual disk parse error: {message}")]
     VirtualDiskParseError {

@@ -142,6 +142,8 @@ pub enum Kind {
     VirtualDisk(super::vdisk::Layout),
     /// A compressed or packed disc container: GCZ, CISO, WBFS, CSO or ZSO.
     DiscImage(super::discimg::Layout),
+    /// A Commodore disk or tape image: D64, D71, D81 or T64.
+    Cbm(super::cbm::Layout),
 }
 
 impl Kind {
@@ -191,6 +193,7 @@ impl Kind {
             Self::Capsule(layout) => layout.format(),
             Self::VirtualDisk(layout) => layout.format(),
             Self::DiscImage(layout) => layout.format(),
+            Self::Cbm(layout) => layout.format(),
         }
     }
 
@@ -240,6 +243,7 @@ impl Kind {
             Self::Capsule(layout) => layout.label(),
             Self::VirtualDisk(layout) => layout.label(),
             Self::DiscImage(layout) => layout.label(),
+            Self::Cbm(layout) => layout.label(),
         }
     }
 
@@ -289,6 +293,7 @@ impl Kind {
             Self::Capsule(layout) => layout.is_weak(),
             Self::VirtualDisk(layout) => layout.is_weak(),
             Self::DiscImage(layout) => layout.is_weak(),
+            Self::Cbm(layout) => layout.is_weak(),
         }
     }
 }
@@ -343,6 +348,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Capsule(layout) => super::capsule::parse_container(data, layout),
         Kind::VirtualDisk(layout) => super::vdisk::parse_container(data, layout),
         Kind::DiscImage(layout) => super::discimg::parse_container(data, layout),
+        Kind::Cbm(layout) => super::cbm::parse_container(data, layout),
     }
 }
 

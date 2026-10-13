@@ -34,6 +34,7 @@ pub mod blackfin_ldr;
 pub mod bitstream;
 pub mod bootmisc;
 pub mod capsule;
+pub mod cbm;
 pub mod checksum;
 pub mod chiptune;
 pub mod coff;
@@ -909,6 +910,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // Commodore T64 tapes: a VICE signature (`C64 tape image file`, `C64S
+    // tape file`) at offset 0, which no format above starts with.
+    if let Some(layout) = cbm::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Cbm(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -1027,6 +1036,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     // Checked late because it uses structural heuristics (no magic bytes)
     if epr::detect(data) {
         return DetectedFormat::Epr;
+    }
+
+    // Commodore D64, D71 and D81 disks have no magic: an exact image size,
+    // the BAM signature at 0x16500 (0x61800 for D81) and a directory chain
+    // inside the image must all validate. First among the weak checks: the
+    // checks below read an image's first sectors, which hold file data on
+    // these disks, and none of them requires a CBM DOS image size and BAM.
+    if let Some(layout) = cbm::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Cbm(layout),
+        };
     }
 
     // Mercedes CFF has no magic: its checksum and header must be consistent.

@@ -813,6 +813,10 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Ciso => "CISO disc image",
         FileFormat::Wbfs => "WBFS image",
         FileFormat::Cso => "CSO disc image",
+        FileFormat::D64 => "D64 disk image",
+        FileFormat::D71 => "D71 disk image",
+        FileFormat::D81 => "D81 disk image",
+        FileFormat::T64 => "T64 tape image",
     }
 }
 

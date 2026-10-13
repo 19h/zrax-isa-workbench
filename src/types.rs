@@ -1165,6 +1165,15 @@ pub enum FileFormat {
     Wbfs,
     /// PSP CSO or ZSO compressed ISO image
     Cso,
+    // Commodore
+    /// Commodore 1541 disk image (`.d64`, 35 or 40 tracks)
+    D64,
+    /// Commodore 1571 disk image (`.d71`)
+    D71,
+    /// Commodore 1581 disk image (`.d81`)
+    D81,
+    /// Commodore T64 tape image (`.t64`)
+    T64,
 }
 
 impl fmt::Display for FileFormat {
@@ -1452,6 +1461,11 @@ impl fmt::Display for FileFormat {
             FileFormat::Ciso => write!(f, "CISO disc image"),
             FileFormat::Wbfs => write!(f, "WBFS image"),
             FileFormat::Cso => write!(f, "CSO disc image"),
+            // Commodore
+            FileFormat::D64 => write!(f, "D64 disk image"),
+            FileFormat::D71 => write!(f, "D71 disk image"),
+            FileFormat::D81 => write!(f, "D81 disk image"),
+            FileFormat::T64 => write!(f, "T64 tape image"),
         }
     }
 }
