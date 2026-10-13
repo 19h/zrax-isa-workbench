@@ -130,10 +130,12 @@ pub fn parse(data: &[u8]) -> Result<ClassificationResult> {
         ));
     }
 
-    notes.push(format!(
-        "Constant pool entries: {}",
-        constant_pool_count - 1
-    ));
+    // The count includes the unused entry 0 (JVMS 4.1), so 0 is invalid;
+    // HotSpot rejects it as an illegal constant pool size.
+    match constant_pool_count.checked_sub(1) {
+        Some(entries) => notes.push(format!("Constant pool entries: {entries}")),
+        None => notes.push("Invalid constant pool count 0: the minimum is 1".to_string()),
+    }
 
     // Try to parse access flags and class info if we can skip the constant pool
     // This requires parsing the entire constant pool, which is complex
@@ -201,6 +203,27 @@ mod tests {
         let result = parse(&data).unwrap();
         assert_eq!(result.isa, Isa::Jvm);
         assert!(result.variant.name.contains("Java 17"));
+    }
+
+    #[test]
+    fn constant_pool_count_zero_is_reported_as_invalid() {
+        let mut data = make_java_class(52, 0);
+        data[8..10].copy_from_slice(&0u16.to_be_bytes());
+        let result = parse(&data).expect("a header with a zero count still parses");
+        let notes = &result.metadata.notes;
+        assert!(notes.contains(&"Invalid constant pool count 0: the minimum is 1".to_string()));
+        assert!(!notes.iter().any(|n| n.starts_with("Constant pool entries")));
+    }
+
+    #[test]
+    fn constant_pool_count_excludes_the_unused_entry() {
+        let mut data = make_java_class(52, 0);
+        data[8..10].copy_from_slice(&1u16.to_be_bytes());
+        let result = parse(&data).expect("an empty constant pool parses");
+        assert!(result
+            .metadata
+            .notes
+            .contains(&"Constant pool entries: 0".to_string()));
     }
 
     #[test]
