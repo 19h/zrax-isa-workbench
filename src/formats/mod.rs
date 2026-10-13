@@ -57,6 +57,7 @@ pub mod hex;
 pub mod huawei;
 pub mod iso9660;
 pub mod java;
+pub mod javaimage;
 pub mod kernel;
 pub mod llvm_bc;
 pub mod lod;
@@ -783,6 +784,15 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = fat::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Fat(layout),
+        };
+    }
+
+    // Java runtime images: the jimage magic 0xCAFEDADA in either byte order
+    // with major version 1, or a JMOD header (`JM`, version 1.0) followed by
+    // a ZIP local file header.
+    if let Some(layout) = javaimage::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::JavaImage(layout),
         };
     }
 

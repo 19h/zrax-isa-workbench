@@ -1107,6 +1107,11 @@ pub enum FileFormat {
     WiiDisc,
     /// Xbox or Xbox 360 game disc image (XDVDFS)
     XboxDvd,
+    // Java runtime images
+    /// Java runtime image (`lib/modules`, jimage)
+    Jimage,
+    /// JMOD module file
+    Jmod,
 }
 
 impl fmt::Display for FileFormat {
@@ -1361,6 +1366,9 @@ impl fmt::Display for FileFormat {
             FileFormat::GameCubeDisc => write!(f, "GameCube disc"),
             FileFormat::WiiDisc => write!(f, "Wii disc"),
             FileFormat::XboxDvd => write!(f, "Xbox DVD (XDVDFS)"),
+            // Java runtime images
+            FileFormat::Jimage => write!(f, "Java jimage"),
+            FileFormat::Jmod => write!(f, "JMOD"),
         }
     }
 }

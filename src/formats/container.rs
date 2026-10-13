@@ -120,6 +120,8 @@ pub enum Kind {
     Iso9660(super::iso9660::Layout),
     /// A console disc image: `GameCube`, Wii or Xbox XDVDFS.
     Discs(super::discs::Layout),
+    /// A Java runtime image (jimage) or JMOD file.
+    JavaImage(super::javaimage::Layout),
 }
 
 impl Kind {
@@ -159,6 +161,7 @@ impl Kind {
             Self::Fat(layout) => layout.format(),
             Self::Iso9660(layout) => layout.format(),
             Self::Discs(layout) => layout.format(),
+            Self::JavaImage(layout) => layout.format(),
         }
     }
 
@@ -198,6 +201,7 @@ impl Kind {
             Self::Fat(layout) => layout.label(),
             Self::Iso9660(layout) => layout.label(),
             Self::Discs(layout) => layout.label(),
+            Self::JavaImage(layout) => layout.label(),
         }
     }
 
@@ -237,6 +241,7 @@ impl Kind {
             Self::Fat(layout) => layout.is_weak(),
             Self::Iso9660(layout) => layout.is_weak(),
             Self::Discs(layout) => layout.is_weak(),
+            Self::JavaImage(layout) => layout.is_weak(),
         }
     }
 }
@@ -281,6 +286,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Fat(layout) => super::fat::parse_container(data, layout),
         Kind::Iso9660(layout) => super::iso9660::parse_container(data, layout),
         Kind::Discs(layout) => super::discs::parse_container(data, layout),
+        Kind::JavaImage(layout) => super::javaimage::parse_container(data, layout),
     }
 }
 

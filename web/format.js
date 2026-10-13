@@ -111,6 +111,7 @@ const FORMAT_NAMES = {
   fat: 'FAT filesystem', exfat: 'exFAT filesystem',
   iso9660: 'ISO 9660',
   gamecubedisc: 'GameCube disc', wiidisc: 'Wii disc', xboxdvd: 'Xbox DVD (XDVDFS)',
+  jimage: 'Java jimage', jmod: 'JMOD',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

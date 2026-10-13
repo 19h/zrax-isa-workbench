@@ -791,6 +791,8 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::GameCubeDisc => "GameCube disc",
         FileFormat::WiiDisc => "Wii disc",
         FileFormat::XboxDvd => "Xbox DVD (XDVDFS)",
+        FileFormat::Jimage => "Java jimage",
+        FileFormat::Jmod => "JMOD",
     }
 }
 

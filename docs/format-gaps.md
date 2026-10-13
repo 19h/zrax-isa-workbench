@@ -97,7 +97,10 @@ with EBR chains, GPT, Apple Partition Map) followed too; see
 count) and exFAT (strong; boot, entry-set and up-case checksums verified)
 followed; see [FAT](fat.md). ISO 9660 (Rock Ridge, Joliet; El Torito boot
 images as children; UDF bridge and hybrid partition tables noted) followed;
-see [ISO 9660](iso9660.md). Every row
+see [ISO 9660](iso9660.md). Java runtime images followed: jimage (both
+byte orders; perfect-hash index verified; `zip` and `compact-cp`
+resources decoded) and JMOD (ZIP archive at offset 4 as a child); see
+[Java runtime images](javaimage.md). Every row
 of this section is now implemented.
 
 | Impact | Format | Identification | Notes |
