@@ -1092,6 +1092,11 @@ pub enum FileFormat {
     Gpt,
     /// Apple Partition Map
     ApplePartitionMap,
+    // FAT
+    /// FAT12, FAT16 or FAT32 volume
+    Fat,
+    /// exFAT volume
+    ExFat,
 }
 
 impl fmt::Display for FileFormat {
@@ -1337,6 +1342,9 @@ impl fmt::Display for FileFormat {
             FileFormat::Mbr => write!(f, "MBR partition table"),
             FileFormat::Gpt => write!(f, "GPT partition table"),
             FileFormat::ApplePartitionMap => write!(f, "Apple Partition Map"),
+            // FAT
+            FileFormat::Fat => write!(f, "FAT filesystem"),
+            FileFormat::ExFat => write!(f, "exFAT filesystem"),
         }
     }
 }

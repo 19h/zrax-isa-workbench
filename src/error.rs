@@ -61,6 +61,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a FAT12, FAT16, FAT32 or exFAT volume.
+    #[error("FAT filesystem parse error: {message}")]
+    FatParseError {
+        /// What is wrong with the volume.
+        message: String,
+    },
+
     /// Error parsing an Espressif firmware image or flash dump (ESP32
     /// family, ESP8266, ESP-IDF partition table).
     #[error("Espressif image parse error: {message}")]

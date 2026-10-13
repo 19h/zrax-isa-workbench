@@ -114,6 +114,8 @@ pub enum Kind {
     Erofs(erofs::Layout),
     /// A partition table: MBR, GPT or Apple Partition Map.
     Partitions(super::partitions::Layout),
+    /// A FAT12, FAT16, FAT32 or exFAT volume.
+    Fat(super::fat::Layout),
 }
 
 impl Kind {
@@ -150,6 +152,7 @@ impl Kind {
             Self::Retro2(layout) => layout.format(),
             Self::Erofs(layout) => layout.format(),
             Self::Partitions(layout) => layout.format(),
+            Self::Fat(layout) => layout.format(),
         }
     }
 
@@ -186,6 +189,7 @@ impl Kind {
             Self::Retro2(layout) => layout.label(),
             Self::Erofs(layout) => layout.label(),
             Self::Partitions(layout) => layout.label(),
+            Self::Fat(layout) => layout.label(),
         }
     }
 
@@ -222,6 +226,7 @@ impl Kind {
             Self::Retro2(layout) => layout.is_weak(),
             Self::Erofs(layout) => layout.is_weak(),
             Self::Partitions(layout) => layout.is_weak(),
+            Self::Fat(layout) => layout.is_weak(),
         }
     }
 }
@@ -263,6 +268,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Retro2(layout) => super::retro2::parse_container(data, layout),
         Kind::Erofs(layout) => erofs::parse_container(data, layout),
         Kind::Partitions(layout) => super::partitions::parse_container(data, layout),
+        Kind::Fat(layout) => super::fat::parse_container(data, layout),
     }
 }
 

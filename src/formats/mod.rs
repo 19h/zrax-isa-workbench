@@ -48,6 +48,7 @@ pub mod epr;
 pub mod erofs;
 pub mod esp;
 pub mod ext;
+pub mod fat;
 pub mod fatelf;
 pub mod frf;
 pub mod goff;
@@ -755,6 +756,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
+    // exFAT: the file system name `EXFAT   ` at offset 3.
+    if let Some(layout) = fat::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Fat(layout),
+        };
+    }
+
     // Magic-bearing compressed streams. Checked after the executable and
     // firmware formats, none of which start with a codec magic.
     if let Some(codec) = compressed::detect(data) {
@@ -1021,6 +1029,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = retro2::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Retro2(layout),
+        };
+    }
+
+    // FAT12/16/32 boot sectors have no magic: the BPB, the FAT type by
+    // cluster count and FAT[0] must be consistent. FAT must run before the
+    // MBR partition-table check, because a FAT boot sector also ends in
+    // `55 AA` and its boot code (or the fake partition table `mkfs.fat
+    // --mbr` writes) occupies the partition-table bytes.
+    if let Some(layout) = fat::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Fat(layout),
         };
     }
 

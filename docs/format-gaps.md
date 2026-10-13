@@ -93,7 +93,9 @@ and encrypted files not read) is implemented; see [ext](ext.md). EROFS
 (compact and extended inodes; LZ4, MicroLZMA and DEFLATE clusters; Zstandard
 extents not decoded) followed; see [EROFS](erofs.md). Partition tables (MBR
 with EBR chains, GPT, Apple Partition Map) followed too; see
-[partition tables](partitions.md). Every row
+[partition tables](partitions.md). FAT12/16/32 (weak; FAT type by cluster
+count) and exFAT (strong; boot, entry-set and up-case checksums verified)
+followed; see [FAT](fat.md). Every row
 of this section is now implemented.
 
 | Impact | Format | Identification | Notes |
