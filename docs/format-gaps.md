@@ -96,7 +96,11 @@ with EBR chains, GPT, Apple Partition Map) followed too; see
 [partition tables](partitions.md). Virtual disk images (QCOW2, VMDK sparse
 extents, VHD, VHDX and VDI; the guest disk classified on its own) followed;
 QCOW1, QED, VMware COWD/SESparse, VMDK descriptor files, VHDX log replay
-and VDI header v0 remain unsupported; see [virtual disk images](vdisk.md). FAT12/16/32 (weak; FAT type by cluster
+and VDI header v0 remain unsupported; see [virtual disk images](vdisk.md).
+Apple UDIF disk images followed (every hdiutil chunk codec including ADC;
+data fork, master and table CRC-32 verified; volume partitions classified
+on their own; encrypted images opaque); sparse images, sparse bundles,
+NDIF and decryption are not implemented; see [Apple disk images](dmg.md). FAT12/16/32 (weak; FAT type by cluster
 count) and exFAT (strong; boot, entry-set and up-case checksums verified)
 followed; see [FAT](fat.md). ISO 9660 (Rock Ridge, Joliet; El Torito boot
 images as children; UDF bridge and hybrid partition tables noted) followed;

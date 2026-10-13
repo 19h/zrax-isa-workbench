@@ -831,6 +831,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Cia => "3DS CIA",
         FileFormat::Pfs0 => "Switch PFS0",
         FileFormat::Xci => "Switch XCI",
+        FileFormat::AppleDmg => "Apple disk image",
     }
 }
 

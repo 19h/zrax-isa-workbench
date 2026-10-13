@@ -50,6 +50,7 @@ pub mod d10;
 pub mod dex;
 pub mod discimg;
 pub mod discs;
+pub mod dmg;
 pub mod ecoff;
 pub mod elf;
 pub mod epoc;
@@ -665,6 +666,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = vdisk::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::VirtualDisk(layout),
+        };
+    }
+
+    // Apple disk images: a `koly` trailer (version 4, size 512) whose forks
+    // lie before it and whose property list starts where it says, or an
+    // `encrcdsa` header or `cdsaencr` footer. Next to the virtual disks for
+    // the same reason: an uncompressed data fork starts with the disk's first
+    // sector, which the checks below would otherwise claim.
+    if let Some(layout) = dmg::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Dmg(layout),
         };
     }
 

@@ -61,6 +61,14 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing an Apple disk image (UDIF `.dmg` or an encrypted disk
+    /// image).
+    #[error("Apple disk image parse error: {message}")]
+    DmgParseError {
+        /// What is wrong with the image.
+        message: String,
+    },
+
     /// Error parsing an ARM Image Format (AIF) executable image.
     #[error("ARM AIF parse error: {message}")]
     AifParseError {

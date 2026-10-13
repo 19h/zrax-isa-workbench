@@ -1207,6 +1207,9 @@ pub enum FileFormat {
     Pfs0,
     /// Nintendo Switch gamecard image (XCI)
     Xci,
+    // Apple disk images
+    /// Apple disk image: UDIF (`.dmg`) or an encrypted disk image
+    AppleDmg,
 }
 
 impl fmt::Display for FileFormat {
@@ -1518,6 +1521,8 @@ impl fmt::Display for FileFormat {
             FileFormat::Cia => write!(f, "3DS CIA"),
             FileFormat::Pfs0 => write!(f, "Switch PFS0"),
             FileFormat::Xci => write!(f, "Switch XCI"),
+            // Apple disk images
+            FileFormat::AppleDmg => write!(f, "Apple disk image"),
         }
     }
 }

@@ -37,6 +37,8 @@
 //!   a container names them.
 //! - `MicroLZMA` (EROFS LZMA pclusters): see [`microlzma`]. It has no magic
 //!   and is decoded only where a container names it.
+//! - Apple Data Compression (UDIF chunk type `0x80000004`): see [`adc`]. It
+//!   has no magic and is decoded only where a container names it.
 //!
 //! Every decoder stops at an output limit ([`MAX_PAYLOAD`] unless the
 //! caller passes a smaller one) instead of allocating a declared size.
@@ -50,6 +52,7 @@ use crate::types::FileFormat;
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
 
+mod adc;
 mod blz;
 mod efi;
 mod jffs2;
@@ -164,6 +167,8 @@ pub enum Codec {
     /// size or end marker. [`decode_limited`] decodes exactly `limit`
     /// bytes, the size its container states.
     MicroLzma,
+    /// Apple Data Compression (UDIF chunk type `0x80000004`); no magic.
+    Adc,
 }
 
 impl Codec {
@@ -192,6 +197,7 @@ impl Codec {
         Self::Tiano,
         Self::LzmaX86,
         Self::MicroLzma,
+        Self::Adc,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -220,6 +226,7 @@ impl Codec {
             Self::Tiano => "Tiano",
             Self::LzmaX86 => "LZMA x86",
             Self::MicroLzma => "MicroLZMA",
+            Self::Adc => "ADC",
         }
     }
 
@@ -249,6 +256,8 @@ impl Codec {
             Self::Efi | Self::Tiano | Self::LzmaX86 => FileFormat::Raw,
             // MicroLZMA has no magic; only EROFS names it.
             Self::MicroLzma => FileFormat::Raw,
+            // ADC has no magic; only UDIF block tables name it.
+            Self::Adc => FileFormat::Raw,
         }
     }
 
@@ -278,6 +287,7 @@ impl Codec {
             Self::Tiano => "Tiano compressed stream",
             Self::LzmaX86 => "LZMA-alone stream with x86 BCJ",
             Self::MicroLzma => "MicroLZMA stream",
+            Self::Adc => "ADC stream",
         }
     }
 
@@ -476,6 +486,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::Tiano => efi::decode(data, efi::Variant::Tiano, limit),
         Codec::LzmaX86 => xz::lzma_x86(data, limit),
         Codec::MicroLzma => microlzma::decode(data, limit),
+        Codec::Adc => adc::decode(data, limit),
     }
 }
 
