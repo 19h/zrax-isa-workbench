@@ -39,32 +39,16 @@ PyInstaller cookie whose archive starts after offset 0 and whose TOC ends
 at the cookie. `appbundle::parse_container` (or `container::parse` with
 `Kind::AppBundle`) then parses it with member offsets in the host file.
 
-`lib.rs` has no mechanism that lists a container inside an executable
-(FatELF and fat Mach-O are their own formats; nothing reads PE overlays or
-appended data). Listing the members on the host's result needs a hook in
-`classify_depth`, after the `parse_detected` result for
-`DetectedFormat::Elf`, `Pe` and `MachO` is final and while `depth <
-MAX_NESTING`:
-
-```rust
-if let Some(layout) = formats::appbundle::detect_embedded(data) {
-    let kind = formats::container::Kind::AppBundle(layout);
-    match formats::container::parse(data, kind) {
-        Ok(bundle) => {
-            let outcome = classify_container(&bundle, options, depth)?;
-            slices.extend(outcome.slices);
-            notes.extend(outcome.notes);
-            metadata.extend(outcome.metadata);
-        }
-        Err(e) => notes.push(Note::warning(format!("{}: {e}", layout.label()))),
-    }
-}
-```
-
-The host's `result` stays as it is. The hook should also limit the host's
-extension scan (`code_payload`) to the bytes before the bundle, which hold
-the host's code. A universal Mach-O host would need the hook per slice
-(see Known boundaries). This change was not made here.
+`classify_depth` in `lib.rs` lists a bundle inside an executable: after an
+ELF, PE or Mach-O host is classified (and while the nesting limit allows),
+`embedded_bundle` calls `detect_embedded`, parses the bundle and classifies
+it as a container. The host's result (format, ISA, metadata) is unchanged;
+the bundle's members are added as components at their file offsets, with
+its notes and metadata and the note "<layout> inside the executable: its
+members are listed as components; the executable's own ISA is unchanged".
+The host's extension scan stops at the bundle's first member. A bundle that
+does not parse adds a warning and no components. A universal Mach-O host
+is not searched per slice (see Known boundaries).
 
 ### PyInstaller archive
 
@@ -217,9 +201,9 @@ stored bytes in the input; decoded members carry their codec (`zlib`,
 
 ## Known boundaries
 
-- Members of bundles inside executables are not listed on the host's
-  result: that needs the `lib.rs` hook above. `detect_format` never returns
-  `dotnetbundle`, and returns `pyinstaller` only for standalone archives.
+- `detect_format` never returns `dotnetbundle`, and returns `pyinstaller`
+  only for standalone archives; inside an executable, both are reached
+  through the host hook described above.
 - PyInstaller 2.0 and older (24-byte cookie without the library name) are
   not implemented. The PYZ archive's `marshal` TOC and bytecode, and the
   side-load signature (`MEI\x0D\x0B\x0A\x0B\x0E`) that marks an executable
@@ -265,3 +249,11 @@ with synthetic fixtures, not verified against real files.
 
 After integration on the same day, the native suite passed 2,624 tests
 with 6 ignored, and IDA's corpus (4,621 files) classified as before.
+
+With the host hook (same day): the native suite passed with the bundle
+tests asserting the members on the host's result. On this Mac's own
+files, Mandiant's `capa` (a Mach-O PyInstaller build) listed 73 members
+(65 AArch64 libraries and JPype's `org.jpype.jar` as JVM) with the host
+still AArch64, the Hexagon SDK's `mini-dm.exe` (PE, AArch64) 17 members,
+and a .NET 6 single-file `SDKDependencyDownloader` (ELF, x86-64) 74 CLR
+assemblies and 89 x86-64 native libraries.

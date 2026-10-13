@@ -88,8 +88,9 @@ and main headers, digests and the newc or stripped cpio payload in all five
 rpm codecs); Debian `.deb` packages were already classified through `ar`,
 the codec family and tar. With them, ar members that fail to classify no
 longer fail the archive, and `decode_prefix` stops xz streams at the
-limit; see [RPM packages](rpm.md). PyInstaller archives (standalone),
-Electron ASAR archives and .NET single-file bundles (parse API) followed;
+limit; see [RPM packages](rpm.md). PyInstaller archives, Electron ASAR
+archives and .NET single-file bundles followed; bundles inside ELF, PE and
+Mach-O executables have their members listed beside the host's result;
 see [application bundles](appbundle.md). SquashFS 4.0 (compressor IDs 1-6; regular files
 listed by path), CramFS (both byte orders, CRC-32 verified) and romfs are
 implemented; SquashFS 1.x-3.x, big-endian and streamed images are recognized

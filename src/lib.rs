@@ -1015,6 +1015,15 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
     let mut code_payload = None;
     let mut contained_extensions = None;
 
+    // Executables can carry an application bundle: a PyInstaller archive
+    // after its bootloader, or a .NET single-file bundle in its apphost.
+    let host_executable = matches!(
+        detected,
+        formats::DetectedFormat::Elf { .. }
+            | formats::DetectedFormat::Pe { .. }
+            | formats::DetectedFormat::MachO { .. }
+    );
+
     let result = match detected {
         formats::DetectedFormat::Raw => {
             let (r, c) = heuristic(data, options);
@@ -1356,6 +1365,19 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
         },
     };
 
+    // The host keeps its own result; the bundle's members are listed beside
+    // it, and the host's extension scan stops where the bundle begins.
+    if host_executable && depth < MAX_NESTING {
+        if let Some(bundle) = embedded_bundle(data, options, depth, &mut notes) {
+            slices.extend(bundle.outcome.slices);
+            notes.extend(bundle.outcome.notes);
+            metadata.extend(bundle.outcome.metadata);
+            if code_payload.is_none() {
+                code_payload = Some(std::borrow::Cow::Borrowed(&data[..bundle.start]));
+            }
+        }
+    }
+
     let from_code = result.source == ClassificationSource::Heuristic;
     // A contained component that supplied the ISA also supplies its extensions.
     let mut extensions: Vec<ExtensionDetection> = contained_extensions.unwrap_or_else(|| {
@@ -1399,6 +1421,49 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
         notes,
         metadata,
     })
+}
+
+/// An application bundle inside an executable, its members classified.
+struct EmbeddedBundle {
+    outcome: ContainerOutcome,
+    /// File offset of the bundle's first member: the host's own bytes end
+    /// there.
+    start: usize,
+}
+
+/// The application bundle inside the executable `data`, if it holds one. A
+/// bundle that does not parse or classify adds a warning and no members.
+fn embedded_bundle(
+    data: &[u8],
+    options: &ClassifierOptions,
+    depth: usize,
+    notes: &mut Vec<Note>,
+) -> Option<EmbeddedBundle> {
+    let layout = formats::appbundle::detect_embedded(data)?;
+    let kind = formats::container::Kind::AppBundle(layout);
+    let classified = formats::container::parse(data, kind).and_then(|bundle| {
+        let start = bundle
+            .children
+            .iter()
+            .map(|child| child.offset)
+            .min()
+            .unwrap_or(data.len());
+        classify_container(&bundle, options, depth).map(|outcome| EmbeddedBundle { outcome, start })
+    });
+    match classified {
+        Ok(bundle) => {
+            notes.push(Note::info(format!(
+                "{} inside the executable: its members are listed as components; the \
+                 executable's own ISA is unchanged",
+                layout.label()
+            )));
+            Some(bundle)
+        }
+        Err(e) => {
+            notes.push(Note::warning(format!("{}: {e}", layout.label())));
+            None
+        }
+    }
 }
 
 /// A container was recognised but could not be parsed. The recognition may

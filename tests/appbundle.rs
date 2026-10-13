@@ -372,11 +372,23 @@ fn pyinstaller_archive_after_a_pe_host_keeps_the_host_format() {
     let p = classify(&data);
     assert_eq!(p.format.format, FileFormat::Pe);
     assert_eq!(p.primary.isa, Isa::X86_64);
+    // The archive's binaries are listed beside the host, at their offsets
+    // in the file, and classified on their own.
+    let entries = onefile_entries();
+    let ssl = slice(&p, "_ssl.cpython-312-aarch64-linux-gnu.so");
+    assert_eq!(ssl.isa, Isa::AArch64);
+    assert_eq!(
+        ssl.offset,
+        (host + entry_offset(&entries, "_ssl.cpython-312-aarch64-linux-gnu.so")) as u64
+    );
+    assert!(payload_has_note(
+        &p,
+        "PyInstaller archive inside the executable: its members are listed as components"
+    ));
 
     let c = parse(&data, Layout::PyInstaller);
     assert!(has_note(&c, &format!("Archive at file offset 0x{host:X}")));
     assert!(has_note(&c, "512 B after the archive"));
-    let entries = onefile_entries();
     let extension = child(&c, "_ssl.cpython-312-aarch64-linux-gnu.so");
     assert_eq!(
         extension.offset,
@@ -976,12 +988,16 @@ fn dotnet_bundle_host_keeps_its_format_and_the_members_classify_on_their_own() {
     assert_eq!(&native.data[..], AARCH64_ELF);
     assert_eq!(child(&c, "zraxapp.dll").offset % 64, 0);
 
-    // Classified as a container on its own (as a host hook would), the
-    // managed assembly is CIL and the native library AArch64.
-    let managed = classify(&child(&c, "zraxapp.dll").data);
-    assert_eq!(managed.primary.isa, Isa::Clr);
-    let native = classify(&child(&c, "libzraxnative.so").data);
-    assert_eq!(native.primary.isa, Isa::AArch64);
+    // On the host's result, the members are listed as components and
+    // classified on their own: the managed assembly is CIL and the native
+    // library AArch64, while the apphost stays x86-64.
+    assert_eq!(slice(&p, "zraxapp.dll").isa, Isa::Clr);
+    assert_eq!(slice(&p, "libzraxnative.so").isa, Isa::AArch64);
+    assert_eq!(slice(&p, "zraxapp.dll").offset, bundle.offsets[0] as u64);
+    assert!(payload_has_note(
+        &p,
+        ".NET single-file bundle inside the executable: its members are listed as components"
+    ));
 }
 
 #[test]
