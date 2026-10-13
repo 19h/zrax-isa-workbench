@@ -63,6 +63,7 @@ pub mod llvm_bc;
 pub mod lod;
 pub mod macho;
 pub mod mcu;
+pub mod minidump;
 pub mod mtd;
 pub mod mz;
 pub mod nintendo;
@@ -795,6 +796,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = javaimage::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::JavaImage(layout),
+        };
+    }
+
+    // Windows minidumps (`MDMP` with version low word 0xA793, or its byte
+    // swap) and kernel crash dumps (`PAGEDUMP`, `PAGEDU64`).
+    if let Some(layout) = minidump::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Minidump(layout),
         };
     }
 

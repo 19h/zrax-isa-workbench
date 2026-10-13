@@ -1119,6 +1119,11 @@ pub enum FileFormat {
     SilabsEbl,
     /// Nordic nRF5 DFU init packet (`.dat`)
     NordicInitPacket,
+    // Windows minidumps
+    /// Windows user-mode minidump (`MDMP`)
+    Minidump,
+    /// Windows kernel crash dump (`PAGEDUMP`, `PAGEDU64`)
+    WindowsKernelDump,
 }
 
 impl fmt::Display for FileFormat {
@@ -1380,6 +1385,9 @@ impl fmt::Display for FileFormat {
             FileFormat::DfuSuffix => write!(f, "USB DFU file"),
             FileFormat::SilabsEbl => write!(f, "Silicon Labs EBL"),
             FileFormat::NordicInitPacket => write!(f, "Nordic DFU init packet"),
+            // Windows minidumps
+            FileFormat::Minidump => write!(f, "Windows minidump"),
+            FileFormat::WindowsKernelDump => write!(f, "Windows kernel dump"),
         }
     }
 }

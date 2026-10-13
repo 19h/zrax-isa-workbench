@@ -123,6 +123,8 @@ pub enum Kind {
     Discs(super::discs::Layout),
     /// A Java runtime image (jimage) or JMOD file.
     JavaImage(super::javaimage::Layout),
+    /// A Windows minidump or kernel crash dump.
+    Minidump(super::minidump::Layout),
 }
 
 impl Kind {
@@ -163,6 +165,7 @@ impl Kind {
             Self::Iso9660(layout) => layout.format(),
             Self::Discs(layout) => layout.format(),
             Self::JavaImage(layout) => layout.format(),
+            Self::Minidump(layout) => layout.format(),
         }
     }
 
@@ -203,6 +206,7 @@ impl Kind {
             Self::Iso9660(layout) => layout.label(),
             Self::Discs(layout) => layout.label(),
             Self::JavaImage(layout) => layout.label(),
+            Self::Minidump(layout) => layout.label(),
         }
     }
 
@@ -243,6 +247,7 @@ impl Kind {
             Self::Iso9660(layout) => layout.is_weak(),
             Self::Discs(layout) => layout.is_weak(),
             Self::JavaImage(layout) => layout.is_weak(),
+            Self::Minidump(layout) => layout.is_weak(),
         }
     }
 }
@@ -288,6 +293,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Iso9660(layout) => super::iso9660::parse_container(data, layout),
         Kind::Discs(layout) => super::discs::parse_container(data, layout),
         Kind::JavaImage(layout) => super::javaimage::parse_container(data, layout),
+        Kind::Minidump(layout) => super::minidump::parse_container(data, layout),
     }
 }
 

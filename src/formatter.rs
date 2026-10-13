@@ -796,6 +796,8 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::DfuSuffix => "USB DFU file",
         FileFormat::SilabsEbl => "Silicon Labs EBL",
         FileFormat::NordicInitPacket => "Nordic DFU init packet",
+        FileFormat::Minidump => "Windows minidump",
+        FileFormat::WindowsKernelDump => "Windows kernel dump",
     }
 }
 

@@ -89,6 +89,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error parsing a Windows minidump or kernel crash dump.
+    #[error("Minidump parse error: {message}")]
+    MinidumpParseError {
+        /// What is wrong with the dump.
+        message: String,
+    },
+
     /// Error parsing an Espressif firmware image or flash dump (ESP32
     /// family, ESP8266, ESP-IDF partition table).
     #[error("Espressif image parse error: {message}")]
