@@ -174,7 +174,11 @@ claims files by their UIDs alone; see [Symbian E32 images](epoc.md). LE/LX heade
 stub (weak; header, object table, page table and page extents validated;
 the CPU type is the ISA evidence) and PE images whose DOS header starts
 with `ZM` (only with the PE signature at `e_lfanew`) followed; see
-[DOS-family headers](mz.md). UEFI capsules (FMP, nested FMP,
+[DOS-family headers](mz.md). The LE/LX parser now reads the module type
+from its whole type field (VxDs are reported as such), reports unmapped
+CPU types behind a stub as an unknown ISA, and reads stubbed headers in
+their declared byte and word order (mixed or undefined orders are parse
+errors). UEFI capsules (FMP, nested FMP,
 `EFI_CAPSULE_GUID`, JSON, Windows UX, Intel, Lenovo, Toshiba and AMI Aptio;
 signatures not verified, Framework split capsules not supported) followed;
 see [UEFI capsules](capsule.md).
