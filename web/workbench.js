@@ -196,9 +196,22 @@ function renderSelected() {
   text('file-name', entry.name); text('file-size', fmtSize(entry.size));
   text('file-status', statusLabel(entry.status)); $('file-status').className = `badge ${entry.status}`;
   const p = entry.payload, pr = p?.primary;
-  const title = p ? archLabel(p) : entry.status === 'error' ? 'unclassified' : statusLabel(entry.status);
-  const sub = p ? p.slices?.length > 1 ? [...new Set(p.slices.map(s => isaName(s.isa)))].join(' + ') : isaName(pr.isa) : entry.error || 'waiting for classification';
-  const fields = p ? [['bitwidth', `${pr.bitwidth}-bit`], ['endianness', fmtEndian(pr.endianness).toLowerCase()], ['format', fmtFormatName(p.format.format).toLowerCase()], ['confidence', `${(pr.confidence * 100).toFixed(1)}%`, `via ${fmtSource(pr.source).toLowerCase()}`], ...(p.extensions?.length ? [['extensions', p.extensions.length]] : [])]
+  const architectures = p ? [...new Set((p.slices?.length ? p.slices : [pr])
+    .filter(result => typeof result.isa === 'string').map(result => result.isa))] : [];
+  const mixed = architectures.length > 1;
+  const title = mixed ? 'multiple ISAs'
+    : p ? architectures.length === 1 ? archId(architectures[0]) : archLabel(p)
+      : entry.status === 'error' ? 'unclassified' : statusLabel(entry.status);
+  const sub = p ? architectures.length ? architectures.map(isaName).join(' · ') : isaName(pr.isa)
+    : entry.error || 'waiting for classification';
+  const fields = p ? [
+    ['bitwidth', mixed ? 'per member' : `${pr.bitwidth}-bit`],
+    ['endianness', mixed ? 'per member' : fmtEndian(pr.endianness).toLowerCase()],
+    ['format', fmtFormatName(p.format.format).toLowerCase()],
+    [mixed ? 'primary confidence' : 'confidence', `${(pr.confidence * 100).toFixed(1)}%`,
+      `via ${fmtSource(pr.source).toLowerCase()}`],
+    ...(p.extensions?.length ? [['extensions', p.extensions.length]] : []),
+  ]
     : [['size', fmtSize(entry.size)], ...(entry.elapsed == null ? [] : [['analyzed in', `${entry.elapsed.toFixed(1)} ms`]])];
   $('classification-band').innerHTML = `<div class="hero"><div class="hero-label">instruction set architecture</div><div class="hero-isa ${entry.status === 'error' ? 'error' : ''}">${esc(title)}</div><div class="hero-sub">${esc(sub)}</div></div>${fields.map(([key, value, detail]) => `<div class="hero-field"><div class="hero-field-label">${esc(key)}</div><span class="hero-field-value">${esc(value)}</span>${detail ? `<span class="hero-field-sub">${esc(detail)}</span>` : ''}</div>`).join('')}`;
   renderClassification(entry);
@@ -220,7 +233,13 @@ function renderClassification(entry) {
   let html = cryptoPanel(entry) + subfilePanel(entry) + '<div class="classification-grid">' + panel('format', row('format', fmtFormatName(p.format.format)) + row('confidence', `${(p.format.confidence * 100).toFixed(1)}%`) + (p.format.magic_offset == null ? '' : row('magic offset', '0x' + hx(p.format.magic_offset))) + (p.format.variant_name ? row('variant', p.format.variant_name) : ''));
   if (p.metadata?.length) html += panel('metadata', p.metadata.map(m => row(m.label, fmtMetaValue(m))).join(''), p.metadata.length);
   html += '</div>';
-  if (p.slices?.length) html += panel('contained architectures', p.slices.map(s => row(`${s.label ? s.label + ' · ' : ''}${isaName(s.isa)}`, `${s.bitwidth}-bit ${fmtEndianShort(s.endianness)} · 0x${hx(s.offset)} · ${fmtSize(s.size)}${s.variant ? ' · ' + fmtVariant(s.variant) : ''}`)).join(''), p.slices.length);
+  if (p.slices?.length) {
+    const rows = p.slices.map(slice => [slice.label || '—', isaName(slice.isa),
+      slice.bitwidth || '—', slice.bitwidth ? fmtEndianShort(slice.endianness) : '—',
+      fmtSize(slice.size), `0x${hx(slice.offset)}`, slice.variant ? fmtVariant(slice.variant) : '—']
+      .map(value => `<td>${esc(value)}</td>`).join(''));
+    html += resultsTable('contained architectures', ['member', 'ISA', 'bits', 'endian', 'stored size', 'parent offset', 'variant'], rows);
+  }
   if (p.extensions?.length) {
     const groups = Map.groupBy ? Map.groupBy(p.extensions, x => x.category) : p.extensions.reduce((m, x) => m.set(x.category, [...(m.get(x.category) || []), x]), new Map());
     html += panel('isa extensions', [...groups].map(([category, extensions]) => `<div class="metadata-row"><span>${esc(fmtCat(category).toLowerCase())}</span><span class="tags">${extensions.map(x => `<span class="tag" title="${esc(`${(x.confidence * 100).toFixed(0)}% · ${x.source}`)}">${esc(x.name)}</span>`).join('')}</span></div>`).join(''), p.extensions.length);
@@ -328,20 +347,49 @@ function renderBreadcrumb(entry) {
     + `<span aria-current="page">${esc(entry.name)}</span>`;
 }
 
+function resultsTable(label, columns, rows) {
+  const heading = columns.map(column => `<th scope="col">${esc(column)}</th>`).join('');
+  const body = rows.map(cells => `<tr>${cells}</tr>`).join('');
+  return `<section class="panel"><header>[ ${esc(label)} ] <span class="muted">${rows.length}</span></header><div class="results-table-scroll" tabindex="0" role="region" aria-label="${esc(label)} table"><table class="results-table" aria-label="${esc(label)}"><thead><tr>${heading}</tr></thead><tbody>${body}</tbody></table></div></section>`;
+}
+
+function subfileEvidence(entry, component, slices) {
+  if (component.opaque) return null;
+  const child = entries.get(entry.children.get(component.index));
+  if (child?.payload) {
+    return { ...child.payload.primary, format: child.payload.format.format };
+  }
+  // Join only the immediate stored range and label. Nested slices and
+  // duplicate member names must not lend another component their ISA.
+  return slices.get(JSON.stringify([component.label, component.offset, component.stored_size]));
+}
+
 function subfilePanel(entry) {
   if (!entry.subfiles?.length) {
     return entry.subfileError ? panel('subfiles', `<p class="error">${esc(entry.subfileError)}</p>`) : '';
   }
+  const slices = new Map((entry.payload?.slices || []).map(slice => [
+    JSON.stringify([slice.label, slice.offset, slice.size]), slice,
+  ]));
   const rows = entry.subfiles.map(component => {
     const disabled = !component.available || entry.depth >= MAX_SUBFILE_DEPTH;
-    const detail = component.transform
-      ? `${fmtSize(component.size)} decoded · ${component.transform} · ${fmtSize(component.stored_size)} stored`
-      : fmtSize(component.size);
-    const reason = !component.available ? ' · exceeds the 64 MiB inspection limit'
-      : entry.depth >= MAX_SUBFILE_DEPTH ? ' · nesting limit reached' : component.opaque ? ' · opaque; hex and entropy only' : '';
-    return `<div class="subfile-row"><button type="button" data-subfile-index="${esc(component.index)}" ${disabled ? 'disabled' : ''}>open ${esc(component.label || `member ${component.index}`)}</button><span>${esc(detail)} · parent 0x${esc(hx(component.offset))}${esc(reason)}</span></div>`;
-  }).join('');
-  return panel('subfiles', rows, entry.subfiles.length);
+    const evidence = subfileEvidence(entry, component, slices);
+    const known = typeof evidence?.isa === 'string';
+    const reason = !component.available ? 'exceeds the 64 MiB inspection limit'
+      : entry.depth >= MAX_SUBFILE_DEPTH ? 'nesting limit reached'
+        : component.opaque ? 'opaque; hex and entropy only' : 'available';
+    const values = [component.opaque ? 'not analyzed' : evidence ? isaName(evidence.isa) : 'unknown',
+      known && evidence.bitwidth ? evidence.bitwidth : '—',
+      known && evidence.bitwidth ? fmtEndianShort(evidence.endianness) : '—',
+      evidence?.format ? fmtFormatName(evidence.format) : '—',
+      evidence?.confidence == null ? '—' : `${(evidence.confidence * 100).toFixed(1)}%`,
+      fmtSize(component.size), fmtSize(component.stored_size), `0x${hx(component.offset)}`,
+      component.transform || '—', reason];
+    const button = `<td><button type="button" data-subfile-index="${esc(component.index)}" ${disabled ? 'disabled' : ''}>open ${esc(component.label || `member ${component.index}`)}</button></td>`;
+    return button + values.map(value => `<td>${esc(value)}</td>`).join('');
+  });
+  return resultsTable('subfiles', ['member', 'ISA', 'bits', 'endian', 'format', 'confidence',
+    'size', 'stored size', 'parent offset', 'transform', 'inspection'], rows);
 }
 
 function openSubfile(index) {

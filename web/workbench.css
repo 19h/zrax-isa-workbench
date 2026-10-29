@@ -296,17 +296,37 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
 .subfile-breadcrumb[hidden] {
   display: none;
 }
-.subfile-row {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  padding: 0.5rem 0;
-  border-bottom: 0.0625rem solid var(--line);
+.results-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
 }
-.subfile-row > span {
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+.results-table th,
+.results-table td {
+  padding: 0.375rem 0.75rem;
+  border-bottom: 0.0625rem solid var(--line-hairline);
+  text-align: left;
+}
+.results-table th {
+  font-size: 0.6875rem;
+  font-weight: 400;
   color: var(--text-muted);
-  overflow-wrap: anywhere;
+  background: var(--surface-panel);
+}
+.results-table tbody tr:hover {
+  background: var(--surface-hover);
+}
+.results-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.results-table button {
+  padding: 0;
+  text-align: left;
 }
 
 .image4-crypto {

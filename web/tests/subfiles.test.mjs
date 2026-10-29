@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { before, after, test } from 'node:test';
-import { setup, teardown, openPage, load, finished, baseUrl } from './helpers.mjs';
+import { setup, teardown, openPage, load, finished, baseUrl, elf } from './helpers.mjs';
 
 before(setup);
 after(teardown);
@@ -19,6 +19,28 @@ function ftab(payload) {
   data.writeUInt32LE(0x40, 0x34);
   data.writeUInt32LE(payload.length, 0x38);
   payload.copy(data, 0x40);
+  return data;
+}
+
+// FTAB fixed header followed by two records with the same four-byte tag.
+// Their distinct stored ranges contain x86-64 and AArch64 ELF headers.
+function duplicateTagFtab() {
+  const payloads = [elf('x86', 62).buffer, elf('arm', 183).buffer];
+  const headerSize = 0x50;
+  const data = Buffer.alloc(headerSize + payloads.reduce((size, payload) => size + payload.length, 0));
+  data.writeUInt32LE(1, 0);
+  data.writeUInt32LE(0xffffffff, 4);
+  data.write('rkosftab', 0x20, 'ascii');
+  data.writeUInt32LE(payloads.length, 0x28);
+  let offset = headerSize;
+  payloads.forEach((payload, index) => {
+    const record = 0x30 + index * 16;
+    data.write('code', record, 'ascii');
+    data.writeUInt32LE(offset, record + 4);
+    data.writeUInt32LE(payload.length, record + 8);
+    payload.copy(data, offset);
+    offset += payload.length;
+  });
   return data;
 }
 
@@ -44,6 +66,39 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
 }
 
 for (const path of ['/web/index.html', '/dist/index.html']) {
+  test(`subfile tables show per-member evidence without mixing duplicate labels in ${path}`, async t => {
+    const page = await openPage(t);
+    await load(page, path);
+    await page.locator('#fileinput').setInputFiles([
+      { name: 'mixed.ftab', buffer: duplicateTagFtab(), mimeType: 'application/octet-stream' },
+    ]);
+    await finished(page, 1);
+    assert.equal(await page.locator('.hero-isa').textContent(), 'multiple ISAs');
+    const table = page.getByRole('table', { name: 'subfiles', exact: true });
+    const rows = table.locator('tbody tr');
+    assert.equal(await rows.count(), 2);
+    assert.deepEqual(await rows.nth(0).locator('td').allTextContents(),
+      ['open code', 'x86-64', '64', 'little', '—', '—', '64 B', '64 B', '0x00000050', '—', 'available']);
+    assert.deepEqual((await rows.nth(1).locator('td').allTextContents()).slice(0, 4),
+      ['open code', 'AArch64', '64', 'little']);
+    await rows.nth(0).getByRole('button', { name: 'open code', exact: true }).click();
+    await finished(page, 2);
+    await page.getByRole('navigation', { name: 'Container path' })
+      .getByRole('button', { name: 'mixed.ftab', exact: true }).click();
+    const cells = await rows.nth(0).locator('td').allTextContents();
+    assert.equal(cells[4], 'ELF');
+    assert.match(cells[5], /^\d+\.\d%$/);
+    await page.setViewportSize({ width: 500, height: 800 });
+    const bounds = await table.evaluate(element => ({
+      scroll: element.parentElement.scrollWidth,
+      width: element.parentElement.clientWidth,
+      page: document.documentElement.scrollWidth,
+      viewport: innerWidth,
+    }));
+    assert.ok(bounds.scroll > bounds.width, 'the table scrolls inside its panel');
+    assert.ok(bounds.page <= bounds.viewport, 'the table does not widen the page');
+  });
+
   test(`archive data and opaque members open in ${path}`, async t => {
     const page = await openPage(t);
     await load(page, path);
@@ -63,6 +118,9 @@ for (const path of ['/web/index.html', '/dist/index.html']) {
     ]);
     await finished(page, 3);
     await page.getByRole('tab', { name: 'classification', exact: true }).click();
+    const opaque = page.getByRole('table', { name: 'subfiles', exact: true }).locator('tbody tr').first();
+    assert.match(await opaque.textContent(), /not analyzed/);
+    assert.equal(await opaque.locator('td').nth(2).textContent(), '—');
     await page.getByRole('button', { name: 'open bin/payload.elf', exact: true }).click();
     await finished(page, 4);
     assert.match(await page.locator('#classification-content').textContent(), /Opaque component; ISA analysis was not applied/);

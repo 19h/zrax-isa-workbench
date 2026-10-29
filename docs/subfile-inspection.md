@@ -35,6 +35,23 @@ A replacement successful trial removes the previous decrypted result and
 its descendants. Invalid or incomplete material reports an inline status
 without changing the original file.
 
+Subfiles and contained architectures use the workbench's bordered table
+style, with a horizontally scrollable region on narrow screens. Subfile
+rows show ISA, register width in bits, byte order, extracted/stored byte
+sizes, parent byte offset, transform and inspection status. Format and
+confidence appear when an opened child's independent result is available;
+an em dash means the parent summary did not report that field. Opaque
+members say **not analyzed** and do not inherit the parent's ISA or byte
+order. Multiple detected ISAs use a compact header and per-member widths
+and byte orders rather than applying the primary member's fields to all.
+
+The browser joins the parent's existing classifications by label and exact
+stored range, then prefers an opened child's own result. It does not run
+extra classifiers to populate the table. With `m` members, `s` slices and
+`t` total characters in indexed labels and rendered cells, building the
+index and rows takes `O(m + s + t)` expected time and `O(m + s + t)` space,
+including rendered rows and assuming constant-time map lookup.
+
 ## Coordinates and native API
 
 `inspection::subfiles(data)` lists descriptors in deterministic order:
@@ -100,6 +117,8 @@ browser retains explicitly opened files until removal or clearing.
 | S4 | Labels are not unique identities | Open duplicate-name members by index and retain separate entries |
 | S5 | Ancestors own their open descendants | Remove a root and check that descendants disappear while another root remains |
 | S6 | Interactive results depend on current request identity | Change material or remove a file while a decryption request is pending; stale results must not create a current result |
+| S7 | A member's label plus exact stored offset and size identifies its parent classification | Build duplicate-name FTAB entries with different ELF targets and ranges; each table row must retain its own ISA |
+| S8 | Parent slice summaries do not expose member format or confidence | Unopened rows show em dashes; open one child and return to the parent to verify only its format/confidence cells populate |
 
 | Impact | Adjacent pattern or boundary |
 | --- | --- |
@@ -107,8 +126,24 @@ browser retains explicitly opened files until removal or clearing.
 | High | Opaque policy is explicit engine state, so manual opening cannot accidentally classify ciphertext |
 | Medium | Duplicate tags and paths need index-based identity rather than name-based lookup |
 | Medium | Each explicit open retains a browser file; removing a container releases its descendants' application references |
+| Medium | Byte order on an unknown or opaque member is unestablished; the table suppresses default placeholder byte order and width |
 
 ## Validation
+
+Table presentation was verified on 2026-10-29 on macOS arm64, Node 25.8.1
+and Playwright 1.61.1 Chromium. The web build passed and 33 focused browser
+tests passed with no skips. New source/packaged-page cases cover duplicate
+FTAB labels with different ISAs, format/confidence after opening, opaque
+members and 500 CSS-pixel viewport containment. Rendered checks used a real
+UARP and its 51-member FTAB; no firmware was added to the repository. Native
+parser tests were not rerun for these JavaScript/CSS-only changes.
+
+The complete browser suite passed 351 tests with four external D10/RX113
+fixture skips using `node --test --test-concurrency=4 tests/*.test.mjs` from
+`web/`. Two unrestricted runs encountered an entropy placeholder assertion
+and unrelated WASM loading/engine-start failures respectively; all 18
+workbench tests passed on a targeted rerun, and the limited-concurrency
+complete run passed without code changes.
 
 Native tests compare exact extracted bytes, stored coordinates, invalid
 indices, ordinary archive data and opaque encrypted ZIP content. Browser

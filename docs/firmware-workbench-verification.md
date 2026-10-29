@@ -31,7 +31,7 @@ pane. No third-party firmware or actual device keys were added to the tree.
 | Latest affected integration targets | 62 passed, 1 ignored across `apple`, `image4_crypto`, `ftab`, `uarp` and `inspection`; the codec test additionally covers all three raw codecs |
 | `cargo check --all-features --examples --locked` | Passed |
 | `./build-web.sh` | Passed; fresh WASM and packaged workbench/classic assets, including adapted-code license notices |
-| Latest `npm test` | 349 passed, 4 skipped; includes plaintext panel visibility and custom-key override regressions; one earlier WASM response abort passed both a focused UEFI rerun and a full rerun |
+| Latest complete browser suite | 351 passed, 4 skipped with `node --test --test-concurrency=4 tests/*.test.mjs`; includes member-table, duplicate-label, narrow-screen, plaintext panel and custom-key regressions; unrestricted loading/timing failures are recorded in `subfile-inspection.md` |
 | Clippy comparison | No new warnings compared with base `d23b145`; existing all-feature library backlog remains 2,682 warnings |
 | Formatting and whitespace | New Rust files and touched new code checked; `git diff --check` passed; unrelated formatting retained |
 | Archive differential snapshot | 129,101 inputs over 17 fixtures: complete files, every truncation and single-byte zero/`0xFF`/bit-flip mutations; parser `Debug`, exact errors and payload JSON matched base `d23b145` |
