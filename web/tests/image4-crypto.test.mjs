@@ -35,14 +35,14 @@ const sequence = items => der(0x30, Buffer.concat(items));
 
 // IM4P: magic, role krnl, description, ciphertext, optional DER keybag
 // (production class 1, sixteen-byte IV, thirty-two-byte key).
-function im4p(plaintext, mode, keybag = false) {
+function im4p(plaintext, mode, keybag = false, encoded = { iv: IV, key: KEY }) {
   const cipher = createCipheriv(`aes-256-${mode}`, KEY, IV);
   cipher.setAutoPadding(false);
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const fields = [der(0x16, Buffer.from('IM4P')), der(0x16, Buffer.from('krnl')),
     der(0x16, Buffer.from('Browser AES fixture')), der(0x04, ciphertext)];
   if (keybag) fields.push(der(0x04, sequence([
-    sequence([der(0x02, Buffer.from([1])), der(0x04, IV), der(0x04, KEY)]),
+    sequence([der(0x02, Buffer.from([1])), der(0x04, encoded.iv), der(0x04, encoded.key)]),
   ])));
   return sequence(fields);
 }
@@ -75,6 +75,75 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
 }
 
 for (const path of ['/web/index.html', '/dist/index.html']) {
+  test(`custom plaintext keys override encoded keybags in ${path}`, async t => {
+    const page = await openPage(t);
+    await load(page, path);
+    const encoded = { iv: Buffer.alloc(16, 0x56), key: Buffer.alloc(32, 0x78) };
+    await page.locator('#fileinput').setInputFiles([
+      { name: 'wrapped-keybag.im4p', buffer: im4p(await kernel(), 'cbc', true, encoded),
+        mimeType: 'application/octet-stream' },
+    ]);
+    await finished(page, 1);
+    const key = page.getByRole('textbox', { name: 'AES key', exact: true });
+    const iv = page.getByRole('textbox', { name: 'AES IV', exact: true });
+    const source = page.getByRole('combobox', { name: 'Key material', exact: true });
+    assert.equal(await source.inputValue(), 'custom');
+    assert.equal(await key.inputValue(), '');
+    await key.fill(KEY_HEX);
+    await iv.fill(IV_HEX);
+    await page.getByRole('button', { name: 'open decrypted payload', exact: true }).waitFor();
+    await source.selectOption('0');
+    assert.equal(await key.inputValue(), encoded.key.toString('hex').toUpperCase());
+    assert.equal(await key.evaluate(input => input.readOnly), true);
+    await page.waitForFunction(() => document.querySelector('#crypto-status').textContent
+      .includes('Unknown Image4 plaintext'));
+    await source.selectOption('custom');
+    assert.equal(await key.inputValue(), KEY_HEX);
+    assert.equal(await iv.inputValue(), IV_HEX);
+    assert.equal(await key.evaluate(input => input.readOnly), false);
+    await page.waitForFunction(() => document.querySelector('#crypto-status').textContent
+      .includes('unique structured candidate'));
+    await page.getByRole('button', { name: 'open decrypted payload', exact: true }).click();
+    assert.equal(await page.locator('.hero-isa').textContent(), 'aarch64');
+  });
+
+  test(`recognized plaintext Image4 payloads omit decryption controls in ${path}`, async t => {
+    const inputs = [
+      { name: 'stored.im4p', plaintext: await kernel(), isa: 'aarch64' },
+      {
+        name: 'raw-arm.im4p',
+        plaintext: await readFile(new URL('../../tests/fixtures/mcu/thumbv7em.text.bin', import.meta.url)),
+        isa: 'arm',
+      },
+      {
+        name: 'compressed.im4p',
+        buffer: await readFile(new URL('../../tests/fixtures/apple/krnl.bvx2.im4p', import.meta.url)),
+        isa: 'aarch64',
+      },
+      {
+        name: 'wrapped.img4',
+        buffer: await readFile(new URL('../../tests/fixtures/apple/krnl.img4', import.meta.url)),
+        isa: 'aarch64',
+      },
+    ];
+    for (const input of inputs) {
+      const page = await openPage(t);
+      await load(page, path);
+      // Plain IM4P: magic, role, description, unencrypted payload; no keybag.
+      const buffer = input.buffer || sequence([
+        der(0x16, Buffer.from('IM4P')), der(0x16, Buffer.from('krnl')),
+        der(0x16, Buffer.from('Plaintext browser fixture')), der(0x04, input.plaintext),
+      ]);
+      await page.locator('#fileinput').setInputFiles([
+        { name: input.name, buffer, mimeType: 'application/octet-stream' },
+      ]);
+      await finished(page, 1);
+      assert.equal(await page.locator('.hero-isa').textContent(), input.isa);
+      assert.equal(await page.locator('form[data-image4]').count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'open krnl', exact: true }).count(), 1);
+    }
+  });
+
   test(`a queued decrypt reply cannot create a child after navigation in ${path}`, async t => {
     const page = await openPage(t);
     await page.addInitScript(() => {
@@ -166,6 +235,9 @@ for (const path of ['/web/index.html', '/dist/index.html']) {
     await finished(page, 1);
     const key = page.getByRole('textbox', { name: 'AES key', exact: true });
     const iv = page.getByRole('textbox', { name: 'AES IV', exact: true });
+    assert.equal(await key.inputValue(), '');
+    assert.equal(await key.evaluate(input => input.readOnly), false);
+    await page.getByRole('combobox', { name: 'Key material', exact: true }).selectOption('0');
     assert.equal(await key.inputValue(), KEY_HEX);
     assert.equal(await iv.inputValue(), IV_HEX);
     assert.equal(await key.evaluate(input => input.readOnly), true);
@@ -188,6 +260,6 @@ for (const path of ['/web/index.html', '/dist/index.html']) {
     assert.equal(await page.getByRole('button', { name: 'open decrypted payload', exact: true }).count(), 0);
     await page.getByRole('combobox', { name: 'AES mode', exact: true }).selectOption('cbc');
     await page.getByRole('button', { name: 'open decrypted payload', exact: true }).waitFor();
-    assert.match(await page.locator('#crypto-status').textContent(), /AES-CBC candidate decoded; not authenticated/);
+    assert.match(await page.locator('#crypto-status').textContent(), /AES-CBC applied; plaintext not validated or authenticated/);
   });
 }

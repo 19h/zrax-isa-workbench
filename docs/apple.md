@@ -94,14 +94,49 @@ The automatic checks exclude nested Apple formats to prevent recursive
 keybag trials during recognition. Explicit CBC/CTR selection permits
 inspection of raw or nested candidates without claiming validation.
 
-The workbench panel has read-only key/IV fields and an entry selector when
-keybags exist, and editable hexadecimal fields otherwise. Edits apply after
-300 ms; **try decryption** applies immediately. Automatic mode rejects
-unrecognized output; explicit modes expose unverified candidates. Successful
-output becomes a subfile with its own full workbench and a breadcrumb back
-to the original. Key/IV material is not written to local storage, logs or
-classification JSON. This is session-memory handling, not a zeroization
-claim about browser or allocator memory.
+The workbench suppresses the decryption panel for keybag-free payloads when
+ISA classification succeeds or an available, nonopaque member has already
+been decoded. Merely exposing stored bytes does not establish plaintext;
+unresolved payloads retain the controls. This is a presentation rule, not
+cryptographic proof of plaintext. Editable custom plaintext key/IV fields
+are the default, including when encoded keybags exist. The material selector
+can inspect or explicitly try encoded keybag bytes in read-only fields;
+these are not unwrapped payload keys. Switching back to custom material
+restores the session's custom fields. Edits apply after 300 ms;
+**try decryption** applies immediately.
+Automatic mode rejects unrecognized output; explicit modes expose unverified
+candidates. Successful output becomes a subfile with its own full workbench
+and a breadcrumb back to the original. Key/IV material is not written to
+local storage, logs or classification JSON. This is session-memory handling,
+not a zeroization claim about browser or allocator memory. An explicit mode
+reports that AES was applied and the plaintext was not validated or
+authenticated: arbitrary ciphertext and a wrong key still produce output.
+
+Panel visibility was verified on 2026-10-29 on macOS arm64, Node 25.8.1
+and Playwright 1.61.1 Chromium: 21 focused Apple and AES browser tests passed
+with no skips after rebuilding WASM and packaged assets. Regressions cover
+stored Mach-O, raw ARM code, LZFSE and IMG4 wrappers in source and packaged
+pages, alongside encrypted payload controls. The full browser suite passed
+349 tests with four skips requiring external D10 or RX113 firmware. One
+earlier run encountered an aborted WASM response in a packaged UEFI test;
+that target and the complete suite passed on rerun. Native
+parser tests were not rerun for this JavaScript-only correction.
+
+The same platform verified a local `iBEC.d10.RELEASE.im4p` from iPhone9,1
+build 14A403 (393,373 B, SHA-256
+`287e609de43d8a1823d546d755bf62427c5c6804c17947b861d894ec15fffda2`).
+The 393,216 B payload starts at file byte offset `0x27`. Both encoded
+keybags were inspected; the production bytes match the previously displayed
+fields. The [published plaintext IV/key](https://theapplewiki.com/wiki/Keys%3AWhitetail_14A403_%28iPhone9%2C1%29#iBEC)
+with AES-256-CBC produced SHA-256
+`1a4c2e5fd60b68ed1fdafaad1cd688896b2d78ee4ab7a79d2a689eaf5a7ddfa4`.
+Independent Node `createDecipheriv` output and source/packaged WASM output
+matched byte for byte; both workbench pages classified the child as AArch64.
+Native heuristic classification reported confidence 0.99, and the bytes
+contain `iBoot-3406.1.79`. Using encoded production keybag bytes directly
+instead produced different output with inconclusive native classification.
+This verifies the supplied material's observed output, not authenticity or
+device-key unwrapping. The firmware and keys were not added as fixtures.
 
 For input of `n` bytes and a maximum decoded output of `L = 64 MiB`, each
 bounded codec trial uses `O(n + L)` time and `O(n + L)` working space,
@@ -122,6 +157,8 @@ must leave only zero/erased padding before their output is adopted.
 | C6 | A valid file format outranks speculative headerless decompression | Known Mach-O plaintext retains exact bytes and has no extra codec transform |
 | C7 | Distinct recognized outputs remain ambiguous across every bag and mode | Construct conflicting candidate records with equal/different modes; the shared selector must reject them; identical and unrecognized candidates must not create ambiguity |
 | C8 | Keybag enumeration is limited to 4096 entries as a resource policy, not a wire-format maximum | Accept 4096 valid records and reject 4097 before material serialization |
+| C9 | Successful ISA classification or decoding makes the decryption form unnecessary for a keybag-free payload | Browser regressions cover stored Mach-O, raw ARM code and LZFSE payloads; ciphertext without a keybag retains editable fields. A false positive ISA result could suppress the form and would falsify this presentation assumption |
+| C10 | Encoded keybag bytes may differ from usable plaintext AES material | Encrypt a synthetic payload with one IV/key and encode different keybag bytes; custom material must recover the payload, encoded material must fail automatic recognition, and switching sources must preserve custom material |
 
 | Impact | Adjacent pattern or boundary |
 | --- | --- |
@@ -129,6 +166,7 @@ must leave only zero/erased padding before their output is adopted.
 | High | Opening an opaque child must preserve its classification policy; entropy and hex remain available without running the code model |
 | Medium | Multiple modes or keybags can produce candidates; distinct validated byte sequences are treated as ambiguous |
 | Medium | No metadata, nonce, load address or firmware role is treated as an ISA declaration |
+| Medium | A false positive ISA classification could hide custom AES controls on keybag-free ciphertext; panel visibility is not an encryption detector |
 
 ## Img3 and 8900
 
@@ -229,7 +267,7 @@ requires.
 
 | Boundary | Behavior |
 | --- | --- |
-| Device-wrapped IM4P keybags | No device-key unwrapping; unsuccessful trials remain opaque; custom material is available inline when no keybag is present |
+| Device-wrapped IM4P keybags | No device-key unwrapping; unsuccessful trials remain opaque; custom plaintext material is available inline even when encoded keybags are present |
 | Automatic decryption of raw code or nested Apple formats | Raw output and Apple-container candidates require explicitly selecting CBC or CTR; automatic mode does not use entropy as proof |
 | Nonpadding bytes after a decrypted compressed stream | Automatic codec adoption is rejected so a trailer is not silently discarded; an explicit AES mode permits inspecting the complete plaintext candidate |
 | IM4M signatures, certificate chains and `DGST` digests | Sizes reported; not verified |

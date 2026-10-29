@@ -236,16 +236,25 @@ function renderClassification(entry) {
 function cryptoPanel(entry) {
   const info = entry.image4Info;
   if (!info) return '';
-  const draft = entry.cryptoDraft || { key: '', iv: '', mode: 'auto', bag: 0 };
+  // Image4 metadata describes the container, not whether AES is needed.
+  // A stored child alone is insufficient: ciphertext without a keybag is
+  // also exposed as stored bytes until its contents can be recognized.
+  const primary = entry.payload?.primary;
+  const classified = typeof primary?.isa === 'string' && primary.confidence > 0;
+  const decoded = entry.subfiles?.some(file => file.available && !file.opaque && file.transform);
+  if (!info.keybags.length && (classified || decoded)) return '';
+  const draft = entry.cryptoDraft || { key: '', iv: '', mode: 'auto', bag: 'custom' };
   const bag = info.keybags[draft.bag];
-  const options = info.keybags.map((bag, index) => `<option value="${esc(index)}" ${index === draft.bag ? 'selected' : ''}>${esc(`class ${bag.class} · entry ${index}`)}</option>`).join('');
+  const options = info.keybags.map((bag, index) => `<option value="${esc(index)}" ${String(index) === draft.bag ? 'selected' : ''}>${esc(`Encoded keybag · class ${bag.class} · entry ${index}`)}</option>`).join('');
   const material = bag
-    ? '<p class="muted">Encoded keybag material from this file. Device-wrapped material is not unwrapped.</p>'
-    : '<p class="muted">Enter a hexadecimal key and IV. Changes apply after 300 ms; material stays in this session.</p>';
+    ? '<p class="muted">Encoded keybag bytes from this file; not unwrapped payload keys. Applying AES with these bytes does not establish valid plaintext.</p>'
+    : '<p class="muted">Enter a plaintext AES key and IV in hexadecimal. Encoded keybags are not unwrapped. Changes apply after 300 ms; material stays in this session.</p>';
   const mode = ['auto', 'cbc', 'ctr'].map(mode => `<option value="${esc(mode)}" ${mode === draft.mode ? 'selected' : ''}>${mode === 'auto' ? 'Try CBC and CTR' : `AES-${mode.toUpperCase()} candidate`}</option>`).join('');
   const result = entries.has(entry.decryptedId)
     ? `<button type="button" data-decrypted-id="${esc(entry.decryptedId)}">open decrypted payload</button>` : '';
-  const body = `<form class="image4-crypto" data-image4="true">${material}${options ? `<label>keybag<select name="bag">${options}</select></label>` : ''}<label>key<input name="key" aria-label="AES key" autocomplete="off" spellcheck="false" value="${esc(bag?.key || draft.key)}" ${bag ? 'readonly' : ''}></label><label>IV<input name="iv" aria-label="AES IV" autocomplete="off" spellcheck="false" value="${esc(bag?.iv || draft.iv)}" ${bag ? 'readonly' : ''}></label><label>mode<select name="mode" aria-label="AES mode">${mode}</select></label><div class="crypto-actions"><button type="submit">try decryption</button>${result}</div><p id="crypto-status" role="status">${esc(entry.cryptoStatus || 'No payload authentication is performed')}</p></form>`;
+  const source = options
+    ? `<label>material<select name="bag" aria-label="Key material"><option value="custom" ${draft.bag === 'custom' ? 'selected' : ''}>Custom plaintext key and IV</option>${options}</select></label>` : '';
+  const body = `<form class="image4-crypto" data-image4="true">${material}${source}<label>key<input name="key" aria-label="AES key" autocomplete="off" spellcheck="false" value="${esc(bag?.key || draft.key)}" ${bag ? 'readonly' : ''}></label><label>IV<input name="iv" aria-label="AES IV" autocomplete="off" spellcheck="false" value="${esc(bag?.iv || draft.iv)}" ${bag ? 'readonly' : ''}></label><label>mode<select name="mode" aria-label="AES mode">${mode}</select></label><div class="crypto-actions"><button type="submit">try decryption</button>${result}</div><p id="crypto-status" role="status">${esc(entry.cryptoStatus || 'No payload authentication is performed')}</p></form>`;
   return panel('Image4 decryption', body);
 }
 
@@ -256,7 +265,7 @@ function scheduleDecryption(form, delay = DECRYPT_DEBOUNCE_MS) {
   entry.decryptRequest = ++requestId;
   entry.decryptPending = false;
   worker.postMessage({ type: 'cancel', operations: ['decrypt'] });
-  const bag = Number(form.elements.bag?.value || 0);
+  const bag = form.elements.bag?.value || 'custom';
   const keybag = entry.image4Info.keybags[bag];
   if (keybag) {
     form.elements.key.value = keybag.key;
@@ -266,6 +275,7 @@ function scheduleDecryption(form, delay = DECRYPT_DEBOUNCE_MS) {
   const iv = form.elements.iv.value.replace(/\s/g, '');
   const mode = form.elements.mode.value;
   entry.cryptoDraft = { key, iv, mode, bag };
+  if (!keybag) entry.cryptoCustom = { key, iv };
   if (!/^(?:[0-9a-f]{32}|[0-9a-f]{48}|[0-9a-f]{64})$/i.test(key) || !/^[0-9a-f]{32}$/i.test(iv)) {
     entry.cryptoStatus = 'Key: 16, 24 or 32 B; IV: 16 B; hexadecimal required';
     text('crypto-status', entry.cryptoStatus);
@@ -283,10 +293,19 @@ function scheduleDecryption(form, delay = DECRYPT_DEBOUNCE_MS) {
 
 $('classification-content').addEventListener('input', event => {
   const form = event.target.closest('form[data-image4]');
-  if (form) scheduleDecryption(form);
+  if (form && event.target.tagName !== 'SELECT') scheduleDecryption(form);
 });
 $('classification-content').addEventListener('change', event => {
   const form = event.target.closest('form[data-image4]');
+  if (form && event.target.name === 'bag') {
+    const entry = selected();
+    const bag = entry.image4Info.keybags[form.elements.bag.value];
+    const material = bag || entry.cryptoCustom || { key: '', iv: '' };
+    entry.cryptoDraft = { mode: 'auto', ...entry.cryptoDraft, ...material, bag: form.elements.bag.value };
+    renderClassification(entry);
+    scheduleDecryption($('classification-content').querySelector('form[data-image4]'));
+    return;
+  }
   if (form && event.target.tagName === 'SELECT') scheduleDecryption(form);
 });
 $('classification-content').addEventListener('submit', event => {
@@ -750,7 +769,7 @@ worker.addEventListener('message', ({ data }) => {
     entry.decryptedId = entry.children.get(index);
     entry.cryptoStatus = data.mode === 'auto'
       ? 'A unique structured candidate was decoded; not authenticated'
-      : `AES-${data.mode.toUpperCase()} candidate decoded; not authenticated`;
+      : `AES-${data.mode.toUpperCase()} applied; plaintext not validated or authenticated`;
     if (ui.selected === entry.id) renderClassification(entry);
   } else if (data.type === 'subfile' && data.request === entry.subfileRequest) {
     const component = entry.subfiles.find(component => component.index === data.index);

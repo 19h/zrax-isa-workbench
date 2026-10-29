@@ -13,7 +13,7 @@ or deployment is claimed.
 | Automatic FTAB parsing and member analysis | Both exact magics; independently classified members, placeholders as metadata, opaque manifest; native truncation/mutation tests and source/packaged browser tests |
 | Automatic UARP parsing and member analysis | Full structural recognition, packed TLVs, independent payloads, validated opaque binary property-list members and trailers; three real assets and their nested FTABs passed range and classification checks |
 | Load and try keybags | Encoded IV/key bytes retained separately from classification JSON; first eight bags tried with CBC and CTR; unique candidate selection across every bag and mode; wrong material remains opaque |
-| Inline custom key/IV without prompts | Editable fields when no keybag exists, read-only encoded fields and selector otherwise; 300 ms debounce; real worker tests with Node-encrypted ciphertext for both source and packaged pages |
+| Inline custom key/IV without prompts | Editable custom material by default even when keybags exist; separately selectable read-only encoded bytes; 300 ms debounce; synthetic override tests and real iBEC AES-CBC checks in both source and packaged pages (see `apple.md`) |
 | Decrypted and ordinary subfiles under their parent | Actual transformed-byte extraction, nested file entries and breadcrumbs, independent classification/entropy/hex/JSON views, deduplicated reopening and recursive removal; queued decrypt replies cannot add children after navigation |
 | Archives use the same workbench | Ordinary ZIP/tar/CPIO data files included in inspection without changing classification policy; encrypted ZIP members inspectable as opaque bytes; ar members supported |
 
@@ -31,7 +31,7 @@ pane. No third-party firmware or actual device keys were added to the tree.
 | Latest affected integration targets | 62 passed, 1 ignored across `apple`, `image4_crypto`, `ftab`, `uarp` and `inspection`; the codec test additionally covers all three raw codecs |
 | `cargo check --all-features --examples --locked` | Passed |
 | `./build-web.sh` | Passed; fresh WASM and packaged workbench/classic assets, including adapted-code license notices |
-| Final `npm test` | 345 passed, 4 skipped; source and packaged WASM, workbench and existing classic tests |
+| Latest `npm test` | 349 passed, 4 skipped; includes plaintext panel visibility and custom-key override regressions; one earlier WASM response abort passed both a focused UEFI rerun and a full rerun |
 | Clippy comparison | No new warnings compared with base `d23b145`; existing all-feature library backlog remains 2,682 warnings |
 | Formatting and whitespace | New Rust files and touched new code checked; `git diff --check` passed; unrelated formatting retained |
 | Archive differential snapshot | 129,101 inputs over 17 fixtures: complete files, every truncation and single-byte zero/`0xFF`/bit-flip mutations; parser `Debug`, exact errors and payload JSON matched base `d23b145` |

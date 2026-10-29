@@ -25,8 +25,12 @@ firmware.uarp
 4. Select a breadcrumb to return to a container. Removing a container also
    removes its open descendants; unrelated uploaded files remain.
 
-For custom Image4 decryption, enter key and IV in the inline panel and open
-the resulting **decrypted payload**. It is attached to the original file.
+For custom Image4 decryption, enter the plaintext AES key and IV in the
+inline panel and open the resulting **decrypted payload**. Custom material
+is editable even when the file contains encoded keybags; select an encoded
+entry separately to inspect its read-only bytes. Those bytes are not
+unwrapped payload keys. Use explicit CBC or CTR for raw code that automatic
+structural recognition cannot validate. The result is attached to the original file.
 A replacement successful trial removes the previous decrypted result and
 its descendants. Invalid or incomplete material reports an inline status
 without changing the original file.
