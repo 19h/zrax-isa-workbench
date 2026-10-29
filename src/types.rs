@@ -902,6 +902,10 @@ pub enum FileFormat {
     /// PSP `EBOOT.PBP` package
     PspPbp,
     // Apple
+    /// Apple `RTKit` firmware table (`rkosftab` or `RKOSFTAB`)
+    Ftab,
+    /// UARP super binary firmware container
+    Uarp,
     /// Apple Image4 file (`IMG4`), or a standalone `IM4M` manifest or `IM4R`
     /// restore info
     Img4,
@@ -1405,6 +1409,8 @@ impl fmt::Display for FileFormat {
             FileFormat::N3ds3dsx => write!(f, "3DSX"),
             FileFormat::PspPbp => write!(f, "PSP PBP"),
             // Apple
+            FileFormat::Uarp => write!(f, "UARP super binary"),
+            FileFormat::Ftab => write!(f, "Apple FTAB"),
             FileFormat::Img4 => write!(f, "Apple IMG4"),
             FileFormat::Im4p => write!(f, "Apple IM4P"),
             FileFormat::DyldCache => write!(f, "dyld shared cache"),

@@ -56,6 +56,11 @@ bzip2 = "0.6"
 lzfse_rust = "0.2"
 brotli-decompressor = "5"
 
+# Image4 AES payload trials (pure Rust, native and WASM)
+aes = "0.8"
+cbc = "0.1"
+ctr = "0.9"
+
 # Hex display
 hex = "0.4"
 

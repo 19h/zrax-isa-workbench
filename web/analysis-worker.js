@@ -32,7 +32,8 @@ async function engineFor(id) {
   if (entry.file.size > 1024 ** 3) throw new Error('Resident analysis supports files up to 1 GiB.');
   const buffer = await entry.file.arrayBuffer();
   if (!files.has(id)) throw new Error('File was removed.');
-  const engine = new WorkbenchEngine(new Uint8Array(buffer));
+  const bytes = new Uint8Array(buffer);
+  const engine = entry.opaque ? WorkbenchEngine.opaque(bytes) : new WorkbenchEngine(bytes);
   resident = { id, engine };
   return engine;
 }
@@ -55,11 +56,28 @@ async function run(job) {
       payload = JSON.parse(engine.classification());
       if (payload.error) { error = String(payload.error); payload = null; }
     } catch (e) { error = String(e.message || e); }
+    let subfiles = [], subfileError = '';
+    try {
+      const result = JSON.parse(engine.subfiles());
+      if (Array.isArray(result)) subfiles = result;
+      else subfileError = result.error || 'Unable to list subfiles';
+    } catch (error) { subfileError = String(error.message || error); }
+    let image4Info = null;
+    try {
+      const info = JSON.parse(engine.image4_info());
+      if (info && !info.error) image4Info = info;
+    } catch { /* Classification and byte inspection remain available. */ }
     const elapsed = performance.now() - start;
     // A failed architecture classification still gets entropy and hex analysis.
     const profile = engine.profile(1024);
     const mean = profile.reduce((sum, h) => sum + h, 0) / profile.length;
-    if (current(job)) send({ type: 'result', id: job.id, payload, error, elapsed, mean, profile }, [profile.buffer]);
+    if (current(job)) send({ type: 'result', id: job.id, payload, error, elapsed, mean, profile, subfiles, subfileError, image4Info }, [profile.buffer]);
+  } else if (job.type === 'decrypt') {
+    const bytes = engine.decrypt_image4(job.key, job.iv, job.mode);
+    if (current(job)) send({ type: 'decrypted', id: job.id, request: job.request, mode: job.mode, bytes }, [bytes.buffer]);
+  } else if (job.type === 'subfile') {
+    const bytes = engine.subfile(job.index);
+    if (current(job)) send({ type: 'subfile', id: job.id, request: job.request, index: job.index, bytes }, [bytes.buffer]);
   } else if (job.type === 'map' || job.type === 'detail') {
     if (![job.worldSide, job.scale, job.x, job.y, job.width, job.height].every(Number.isInteger)
       || job.width < 1 || job.height < 1 || job.width * job.height > 65536) {

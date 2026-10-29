@@ -20,6 +20,13 @@ pub enum ClassifierError {
     #[error("Invalid magic bytes: expected {expected}, got {actual}")]
     InvalidMagic { expected: String, actual: String },
 
+    /// Invalid container-member inspection request.
+    #[error("Subfile inspection error: {message}")]
+    InspectionError {
+        /// What is wrong with the member request.
+        message: String,
+    },
+
     /// Unsupported or unknown file format.
     #[error("Unknown file format: magic bytes {magic:02X?}")]
     UnknownFormat { magic: Vec<u8> },
@@ -144,6 +151,20 @@ pub enum ClassifierError {
     #[error("Xbox 360 package parse error: {message}")]
     StfsParseError {
         /// What is wrong with the package.
+        message: String,
+    },
+
+    /// Error parsing a UARP super binary.
+    #[error("UARP parse error: {message}")]
+    UarpParseError {
+        /// What is wrong with the header, payload or metadata TLV.
+        message: String,
+    },
+
+    /// Error parsing an Apple `RTKit` firmware table.
+    #[error("FTAB parse error: {message}")]
+    FtabParseError {
+        /// What is wrong with the table or one of its byte ranges.
         message: String,
     },
 

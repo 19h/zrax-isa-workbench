@@ -46,6 +46,8 @@ pub mod extensions;
 pub mod formats;
 pub mod formatter;
 pub mod heuristics;
+pub mod image4;
+pub mod inspection;
 pub mod transform;
 pub mod types;
 

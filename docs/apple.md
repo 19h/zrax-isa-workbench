@@ -54,20 +54,81 @@ whether or not its bytes are a recognized format:
 
 | Payload | Child |
 | --- | --- |
-| Keybag present | Opaque: "encrypted; keybag present (N keybags: production, development); not decrypted". Compression info, if any, is noted as describing the plaintext. Nothing is decrypted or scanned |
+| Keybag present but unusable as supplied | Opaque: "encrypted; keybag present (N keybags: production, development); not decrypted". Compression info, if any, is noted as describing the plaintext. Ciphertext is not sent to ISA analysis |
+| Keybag usable as supplied | Try the first eight keybags with AES-CBC and AES-CTR; adopt a unique structurally recognized plaintext, optionally decompressed, with a note that it is not authenticated |
 | Compression info, algorithm 1 | Decoded as LZFSE with the declared size as the output limit; the decoded size must equal the declared size. Any other algorithm, a mismatch, or a size beyond 64 MiB leaves the payload opaque with a note |
 | No compression info, `complzss`/`complzvn` header | Decoded with `compressed::Codec::Lzss`; Adler-32 verified. Bytes after `0x180 + compressedSize` are a second child, `<type> trailer`, listed only when they are a recognized format |
 | No compression info, LZFSE block magic | Decoded as LZFSE; the note says no decoded size was declared |
+| No compression info, another framed codec | Decode through the shared gzip, zlib, xz, LZ4, Zstandard and other framed decoders |
+| No recognized compression header | Try raw DEFLATE, LZ4 block and Brotli within 64 MiB; adopt only a unique decoded byte sequence that parses as a recognized structured format |
 | Anything else | Stored as-is; Mach-O, ELF and other formats are parsed, raw code goes to the code model |
 
 Child offsets and sizes are the stored bytes of the `OCTET STRING`
 contents; decoded children carry `decoded` ranges with the codec name
-(`LZFSE`, `Apple LZSS`). The `PAYP` property names are listed but not
+(`LZFSE`, `Apple LZSS`, `AES-CBC`, `AES-CTR`, or AES followed by decompression). The `PAYP` property names are listed but not
 interpreted. The IM4M manifest is reported in metadata: version, image
 entries, `MANP` property names, `CHIP` and `BORD` as hex, signature and
 certificate-chain sizes, each marked "not verified". Other property values,
 such as `ECID`, are not reported. The IM4R `BNCN` nonce is shown as stored
 (img4tool stores its generator little-endian; PyIMG4 reverses it on parse).
+
+## Image4 AES and codec trials
+
+`src/image4.rs` adapts AES processing from the user's MIT-licensed
+[img4-dump](https://github.com/19h/img4-dump/tree/27f0f624d646bcabde913ee3facc4ff8671466fa)
+`src/crypto.rs` and `src/main.rs::run_auto`. The local revision was inspected
+on 2026-10-29. Copyright and permission notices are retained in
+[third-party-firmware-parsers.txt](third-party-firmware-parsers.txt).
+CBC uses no padding removal; CTR starts from the supplied IV as a big-endian
+128-bit counter. Keys are 16, 24 or 32 B; the IV is 16 B. Synthetic fixtures
+are encrypted independently with RustCrypto's encryption API for native
+checks and Node's `createCipheriv` for browser checks. The six known-answer
+cases are from [NIST SP 800-38A, appendix F.2 and F.5](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf).
+
+Encoded keybag material is read as supplied. At most eight keybags and both
+AES modes are tried automatically; a successful candidate requires parsed
+structure or a decoded framed stream. Distinct recognized outputs are
+ambiguous and remain opaque. Declared decoded sizes must still match. No
+cryptographic authenticity follows from successful decryption or structure.
+The automatic checks exclude nested Apple formats to prevent recursive
+keybag trials during recognition. Explicit CBC/CTR selection permits
+inspection of raw or nested candidates without claiming validation.
+
+The workbench panel has read-only key/IV fields and an entry selector when
+keybags exist, and editable hexadecimal fields otherwise. Edits apply after
+300 ms; **try decryption** applies immediately. Automatic mode rejects
+unrecognized output; explicit modes expose unverified candidates. Successful
+output becomes a subfile with its own full workbench and a breadcrumb back
+to the original. Key/IV material is not written to local storage, logs or
+classification JSON. This is session-memory handling, not a zeroization
+claim about browser or allocator memory.
+
+For input of `n` bytes and a maximum decoded output of `L = 64 MiB`, each
+bounded codec trial uses `O(n + L)` time and `O(n + L)` working space,
+excluding the recognized format's own parser. The fixed list of three
+headerless codecs and two AES modes bounds the number of trials; automatic
+keybag enumeration adds at most a factor of eight. Brotli does not expose
+a consumed-byte count through this decoder API; its trailing-byte boundary
+is not independently verified. Other trial decoders' consumed-byte counts
+must leave only zero/erased padding before their output is adopted.
+
+| ID | Assumption and dependent result | Falsification probe |
+| --- | --- | --- |
+| C1 | The supplied IV initializes CTR as a big-endian 128-bit counter | NIST F.5 vectors for all three key sizes |
+| C2 | CBC data is a whole number of 16 B blocks without padding removal | Reject a 17 B ciphertext; verify NIST F.2 vectors |
+| C3 | A parsed structure identifies a candidate but does not authenticate it | Wrong-key and raw-plaintext tests must fail automatic selection; explicit modes retain unverified bytes |
+| C4 | Headerless decoder success alone is insufficient | Only decoded bytes that parse as a recognized structure are adopted; conflicting decoded sequences are rejected |
+| C5 | A codec trial cannot discard a nonpadding trailer | Append nonpadding bytes to a DEFLATE stream; auto selection must fail and explicit mode must retain the plaintext |
+| C6 | A valid file format outranks speculative headerless decompression | Known Mach-O plaintext retains exact bytes and has no extra codec transform |
+| C7 | Distinct recognized outputs remain ambiguous across every bag and mode | Construct conflicting candidate records with equal/different modes; the shared selector must reject them; identical and unrecognized candidates must not create ambiguity |
+| C8 | Keybag enumeration is limited to 4096 entries as a resource policy, not a wire-format maximum | Accept 4096 valid records and reject 4097 before material serialization |
+
+| Impact | Adjacent pattern or boundary |
+| --- | --- |
+| High | Device-wrapped bytes can have the correct key/IV sizes without being usable AES material; successful structure is reported separately from authentication |
+| High | Opening an opaque child must preserve its classification policy; entropy and hex remain available without running the code model |
+| Medium | Multiple modes or keybags can produce candidates; distinct validated byte sequences are treated as ambiguous |
+| Medium | No metadata, nonce, load address or firmware role is treated as an ISA declaration |
 
 ## Img3 and 8900
 
@@ -132,7 +193,7 @@ requires.
 - INTEGERs: at most eight value octets after an optional leading zero.
 - IM4P: type exactly 4 B; payload a primitive `OCTET STRING`; each optional
   element at most once; keybag entries must hold a 16-byte IV and a 32-byte
-  key. IM4M: exactly one `MANB` property, at most one `MANP` group. Every
+  key; at most 4096 entries are accepted, walked before material serialization. IM4M: exactly one `MANB` property, at most one `MANP` group. Every
   property must repeat its tag's code in its `IA5String`.
 - Decoding: 64 MiB per payload (`MAX_PAYLOAD`); LZFSE output limited to the
   declared size; `complzss` decoded size checked against the header and
@@ -154,8 +215,8 @@ requires.
 | ID | Assumption | Falsification probe |
 | --- | --- | --- |
 | A1 | Optional IM4P elements are identified by tag (keybag `OCTET STRING`, compression `SEQUENCE`, PAYP `[0]`), each at most once, in any order | An `OCTET STRING` after the payload that is not a keybag, or a repeated element, is a parse error (`malformed_der_is_an_error_naming_the_offset`); a real IM4P with such an element would falsify it |
-| A2 | Compression algorithm 1 is LZFSE; no other value is defined | img4tool and img4lib reject or ignore other values; an IM4P with algorithm 2 stays opaque with a note |
-| A3 | A keybag means the payload is ciphertext, including its compression | The keybag fixture carries a valid `complzss` image that must not be decoded (`encrypted_payloads_stay_opaque`) |
+| A2 | Only compression algorithm 1 has a declared-codec mapping in this parser (LZFSE) | img4tool and img4lib reject or ignore other values; an IM4P with algorithm 2 stays opaque with a note |
+| A3 | Encoded keybag bytes may be wrapped and are not usable unless a bounded AES trial yields recognized structure | An unusable keybag with a valid-looking ciphertext header remains opaque (`encrypted_payloads_stay_opaque`); known-answer and wrong-key tests separately cover usable material |
 | A4 | An empty INTEGER is zero, as img4tool encodes 0 | `integers_are_unsigned_and_bounded`; a file that relies on rejecting it would be accepted |
 | A5 | `complzvn` data is a raw LZVN stream that the lzfse LZVN decoder handles (identity with Apple's FastCompression LZVN is unconfirmed) | `complzvn_payloads_decode_as_raw_lzvn` uses the lzfse opcode table; a real `complzvn` kernelcache that fails to decode would falsify it |
 | A6 | `mappingOffset` is the header size and gates fields by offset, as dyld's readers do | Four header sizes (0x28, 0x98, 0x1C8, 0x228) in the tests; intermediate real versions are not verified |
@@ -168,7 +229,9 @@ requires.
 
 | Boundary | Behavior |
 | --- | --- |
-| Encrypted IM4P payloads | Opaque; keybags are not unwrapped and nothing is decrypted |
+| Device-wrapped IM4P keybags | No device-key unwrapping; unsuccessful trials remain opaque; custom material is available inline when no keybag is present |
+| Automatic decryption of raw code or nested Apple formats | Raw output and Apple-container candidates require explicitly selecting CBC or CTR; automatic mode does not use entropy as proof |
+| Nonpadding bytes after a decrypted compressed stream | Automatic codec adoption is rejected so a trailer is not silently discarded; an explicit AES mode permits inspecting the complete plaintext candidate |
 | IM4M signatures, certificate chains and `DGST` digests | Sizes reported; not verified |
 | IM4C | Not recognized (its layout is only partially known) |
 | PAYP properties | Names listed; meanings not interpreted |
@@ -204,3 +267,9 @@ Img3 and 8900 inputs are built in the tests from the documented layouts
 with synthetic Mach-O and ELF headers as payloads; Img3 and 8900 also go
 through `web/tests/bootmisc.test.mjs` (`/pkg/` and `/dist/`). No real Img3
 or 8900 firmware was tested: not verified.
+
+On 2026-10-29, the Image4 AES/codec and workbench additions passed the
+checks recorded in [firmware workbench verification](firmware-workbench-verification.md).
+Real UARP/FTAB assets were exercised; no real encrypted IMG4 asset with
+independently known plaintext was supplied. AES validation uses published
+known-answer vectors and independently encrypted synthetic fixtures.

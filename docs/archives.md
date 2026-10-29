@@ -10,6 +10,13 @@ whose bytes name an ISA supplies the primary result; every listed member is
 a slice with its stored file range, and a decoded range when a codec
 produced its bytes.
 
+The workbench additionally uses `inspect_container` to enumerate ordinary
+regular-file members for explicit opening, including unrecognized data.
+Encrypted ZIP members remain opaque stored bytes. This enumeration does not
+change the classifier's recognized-member policy or payload JSON. See
+[subfile inspection](subfile-inspection.md) for coordinates, navigation and
+the differential validation of the classification path.
+
 ## Implemented layouts
 
 | JSON format ID | Layout | Recognition | Primary source |

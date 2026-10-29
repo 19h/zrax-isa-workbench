@@ -41,6 +41,42 @@ mod img3;
 mod img4;
 mod s5l8900;
 
+/// Keybag material exactly as encoded in an IM4P. It may be device-wrapped;
+/// merely reading these bytes does not establish that they are usable keys.
+#[derive(Debug, serde::Serialize)]
+pub struct Image4Keybag {
+    /// Keybag class (1 production, 2 development; other values retained).
+    pub class: u64,
+    /// Encoded IV bytes as hexadecimal, without unwrapping.
+    pub iv: String,
+    /// Encoded key bytes as hexadecimal, without unwrapping.
+    pub key: String,
+}
+
+/// Payload coordinates and encoded keybag material for inline inspection.
+#[derive(Debug, serde::Serialize)]
+pub struct Image4Info {
+    /// Firmware role, not an ISA claim.
+    pub label: String,
+    /// Payload offset in the immediate input file, in bytes.
+    pub offset: usize,
+    /// Stored payload size in bytes.
+    pub size: usize,
+    /// Encoded keybags, in file order. These are not persisted by the UI.
+    pub keybags: Vec<Image4Keybag>,
+}
+
+/// Inspect the payload fields of an IMG4 or IM4P for the inline decryption
+/// controls. Returns `None` for other formats. This does not authenticate the
+/// manifest or unwrap keybag material.
+///
+/// # Errors
+///
+/// [`ClassifierError::AppleParseError`] for malformed Image4 payload fields.
+pub fn image4_info(data: &[u8]) -> Result<Option<Image4Info>> {
+    img4::info(data)
+}
+
 /// Prefix of the family's metadata keys (`apple_im4p_type`,
 /// `apple_dyld_uuid`, `apple_component_0`).
 const KEY_PREFIX: &str = "apple";

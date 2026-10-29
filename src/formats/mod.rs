@@ -66,6 +66,7 @@ pub mod fat;
 pub mod fatelf;
 pub mod ffu;
 pub mod frf;
+pub mod ftab;
 pub mod fwpack;
 pub mod geos;
 pub mod goff;
@@ -116,6 +117,7 @@ pub mod ti_c55x;
 pub mod ti;
 pub mod tmobj;
 pub mod udf;
+pub mod uarp;
 pub mod uefi;
 pub mod vbf;
 pub mod vdisk;
@@ -663,6 +665,12 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     // "IMG4", "IM4P", "IM4M" or "IM4R") and dyld shared caches ("dyld_v1").
     // Before the compressed streams: an IM4P payload is often LZFSE or LZSS,
     // and the container must report itself.
+    if ftab::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Ftab,
+        };
+    }
+
     if let Some(layout) = apple::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Apple(layout),
@@ -1490,6 +1498,13 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(codec) = compressed::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Compressed(codec),
+        };
+    }
+
+    // UARP has no magic: require a complete header, payload table and TLVs.
+    if uarp::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Uarp,
         };
     }
 

@@ -416,12 +416,15 @@ struct Tally {
 }
 
 /// Parse concatenated CPIO archives that start with `layout`.
-pub(super) fn parse(data: &[u8], layout: Layout) -> Result<Container<'_>> {
+pub(super) fn parse(data: &[u8], layout: Layout, mode: MemberMode) -> Result<Container<'_>> {
     if variant_at(data).map(Variant::layout) != Some(layout) {
         return Err(error("Missing CPIO magic at 0x0"));
     }
     let mut c = Container::new(FileFormat::Cpio, layout.label(), "cpio");
-    let mut members = Members::default();
+    let mut members = Members {
+        mode,
+        ..Members::default()
+    };
     let mut tally = Tally::default();
     let walk = walk(data, |variant, entry| {
         record(variant, entry, &mut tally, &mut c, &mut members);

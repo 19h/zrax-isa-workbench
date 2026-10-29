@@ -270,10 +270,13 @@ impl Tally {
 
 /// Parse a tar archive: headers and members up to the end-of-archive zero
 /// blocks, then the data after them.
-pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
+pub(super) fn parse(data: &[u8], mode: MemberMode) -> Result<Container<'_>> {
     let first = header(data, 0)?;
     let mut c = Container::new(FileFormat::Tar, Layout::Tar.label(), "tar");
-    let mut members = Members::default();
+    let mut members = Members {
+        mode,
+        ..Members::default()
+    };
     let mut tally = Tally::default();
     let mut pending = Pending::default();
     let mut pos = 0;

@@ -88,7 +88,7 @@ const FORMAT_NAMES = {
   uf2: 'UF2', dfuse: 'STM32 DfuSe', gbl: 'Silicon Labs GBL', cyacd: 'Cypress CYACD',
   allwinneregon: 'Allwinner eGON', rockchipimage: 'Rockchip image', mediatekpreloader: 'MediaTek preloader', qualcommmbn: 'Qualcomm MBN',
   genesisrom: 'Mega Drive ROM', psxexe: 'PS-X EXE', dreamcastip: 'Dreamcast IP.BIN', wiiurpx: 'Wii U RPX/RPL', n3dsncch: '3DS NCCH', n3ds3dsx: '3DSX', psppbp: 'PSP PBP',
-  img4: 'Apple IMG4', im4p: 'Apple IM4P', dyldcache: 'dyld shared cache',
+  uarp: 'UARP super binary', ftab: 'Apple FTAB', img4: 'Apple IMG4', im4p: 'Apple IM4P', dyldcache: 'dyld shared cache',
   androidboot: 'Android boot image', androidvendorboot: 'Android vendor_boot image', androidsparse: 'Android sparse image', androidota: 'Android OTA payload', androidbootloader: 'Android bootloader pack',
   xilinxbootbin: 'Xilinx BOOT.BIN', imximage: 'NXP i.MX Image', nxpsb: 'NXP Secure Binary',
   ndsrom: 'Nintendo DS ROM', gbarom: 'Game Boy Advance ROM', gbrom: 'Game Boy ROM', nesrom: 'NES ROM', snesrom: 'SNES ROM', n64rom: 'Nintendo 64 ROM',

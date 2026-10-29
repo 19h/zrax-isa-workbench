@@ -73,6 +73,8 @@ measure their displayed dimensions.
 | View | Implemented behavior |
 | --- | --- |
 | Files | Multi-file drop and picker, incremental queue, independent failures, remove/clear, cursor and viewport retained per file |
+| Subfiles | Nested container members with breadcrumbs and independent classification, entropy, hex and JSON views; decoded bytes in their own coordinate system |
+| Image4 decryption | Inline key/IV fields, read-only encoded keybags, CBC/CTR trials and debounced custom material; decrypted output remains under its parent |
 | Classification | Format, ISA, bit width, byte order, confidence/source, extensions, ranked raw-code candidates, labelled architecture slices, metadata and notes |
 | Entropy | Hilbert/linear layouts, entropy/byte-class palettes, continuous pointer-anchored zoom, drag pan, minimap, fit and previous/next viewport history |
 | Inspector | Synchronized byte location, local entropy, byte histogram and measured DEFLATE ratio |
@@ -81,6 +83,21 @@ measure their displayed dimensions.
 | Exports | Classification JSON, batch JSON/CSV, selected bytes, clipboard hex |
 | Batch overview | Status filters, insertion/name/size/confidence/entropy sorting, architecture/format tallies and progress |
 | Interface | Responsive file panel and inspectors, log, status bar, context menu, keyboard navigation and persistent UI preferences |
+
+Open a container's **subfiles** panel to work on an extracted member. The
+parent remains in the file tree; the breadcrumb returns to it. Members start at
+byte offset zero in their own workbench, while the parent panel retains their
+stored offset and size. The same workflow covers FTAB, UARP, IMG4, archives and
+other formats using the shared container model. See [subfile inspection](docs/subfile-inspection.md) and the dated
+[verification and boundaries](docs/firmware-workbench-verification.md).
+
+For IMG4/IM4P, **Image4 decryption** shows encoded keybag bytes read-only when
+present. With no keybag, enter a hexadecimal key and IV directly in the panel.
+Changes trigger a trial after 300 ms. Automatic mode tries CBC and CTR and
+requires a unique recognized structure. Explicit modes allow inspecting raw
+candidates. **Open decrypted payload** enters the resulting subfile. Material
+is retained only in session memory; keybags are not device-key unwrapped, and
+recognized structure does not authenticate the plaintext.
 
 The batch overview summarizes the current browser queue. Native batch ingestion
 is a separate CLI feature described below.
@@ -265,7 +282,9 @@ enumeration additionally represents header-derived architectures.
 | Firmware and loader text | Espressif ESP32-family and ESP8266 (v1/v2) application and bootloader images (chip ID names Xtensa LX6/LX7 or RISC-V; checksum, SHA-256 and CRC-32 verified; data segments opaque) and ESP flash dumps (ESP-IDF partition table at 0x8000 with MD5 verified; bootloader and partitions classified on their own) ([Espressif](docs/esp.md)), Blackfin LDR boot streams ([LDR](docs/blackfin-ldr.md)), PCI and legacy option ROMs ([option ROMs](docs/option-roms.md)), Huawei UPDATE.APP packages ([Huawei](docs/huawei-update.md)), Intel HEX, Motorola S-record, TI-TXT, TI ASCII Hex, TI SDSMAC tagged, Extended Tektronix, CCS GO DSP data |
 | Texas Instruments firmware | C28x/C54x/C55x/C3x/C4x and unkeyed boot tables, AIS, RPRC, MCU+ and mmWave appimages, multicore ELF, GP/OMAP images, OAD, TI X.509 wrappers, MCUboot, TF-A FIP |
 | Specialized containers | OLS, EPR, SGO, VBF, FRF, BCF, SOX, AOR D10, ASAM ODX-F, Honda RWD, Toyota CUW, Mercedes CFF ([automotive](docs/automotive.md)) |
-| Apple images | IMG4 and IM4P (stored, LZFSE and complzss/complzvn payloads decoded and classified; keybag-encrypted payloads opaque), IM4M manifests and IM4R restore info as metadata, dyld shared caches (architecture token, mappings, Mach-O images mapped into the file); legacy Img3 (DATA child, KBAG-encrypted payloads opaque) and 8900 containers (plaintext payload child, encrypted formats opaque) ([Apple images](docs/apple.md)) |
+| Apple UARP super binaries | Structural recognition, independent firmware payloads, packed global and payload TLV metadata; nested FTAB/IMG4 and compression handled recursively ([UARP](docs/uarp.md)) |
+| Apple FTAB firmware tables | `rkosftab` and `RKOSFTAB`; bounded file table, independent firmware members, placeholder metadata, opaque manifest; nested containers and compression handled recursively ([FTAB](docs/ftab.md)) |
+| Apple images | IMG4 and IM4P (stored and compressed payloads, bounded headerless codec trials, CBC/CTR trials with encoded keybags and inline custom key/IV; unusable keybags remain opaque), IM4M manifests and IM4R restore info as metadata, dyld shared caches (architecture token, mappings, Mach-O images mapped into the file); legacy Img3 (DATA child, KBAG-encrypted payloads opaque) and 8900 containers (plaintext payload child, encrypted formats opaque) ([Apple images](docs/apple.md)) |
 | Android images | Boot images (`ANDROID!` header v0-v4: kernel/ramdisk decoded and classified, second stage, recovery DTBO, DTB, v4 signature, AVB footer, mkbootimg SHA-1 ID checked), vendor_boot v3/v4 (ramdisk table, DTB, bootconfig), sparse images (RAW/FILL/DONT_CARE/CRC32 expanded to one partition image, CRC32 verified, 64 MiB cap), OTA `payload.bin` (`CrAU` v1/v2, protobuf manifest, full operations reassembled per partition with SHA-256 checks; delta partitions opaque), bootloader packs (Qualcomm and ASUS `BOOTLDR!`, Qualcomm meta image, FBPK v1/v2), dynamic-partition `super` images (liblp v10.0-10.2, full and `super_empty`; SHA-256 checked; partitions listed by name, multi-extent partitions assembled), DTB/DTBO tables (v0/v1, zlib/gzip entries; device trees as members), AVB vbmeta images (descriptors summarized, hash recomputed, signature not verified). No header names a CPU; members are classified from their own bytes ([Android](docs/android.md)) |
 | SoC boot ROM images | Allwinner eGON.BT0 (checksum, A32/RISC-V jump word as entry ISA) and TOC0 (items opaque); Rockchip RKFW, RKAF, RKBOOT (RC4-descrambled entries) and idbloader v1/v2; MediaTek EMMC/SF/SDMMC/UFS_BOOT, BRLYT and GFH; Qualcomm 80-byte SBL and 40-byte v3 MBN ([SoC loaders](docs/socboot2.md)); Xilinx Zynq-7000/ZynqMP `BOOT.BIN` (boot header, image header table and partition checksums verified; partitions as slices with destination-CPU targets; bitstream and encrypted partitions opaque), NXP i.MX HAB IVT images and i.MX 8/9 AHAB containers (no ISA field; the code model classifies the application; DCD, CSF and signatures opaque), NXP SB2.0/2.1/3.1 secure binaries (metadata only; SB3.1 hash chain verified, signatures not verified) ([SoC boot images](docs/socboot.md)) |
 | Miscellaneous boot images | OP-TEE `OPTE` headers (v1 `tee.bin` with init/paged parts, v2 image table; the arch byte names AArch32/AArch64), Amlogic USB burning images (v1/v2 item tables, CRC-32 and VERIFY SHA-1 checked, items by role), Allwinner PhoenixSuit/LiveSuit `IMAGEWTY` (0x0300 and 0x0100 headers, the RC6-encrypted variant decrypted with published keys), barebox ARM/AArch64 heads (ISA from the head instruction) ([boot images](docs/bootmisc.md)) |

@@ -261,7 +261,7 @@ struct Tally {
 }
 
 /// Parse a ZIP archive: central directory, local records, then members.
-pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
+pub(super) fn parse(data: &[u8], mode: MemberMode) -> Result<Container<'_>> {
     let directory = directory(data)?;
     let entries = central_entries(data, &directory)?;
     let records = entries
@@ -273,7 +273,10 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let mut c = Container::new(FileFormat::Zip, Layout::Zip.label(), "zip");
     c.consumed = directory.end;
     let data_files = pdx::data_files(data, &entries, &records);
-    let mut members = Members::default();
+    let mut members = Members {
+        mode,
+        ..Members::default()
+    };
     let mut tally = Tally::default();
     for (entry, record) in entries.iter().zip(&records) {
         let walk = Walk {
@@ -845,6 +848,10 @@ fn extract<'a>(
     tally.files += 1;
     if entry.is_encrypted() {
         tally.encrypted.push(entry.name.as_str());
+        if members.mode == MemberMode::All && members.has_room(c) {
+            let stored = &data[record.data_offset..record.data_end];
+            members.list(c, Child::opaque(entry.name.clone(), record.data_offset, stored));
+        }
         return;
     }
     if !members.has_room(c) {

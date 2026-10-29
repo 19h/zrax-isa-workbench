@@ -131,14 +131,36 @@ pub fn detect_weak(data: &[u8]) -> Option<Layout> {
 /// header, directory or member range, or data after the archive that is
 /// neither padding nor a recognized format.
 pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
+    parse_members(data, layout, MemberMode::Recognized)
+}
+
+/// Parse an archive for subfile inspection, including ordinary data members
+/// that do not establish an ISA. Decoder, checksum and extraction bounds are
+/// identical to classification; opening a member is an explicit user action.
+///
+/// # Errors
+///
+/// As [`parse_container`].
+pub fn inspect_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
+    parse_members(data, layout, MemberMode::All)
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum MemberMode {
+    #[default]
+    Recognized,
+    All,
+}
+
+fn parse_members(data: &[u8], layout: Layout, mode: MemberMode) -> Result<Container<'_>> {
     match layout {
-        Layout::Zip => zip::parse(data),
-        Layout::Tar => tar::parse(data),
+        Layout::Zip => zip::parse(data, mode),
+        Layout::Tar => tar::parse(data, mode),
         Layout::CpioNewc
         | Layout::CpioCrc
         | Layout::CpioOdc
         | Layout::CpioBinaryLe
-        | Layout::CpioBinaryBe => cpio::parse(data, layout),
+        | Layout::CpioBinaryBe => cpio::parse(data, layout, mode),
     }
 }
 
@@ -277,6 +299,8 @@ impl fmt::Display for NameList {
 /// and extraction limits, and counts what it left out.
 #[derive(Debug, Default)]
 struct Members {
+    /// Include all regular files only for explicit subfile browsing.
+    mode: MemberMode,
     /// Decoded bytes so far, counted against [`MAX_EXTRACTED`].
     decoded_size: usize,
     /// File members checked for a recognized format.
@@ -308,6 +332,11 @@ impl Members {
     /// from being run through every detector in full.
     fn offer<'a>(&mut self, c: &mut Container<'a>, child: Child<'a>) {
         self.examined += 1;
+        if self.mode == MemberMode::All {
+            c.children.push(child);
+            self.listed += 1;
+            return;
+        }
         let prefix_len = child.data.len().min(RECOGNITION_PREFIX);
         if !container::is_recognized(&child.data[..prefix_len]) {
             return;

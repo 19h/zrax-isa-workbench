@@ -279,3 +279,61 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
 @font-face { font-family: 'DM Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('./fonts/dm-mono-medium.ttf') format('truetype'); }
 @font-face { font-family: 'Martian Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('./fonts/martian-mono-regular.ttf') format('truetype'); }
 @font-face { font-family: 'Martian Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('./fonts/martian-mono-medium.ttf') format('truetype'); }
+
+/* Nested file entries retain their parent and independent workbench state. */
+.file-entry[data-parent-id] {
+  padding-left: calc(0.75rem + var(--entry-depth) * 0.75rem);
+  border-left: 0.125rem solid var(--accent);
+}
+.subfile-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 0.0625rem solid var(--line);
+}
+.subfile-breadcrumb[hidden] {
+  display: none;
+}
+.subfile-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 0.0625rem solid var(--line);
+}
+.subfile-row > span {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.image4-crypto {
+  display: grid;
+  gap: 0.75rem;
+}
+.image4-crypto label {
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+}
+.image4-crypto input,
+.image4-crypto select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.375rem;
+  color: var(--text-primary);
+  background: var(--surface-inset);
+  border: 0.0625rem solid var(--line);
+  font: inherit;
+}
+.image4-crypto input[readonly] {
+  color: var(--text-muted);
+}
+.crypto-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}

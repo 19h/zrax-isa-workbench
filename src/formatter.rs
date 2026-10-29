@@ -710,6 +710,8 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::N3dsNcch => "3DS NCCH",
         FileFormat::N3ds3dsx => "3DSX",
         FileFormat::PspPbp => "PSP PBP",
+        FileFormat::Uarp => "UARP super binary",
+        FileFormat::Ftab => "Apple FTAB",
         FileFormat::Img4 => "Apple IMG4",
         FileFormat::Im4p => "Apple IM4P",
         FileFormat::DyldCache => "dyld shared cache",

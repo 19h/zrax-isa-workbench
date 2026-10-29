@@ -47,6 +47,10 @@ pub fn is_recognized(prefix: &[u8]) -> bool {
 /// a [`Container`]. Each family keeps its own layout enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
+    /// Apple `RTKit` firmware table (`rkosftab` or `RKOSFTAB`).
+    Ftab,
+    /// UARP super binary with independently classified firmware payloads.
+    Uarp,
     /// A standalone compressed stream.
     Compressed(compressed::Codec),
     /// An automotive flash container.
@@ -188,6 +192,8 @@ impl Kind {
     /// The reported file format.
     pub fn format(self) -> FileFormat {
         match self {
+            Self::Ftab => FileFormat::Ftab,
+            Self::Uarp => FileFormat::Uarp,
             Self::Compressed(codec) => codec.format(),
             Self::Automotive(layout) => layout.format(),
             Self::Chiptune(layout) => layout.format(),
@@ -255,6 +261,8 @@ impl Kind {
     /// Human-readable layout name, used as the format variant.
     pub fn label(self) -> &'static str {
         match self {
+            Self::Ftab => "Apple FTAB",
+            Self::Uarp => "UARP super binary",
             Self::Compressed(codec) => codec.label(),
             Self::Automotive(layout) => layout.label(),
             Self::Chiptune(layout) => layout.label(),
@@ -322,6 +330,8 @@ impl Kind {
     /// Recognized from complete structure rather than a magic value.
     pub fn is_weak(self) -> bool {
         match self {
+            Self::Ftab => false,
+            Self::Uarp => true,
             Self::Compressed(codec) => codec.is_weak(),
             Self::Automotive(layout) => layout.is_weak(),
             Self::Chiptune(layout) => layout.is_weak(),
@@ -394,6 +404,8 @@ impl Kind {
 /// The layout's parse error when `data` does not hold a valid instance.
 pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
     match kind {
+        Kind::Ftab => super::ftab::parse_container(data),
+        Kind::Uarp => super::uarp::parse_container(data),
         Kind::Compressed(codec) => compressed::parse_container(data, codec),
         Kind::Automotive(layout) => automotive::parse_container(data, layout),
         Kind::Chiptune(layout) => chiptune::parse_container(data, layout),

@@ -14,6 +14,7 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub struct WorkbenchEngine {
     data: Vec<u8>,
+    opaque: bool,
 }
 
 #[wasm_bindgen]
@@ -23,12 +24,76 @@ impl WorkbenchEngine {
     pub fn new(data: &[u8]) -> Self {
         Self {
             data: data.to_vec(),
+            opaque: false,
         }
     }
 
     /// Run the existing architecture classifier against the resident binary.
     pub fn classification(&self) -> String {
+        if self.opaque {
+            return serde_json::json!({ "error": "Opaque component; ISA analysis was not applied" }).to_string();
+        }
         crate::wasm::classify(&self.data)
+    }
+
+    /// Copy opaque component bytes for entropy and hex inspection without
+    /// applying the code model to ciphertext, metadata or configuration.
+    pub fn opaque(data: &[u8]) -> Self {
+        Self {
+            data: data.to_vec(),
+            opaque: true,
+        }
+    }
+
+    /// List validated children and load sections with their stored coordinates.
+    pub fn subfiles(&self) -> String {
+        if self.opaque {
+            return "[]".into();
+        }
+        match crate::inspection::subfiles(&self.data) {
+            Ok(files) => serde_json::to_string(&files).unwrap_or_else(|error| {
+                serde_json::json!({ "error": error.to_string() }).to_string()
+            }),
+            Err(error) => serde_json::json!({ "error": error.to_string() }).to_string(),
+        }
+    }
+
+    /// Extract the decoded bytes of a listed member; the new file starts at zero.
+    ///
+    /// # Errors
+    ///
+    /// A JavaScript error when the member is missing, malformed or too large.
+    pub fn subfile(&self, index: u32) -> Result<Vec<u8>, JsValue> {
+        if self.opaque {
+            return Err(JsValue::from_str(
+                "Opaque components have no analyzed subfiles",
+            ));
+        }
+        crate::inspection::extract_subfile(&self.data, index as usize)
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    /// Payload coordinates and encoded keybags for inline Image4 controls.
+    /// Key material stays in session memory and is never added to payload JSON.
+    pub fn image4_info(&self) -> String {
+        match crate::formats::apple::image4_info(&self.data) {
+            Ok(info) => serde_json::to_string(&info).unwrap_or_else(|error| {
+                serde_json::json!({ "error": error.to_string() }).to_string()
+            }),
+            Err(error) => serde_json::json!({ "error": error.to_string() }).to_string(),
+        }
+    }
+
+    /// Decrypt an Image4 payload using hex material. `auto` requires a unique
+    /// recognized structure; `cbc` and `ctr` permit inspecting raw candidates.
+    ///
+    /// # Errors
+    ///
+    /// A JavaScript error for invalid material, missing Image4 payload fields,
+    /// oversized data or an unsuccessful/ambiguous automatic mode trial.
+    pub fn decrypt_image4(&self, key: &str, iv: &str, mode: &str) -> Result<Vec<u8>, JsValue> {
+        decrypt_image4(&self.data, key, iv, mode)
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     /// Exact local entropy for each profile bin, sampling at most 4096 B per bin.
@@ -229,6 +294,36 @@ impl WorkbenchEngine {
             .min(self.data.len());
         self.data[a..b].to_vec()
     }
+}
+
+fn decrypt_image4(data: &[u8], key: &str, iv: &str, mode: &str) -> crate::Result<Vec<u8>> {
+    use crate::image4::{self, Mode};
+    let invalid = |message: &str| crate::ClassifierError::AppleParseError {
+        message: message.into(),
+    };
+    let info = crate::formats::apple::image4_info(data)?
+        .ok_or_else(|| invalid("Missing Image4 payload"))?;
+    let normalize = |text: &str| {
+        text.chars()
+            .filter(|c| !c.is_ascii_whitespace())
+            .collect::<String>()
+    };
+    let key = hex::decode(normalize(key)).map_err(|_| invalid("Invalid AES key hexadecimal"))?;
+    let iv = hex::decode(normalize(iv)).map_err(|_| invalid("Invalid AES IV hexadecimal"))?;
+    let end = info
+        .offset
+        .checked_add(info.size)
+        .ok_or_else(|| invalid("Invalid Image4 payload range"))?;
+    let payload = data
+        .get(info.offset..end)
+        .ok_or_else(|| invalid("Truncated Image4 payload"))?;
+    let trial = match mode {
+        "auto" => image4::automatic(payload, &key, &iv)?,
+        "cbc" => image4::trial(payload, &key, &iv, Mode::Cbc)?,
+        "ctr" => image4::trial(payload, &key, &iv, Mode::Ctr)?,
+        _ => return Err(invalid("Unsupported Image4 AES mode")),
+    };
+    Ok(trial.data)
 }
 
 /// Apeiron's distance-to-pixel permutation for a power-of-two canvas side.

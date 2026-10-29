@@ -439,6 +439,16 @@ struct Compression {
     size: u64,
 }
 
+/// Encoded keybag fields; no device-key unwrapping is implied.
+struct Keybag<'a> {
+    kind: u64,
+    iv: &'a [u8],
+    key: &'a [u8],
+}
+
+const MAX_KEYBAG_TRIALS: usize = 8;
+const MAX_KEYBAGS: usize = crate::formats::container::MAX_COMPONENTS;
+
 /// An `IM4P` structure.
 struct Im4p<'a> {
     fourcc: [u8; 4],
@@ -446,7 +456,7 @@ struct Im4p<'a> {
     /// The payload `OCTET STRING`.
     data: Element<'a>,
     /// Keybag types, when the payload is encrypted.
-    keybags: Option<Vec<u64>>,
+    keybags: Option<Vec<Keybag<'a>>>,
     compression: Option<Compression>,
     /// `PAYP` payload properties.
     properties: Option<Vec<Property<'a>>>,
@@ -507,7 +517,7 @@ fn im4p<'a>(data: &'a [u8], element: Element<'a>) -> Result<Im4p<'a>> {
 
 /// Keybag types from the keybag `OCTET STRING`, which holds a complete DER
 /// `SEQUENCE OF SEQUENCE { INTEGER type, OCTET STRING iv, OCTET STRING key }`.
-fn keybags(data: &[u8], element: Element<'_>) -> Result<Vec<u64>> {
+fn keybags<'a>(data: &'a [u8], element: Element<'a>) -> Result<Vec<Keybag<'a>>> {
     let list = expect(
         read_element(data, element.contents_offset, element.end())?,
         SEQUENCE,
@@ -519,8 +529,22 @@ fn keybags(data: &[u8], element: Element<'_>) -> Result<Vec<u64>> {
             element.offset
         )));
     }
-    let mut types = Vec::new();
-    for entry in children(data, &list)? {
+    // Read element boundaries before validating entries, preserving the DER
+    // error order while bounding the temporary element list.
+    let mut entries = Vec::new();
+    let mut pos = list.contents_offset;
+    while pos < list.end() {
+        if entries.len() >= MAX_KEYBAGS {
+            return Err(error(format!(
+                "Unsupported IM4P keybag count; limit {MAX_KEYBAGS}"
+            )));
+        }
+        let entry = read_element(data, pos, list.end())?;
+        pos = entry.end();
+        entries.push(entry);
+    }
+    let mut bags = Vec::new();
+    for entry in entries {
         let entry = expect(entry, SEQUENCE, "IM4P keybag entry")?;
         let fields = children(data, &entry)?;
         let [kind, iv, key] = fields.as_slice() else {
@@ -540,15 +564,19 @@ fn keybags(data: &[u8], element: Element<'_>) -> Result<Vec<u64>> {
                 key.contents.len()
             )));
         }
-        types.push(kind);
+        bags.push(Keybag {
+            kind,
+            iv: iv.contents,
+            key: key.contents,
+        });
     }
-    if types.is_empty() {
+    if bags.is_empty() {
         return Err(error(format!(
             "Invalid IM4P keybag at 0x{:X}: no entries",
             element.offset
         )));
     }
-    Ok(types)
+    Ok(bags)
 }
 
 fn compression(data: &[u8], element: Element<'_>) -> Result<Compression> {
@@ -752,8 +780,24 @@ fn decode_declared(stored: &[u8], info: Compression) -> Contents {
 /// `complzss`/`complzvn` header or an LZFSE block magic, as img4tool
 /// (`uncompressIfNeeded`) and img4lib do.
 fn decode_recognized(stored: &[u8]) -> Contents {
-    let Some(codec @ (Codec::Lzss | Codec::Lzfse)) = compressed::sniff(stored) else {
-        return Contents::Stored;
+    let Some(codec) = compressed::sniff(stored) else {
+        return match crate::image4::decompress(stored) {
+            Some(candidate) => {
+                let codec = candidate.codec;
+                let decoded = candidate.decoded;
+                let note = format!(
+                    "Codec trial {}; decoded structure recognized; {}",
+                    codec.name(),
+                    decoded_note(codec, stored, &decoded)
+                );
+                Contents::Decoded {
+                    codec,
+                    decoded,
+                    note,
+                }
+            }
+            None => Contents::Stored,
+        };
     };
     match compressed::decode(codec, stored) {
         Ok(decoded) => {
@@ -779,11 +823,68 @@ fn decode_recognized(stored: &[u8]) -> Contents {
     }
 }
 
+/// Try the encoded material without claiming it is unwrapped. Ambiguous
+/// recognized outputs stay opaque, and declared decoded sizes must match.
+fn keybag_trial(
+    stored: &[u8],
+    keybags: &[Keybag<'_>],
+    compression: Option<Compression>,
+) -> Result<Option<crate::image4::Trial>> {
+    let mut selected = None;
+    for bag in keybags.iter().take(MAX_KEYBAG_TRIALS) {
+        for mode in [crate::image4::Mode::Cbc, crate::image4::Mode::Ctr] {
+            let Ok(candidate) = crate::image4::trial(stored, bag.key, bag.iv, mode) else {
+                continue;
+            };
+            if compression.is_some_and(|info| info.size != candidate.data.len() as u64) {
+                continue;
+            }
+            selected = crate::image4::select_candidate(selected, candidate)?;
+        }
+    }
+    Ok(selected)
+}
+
+/// Read payload coordinates and encoded key material without invoking
+/// decryption recursively or interpreting manifest authentication.
+pub(super) fn info(data: &[u8]) -> Result<Option<Image4Info>> {
+    let element = match detect(data) {
+        Some(Layout::Im4p) => root(data, "IM4P")?,
+        Some(Layout::Img4) => {
+            let root = root(data, "IMG4")?;
+            let items = children(data, &root)?;
+            let [magic, payload, ..] = items.as_slice() else {
+                return Err(error("Missing IMG4 payload"));
+            };
+            expect_magic(*magic, IMG4_MAGIC)?;
+            *payload
+        }
+        _ => return Ok(None),
+    };
+    let payload = im4p(data, element)?;
+    let keybags = payload
+        .keybags
+        .unwrap_or_default()
+        .iter()
+        .map(|bag| Image4Keybag {
+            class: bag.kind,
+            iv: hex::encode_upper(bag.iv),
+            key: hex::encode_upper(bag.key),
+        })
+        .collect();
+    Ok(Some(Image4Info {
+        label: fourcc_text(payload.fourcc),
+        offset: payload.data.contents_offset,
+        size: payload.data.contents.len(),
+        keybags,
+    }))
+}
+
 /// Keybag types as text: "2 keybags: production, development".
-fn keybag_text(types: &[u64]) -> String {
+fn keybag_text(types: &[Keybag<'_>]) -> String {
     let kinds: Vec<String> = types
         .iter()
-        .map(|&kind| match kind {
+        .map(|bag| match bag.kind {
             KEYBAG_PRODUCTION => "production".to_string(),
             KEYBAG_DEVELOPMENT => "development".to_string(),
             other => format!("type {other}"),
@@ -800,6 +901,30 @@ fn push_payload_children<'a>(c: &mut Container<'a>, label: &str, im4p: &Im4p<'a>
     let offset = im4p.data.contents_offset;
     let stored = im4p.data.contents;
     if let Some(keybags) = &im4p.keybags {
+        let trial = keybag_trial(stored, keybags, im4p.compression);
+        if let Err(error) = &trial {
+            c.notes
+                .push(format!("{label} payload: {error}; left opaque"));
+        }
+        if let Ok(Some(candidate)) = trial {
+            let codec_note = candidate
+                .codec
+                .map_or(String::new(), |codec| format!("; {codec} decoded"));
+            c.notes.push(format!("{label} payload: encoded keybag material was usable as supplied; {}{codec_note}; structure recognized; not authenticated", candidate.mode.name()));
+            let transform = match (candidate.mode, candidate.codec) {
+                (crate::image4::Mode::Cbc, Some(_)) => "AES-CBC + decompression",
+                (crate::image4::Mode::Ctr, Some(_)) => "AES-CTR + decompression",
+                (mode, None) => mode.name(),
+            };
+            c.children.push(Child::decoded(
+                label,
+                offset,
+                stored.len(),
+                Cow::Owned(candidate.data),
+                transform,
+            ));
+            return;
+        }
         c.notes.push(format!(
             "{label} payload: encrypted; keybag present ({}); not decrypted",
             keybag_text(keybags)
@@ -810,6 +935,7 @@ fn push_payload_children<'a>(c: &mut Container<'a>, label: &str, im4p: &Im4p<'a>
                 info.algorithm, info.size
             ));
         }
+        c.notes.push(format!("At most {MAX_KEYBAG_TRIALS} encoded keybags were tried with AES-CBC and AES-CTR; no unique recognized plaintext; device-wrapped keys are not unwrapped"));
         c.children.push(Child::opaque(label, offset, stored));
         return;
     }

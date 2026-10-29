@@ -4,6 +4,9 @@ import { drawMap, drawProfile, drawLegend, drawHistogram, entropyClass, complexi
 import { Viewport, worldSide, baseScale, bytePosition, xy2d } from './viewport.js';
 import { WORKBENCH_PROTOCOL } from './protocol.js';
 
+const MAX_SUBFILE_DEPTH = 6;
+const DECRYPT_DEBOUNCE_MS = 300;
+
 const $ = id => document.getElementById(id);
 const text = (id, value) => { $(id).textContent = value; };
 const setHidden = (id, hidden) => { $(id).hidden = hidden; };
@@ -23,6 +26,7 @@ const ui = {
   hexTop: 0,
 };
 let nextId = 1, requestId = 0, ready = false, engineError = '', version = '', map = null;
+let decryptTimer = 0;
 let hexData = null, probeData = null, selectionData = null;
 let lastHexKey = '', lastProbeKey = '', lastSelectionKey = '';
 let hexRequest = 0, probeRequest = 0, selectionRequest = 0, probeTimer = 0, paintFrame = 0;
@@ -64,20 +68,32 @@ function showError(message) {
 function setStatus(entry, status) {
   if (entry.status !== status) { counts[entry.status]--; counts[status]++; entry.status = status; }
 }
-function enqueue(files) {
+function enqueue(files, parent = null, component = null, activate = true) {
   if (!files.length) return;
   if (engineError) { showError(engineError); return; }
   setHidden('error', true);
   const added = [];
   for (const file of Array.from(files)) {
     const entry = { id: nextId++, file, name: file.name, size: file.size, status: 'queued', payload: null, error: '', profile: null, mean: null, elapsed: null, cursor: 0 };
+    entry.parentId = parent?.id ?? null;
+    entry.depth = parent ? parent.depth + 1 : 0;
+    entry.opaque = component?.opaque ?? false;
+    entry.subfiles = [];
+    entry.children = new Map();
+    if (parent) parent.children.set(component.index, entry.id);
     entries.set(entry.id, entry); counts.queued++; added.push(entry);
-    createEntry(entry); updateEntry(entry);
+    createEntry(entry);
+    entry.button.style.setProperty('--entry-depth', entry.depth);
+    if (parent) {
+      entry.button.dataset.parentId = parent.id;
+      parent.button.after(entry.button);
+    }
+    updateEntry(entry);
   }
-  worker.postMessage({ type: 'add', files: added.map(({ id, file }) => ({ id, file })) });
+  worker.postMessage({ type: 'add', files: added.map(({ id, file, opaque }) => ({ id, file, opaque })) });
   pushLog('cmd', `queue ${added.map(x => JSON.stringify(x.name)).join(' ')}`);
-  if (added.length === 1) selectFile(added[0].id);
-  else { if (!selected()) selectFile(added[0].id); ui.view = 'batch'; ui.filter = 'all'; }
+  if (activate && added.length === 1) selectFile(added[0].id);
+  else if (activate) { if (!selected()) selectFile(added[0].id); ui.view = 'batch'; ui.filter = 'all'; }
   renderSummary(); renderBatchOrder(); renderChrome();
 }
 function createEntry(entry) {
@@ -176,6 +192,7 @@ function selectFile(id) {
 }
 function renderSelected() {
   const entry = selected(); if (!entry) return;
+  renderBreadcrumb(entry);
   text('file-name', entry.name); text('file-size', fmtSize(entry.size));
   text('file-status', statusLabel(entry.status)); $('file-status').className = `badge ${entry.status}`;
   const p = entry.payload, pr = p?.primary;
@@ -197,9 +214,10 @@ function renderClassification(entry) {
   const p = entry.payload;
   if (!p) {
     $('classification-content').innerHTML = panel(entry.status === 'error' ? 'classification failed' : 'classification pending', `<p class="${entry.status === 'error' ? 'error' : 'muted'}">${esc(entry.error || 'This file is queued for analysis.')}</p><p class="muted">Entropy and hex inspection are available independently of architecture classification.</p><button data-action="open-entropy">inspect entropy</button>`);
+    $('classification-content').insertAdjacentHTML('beforeend', cryptoPanel(entry) + subfilePanel(entry));
     return;
   }
-  let html = '<div class="classification-grid">' + panel('format', row('format', fmtFormatName(p.format.format)) + row('confidence', `${(p.format.confidence * 100).toFixed(1)}%`) + (p.format.magic_offset == null ? '' : row('magic offset', '0x' + hx(p.format.magic_offset))) + (p.format.variant_name ? row('variant', p.format.variant_name) : ''));
+  let html = cryptoPanel(entry) + subfilePanel(entry) + '<div class="classification-grid">' + panel('format', row('format', fmtFormatName(p.format.format)) + row('confidence', `${(p.format.confidence * 100).toFixed(1)}%`) + (p.format.magic_offset == null ? '' : row('magic offset', '0x' + hx(p.format.magic_offset))) + (p.format.variant_name ? row('variant', p.format.variant_name) : ''));
   if (p.metadata?.length) html += panel('metadata', p.metadata.map(m => row(m.label, fmtMetaValue(m))).join(''), p.metadata.length);
   html += '</div>';
   if (p.slices?.length) html += panel('contained architectures', p.slices.map(s => row(`${s.label ? s.label + ' · ' : ''}${isaName(s.isa)}`, `${s.bitwidth}-bit ${fmtEndianShort(s.endianness)} · 0x${hx(s.offset)} · ${fmtSize(s.size)}${s.variant ? ' · ' + fmtVariant(s.variant) : ''}`)).join(''), p.slices.length);
@@ -215,12 +233,127 @@ function renderClassification(entry) {
   $('classification-content').innerHTML = html;
 }
 
+function cryptoPanel(entry) {
+  const info = entry.image4Info;
+  if (!info) return '';
+  const draft = entry.cryptoDraft || { key: '', iv: '', mode: 'auto', bag: 0 };
+  const bag = info.keybags[draft.bag];
+  const options = info.keybags.map((bag, index) => `<option value="${esc(index)}" ${index === draft.bag ? 'selected' : ''}>${esc(`class ${bag.class} · entry ${index}`)}</option>`).join('');
+  const material = bag
+    ? '<p class="muted">Encoded keybag material from this file. Device-wrapped material is not unwrapped.</p>'
+    : '<p class="muted">Enter a hexadecimal key and IV. Changes apply after 300 ms; material stays in this session.</p>';
+  const mode = ['auto', 'cbc', 'ctr'].map(mode => `<option value="${esc(mode)}" ${mode === draft.mode ? 'selected' : ''}>${mode === 'auto' ? 'Try CBC and CTR' : `AES-${mode.toUpperCase()} candidate`}</option>`).join('');
+  const result = entries.has(entry.decryptedId)
+    ? `<button type="button" data-decrypted-id="${esc(entry.decryptedId)}">open decrypted payload</button>` : '';
+  const body = `<form class="image4-crypto" data-image4="true">${material}${options ? `<label>keybag<select name="bag">${options}</select></label>` : ''}<label>key<input name="key" aria-label="AES key" autocomplete="off" spellcheck="false" value="${esc(bag?.key || draft.key)}" ${bag ? 'readonly' : ''}></label><label>IV<input name="iv" aria-label="AES IV" autocomplete="off" spellcheck="false" value="${esc(bag?.iv || draft.iv)}" ${bag ? 'readonly' : ''}></label><label>mode<select name="mode" aria-label="AES mode">${mode}</select></label><div class="crypto-actions"><button type="submit">try decryption</button>${result}</div><p id="crypto-status" role="status">${esc(entry.cryptoStatus || 'No payload authentication is performed')}</p></form>`;
+  return panel('Image4 decryption', body);
+}
+
+function scheduleDecryption(form, delay = DECRYPT_DEBOUNCE_MS) {
+  const entry = selected();
+  if (!entry?.image4Info) return;
+  clearTimeout(decryptTimer);
+  entry.decryptRequest = ++requestId;
+  entry.decryptPending = false;
+  worker.postMessage({ type: 'cancel', operations: ['decrypt'] });
+  const bag = Number(form.elements.bag?.value || 0);
+  const keybag = entry.image4Info.keybags[bag];
+  if (keybag) {
+    form.elements.key.value = keybag.key;
+    form.elements.iv.value = keybag.iv;
+  }
+  const key = form.elements.key.value.replace(/\s/g, '');
+  const iv = form.elements.iv.value.replace(/\s/g, '');
+  const mode = form.elements.mode.value;
+  entry.cryptoDraft = { key, iv, mode, bag };
+  if (!/^(?:[0-9a-f]{32}|[0-9a-f]{48}|[0-9a-f]{64})$/i.test(key) || !/^[0-9a-f]{32}$/i.test(iv)) {
+    entry.cryptoStatus = 'Key: 16, 24 or 32 B; IV: 16 B; hexadecimal required';
+    text('crypto-status', entry.cryptoStatus);
+    return;
+  }
+  entry.decryptPending = true;
+  entry.cryptoStatus = 'Trying decryption...';
+  text('crypto-status', entry.cryptoStatus);
+  const request = entry.decryptRequest;
+  decryptTimer = setTimeout(() => {
+    if (selected()?.id !== entry.id || entry.decryptRequest !== request) return;
+    worker.postMessage({ type: 'decrypt', id: entry.id, request, key, iv, mode });
+  }, delay);
+}
+
+$('classification-content').addEventListener('input', event => {
+  const form = event.target.closest('form[data-image4]');
+  if (form) scheduleDecryption(form);
+});
+$('classification-content').addEventListener('change', event => {
+  const form = event.target.closest('form[data-image4]');
+  if (form && event.target.tagName === 'SELECT') scheduleDecryption(form);
+});
+$('classification-content').addEventListener('submit', event => {
+  const form = event.target.closest('form[data-image4]');
+  if (!form) return;
+  event.preventDefault();
+  scheduleDecryption(form, 0);
+});
+
+function renderBreadcrumb(entry) {
+  const path = [];
+  let parent = entries.get(entry.parentId);
+  while (parent) {
+    path.unshift(parent);
+    parent = entries.get(parent.parentId);
+  }
+  const nav = $('subfile-breadcrumb');
+  nav.hidden = path.length === 0;
+  nav.innerHTML = path.map(parent => `<button type="button" data-container-id="${esc(parent.id)}">${esc(parent.name)}</button><span aria-hidden="true">/</span>`).join('')
+    + `<span aria-current="page">${esc(entry.name)}</span>`;
+}
+
+function subfilePanel(entry) {
+  if (!entry.subfiles?.length) {
+    return entry.subfileError ? panel('subfiles', `<p class="error">${esc(entry.subfileError)}</p>`) : '';
+  }
+  const rows = entry.subfiles.map(component => {
+    const disabled = !component.available || entry.depth >= MAX_SUBFILE_DEPTH;
+    const detail = component.transform
+      ? `${fmtSize(component.size)} decoded · ${component.transform} · ${fmtSize(component.stored_size)} stored`
+      : fmtSize(component.size);
+    const reason = !component.available ? ' · exceeds the 64 MiB inspection limit'
+      : entry.depth >= MAX_SUBFILE_DEPTH ? ' · nesting limit reached' : component.opaque ? ' · opaque; hex and entropy only' : '';
+    return `<div class="subfile-row"><button type="button" data-subfile-index="${esc(component.index)}" ${disabled ? 'disabled' : ''}>open ${esc(component.label || `member ${component.index}`)}</button><span>${esc(detail)} · parent 0x${esc(hx(component.offset))}${esc(reason)}</span></div>`;
+  }).join('');
+  return panel('subfiles', rows, entry.subfiles.length);
+}
+
+function openSubfile(index) {
+  const entry = selected();
+  const component = entry?.subfiles.find(component => component.index === index);
+  if (!component?.available || entry.depth >= MAX_SUBFILE_DEPTH) return;
+  const existing = entry.children.get(index);
+  if (entries.has(existing)) {
+    selectFile(existing);
+    return;
+  }
+  entry.subfileRequest = ++requestId;
+  worker.postMessage({ type: 'subfile', id: entry.id, request: entry.subfileRequest, index });
+}
+
 function cancelInteractive() {
-  worker.postMessage({ type: 'cancel', operations: ['map', 'detail', 'hex', 'probe', 'selection'] });
+  const entry = selected();
+  if (entry) {
+    entry.subfileRequest = 0;
+    entry.decryptRequest = 0;
+    if (entry.decryptPending) {
+      entry.decryptPending = false;
+      entry.cryptoStatus = 'Decryption canceled';
+    }
+  }
+  worker.postMessage({ type: 'cancel', operations: ['map', 'detail', 'hex', 'probe', 'selection', 'subfile', 'decrypt'] });
   map = detail = hexData = probeData = selectionData = null;
   paintedBaseKey = '';
   lastHexKey = lastProbeKey = lastSelectionKey = '';
   clearTimeout(probeTimer);
+  clearTimeout(decryptTimer);
   clearTimeout(detailTimer); clearTimeout(historyTimer);
   $('hex-rows').replaceChildren(); $('mini-hex').replaceChildren(); $('map-details').replaceChildren();
   $('entropy-map').getContext('2d').clearRect(0, 0, $('entropy-map').width, $('entropy-map').height);
@@ -596,6 +729,9 @@ worker.addEventListener('message', ({ data }) => {
     setStatus(entry, data.status); updateEntry(entry); renderSummary();
     if (ui.selected === entry.id) renderSelected();
   } else if (data.type === 'result') {
+    entry.image4Info = data.image4Info || null;
+    entry.subfiles = data.subfiles || [];
+    entry.subfileError = data.subfileError || '';
     entry.payload = data.payload; entry.error = data.error || ''; entry.elapsed = data.elapsed ?? null;
     entry.profile = data.profile || null; entry.mean = data.mean ?? null;
     setStatus(entry, entry.payload ? 'done' : 'error');
@@ -604,6 +740,25 @@ worker.addEventListener('message', ({ data }) => {
     pushLog(entry.payload ? 'done' : 'error', `${entry.name} · ${entry.payload ? `${archLabel(entry.payload)} · ${entry.payload.primary.bitwidth}-bit ${fmtEndianShort(entry.payload.primary.endianness)}` : entry.error}${entry.elapsed == null ? '' : ` · ${entry.elapsed.toFixed(1)} ms`}`);
     text('announcement', `${entry.name}: ${statusLabel(entry.status)}`);
     if (ui.selected === entry.id) { renderSelected(); renderChrome(); }
+  } else if (data.type === 'decrypted' && data.request === entry.decryptRequest) {
+    entry.decryptPending = false;
+    if (entries.has(entry.decryptedId)) removeFile(entry.decryptedId);
+    const label = `${entry.image4Info.label}.decrypted`;
+    const file = new File([data.bytes], label, { type: 'application/octet-stream' });
+    const index = `decrypted-${data.request}`;
+    enqueue([file], entry, { index, opaque: false }, false);
+    entry.decryptedId = entry.children.get(index);
+    entry.cryptoStatus = data.mode === 'auto'
+      ? 'A unique structured candidate was decoded; not authenticated'
+      : `AES-${data.mode.toUpperCase()} candidate decoded; not authenticated`;
+    if (ui.selected === entry.id) renderClassification(entry);
+  } else if (data.type === 'subfile' && data.request === entry.subfileRequest) {
+    const component = entry.subfiles.find(component => component.index === data.index);
+    if (!component) return;
+    const file = new File([data.bytes], component.label || `member-${component.index}`, {
+      type: 'application/octet-stream',
+    });
+    enqueue([file], entry, component);
   } else if (data.type === 'operation-status' && ui.selected === entry.id) {
     const layer = data.operation === 'detail' ? detail : map;
     if (layer?.request === data.request) { layer.phase = data.phase; text('map-progress', data.phase); setHidden('map-progress', false); }
@@ -627,6 +782,12 @@ worker.addEventListener('message', ({ data }) => {
     text('selection-entropy', `entropy ${data.stats.entropy.toFixed(4)} bits/byte${Math.abs(ui.anchor - ui.cursor) + 1 > data.bytes.length ? ' · first 4 MiB sampled' : ''}`);
   } else if (data.type === 'error' && ui.selected === entry.id) {
     pushLog('error', `${entry.name}: ${data.operation}: ${data.error}`);
+    if (data.operation === 'subfile') showError(data.error);
+    if (data.operation === 'decrypt' && data.request === entry.decryptRequest) {
+      entry.decryptPending = false;
+      entry.cryptoStatus = data.error;
+      if ($('crypto-status')) text('crypto-status', data.error);
+    }
     if (data.operation === 'map' && map?.request === data.request) { map.error = data.error; text('map-progress', data.error); setHidden('map-progress', false); $('entropy-map').dataset.state = 'error'; }
     else if (data.operation === 'detail' && detail?.request === data.request) { map.detailError = data.error; detail = null; renderMapProgress(); }
     else if (data.operation === 'hex' && data.request === hexRequest) { $('hex-rows').textContent = data.error; $('mini-hex').textContent = data.error; }
@@ -640,6 +801,11 @@ worker.addEventListener('error', event => {
 });
 function removeFile(id) {
   const entry = entries.get(id); if (!entry) return;
+  for (const childId of [...entry.children.values()]) removeFile(childId);
+  const parent = entries.get(entry.parentId);
+  if (parent) {
+    for (const [index, childId] of parent.children) if (childId === id) parent.children.delete(index);
+  }
   const order = [...entries.keys()], index = order.indexOf(id);
   worker.postMessage({ type: 'remove', id });
   counts[entry.status]--;
@@ -716,7 +882,10 @@ const actions = {
 };
 document.addEventListener('click', event => {
   const target = event.target.closest('button');
-  if (target?.dataset.action && actions[target.dataset.action]) actions[target.dataset.action](target);
+  if (target?.dataset.subfileIndex != null) openSubfile(Number(target.dataset.subfileIndex));
+  else if (target?.dataset.decryptedId != null) selectFile(Number(target.dataset.decryptedId));
+  else if (target?.dataset.containerId != null) selectFile(Number(target.dataset.containerId));
+  else if (target?.dataset.action && actions[target.dataset.action]) actions[target.dataset.action](target);
   else if (target?.dataset.tab) changeTab(target.dataset.tab);
   else if (target?.dataset.curve) { ui.curve = target.dataset.curve; requestMap(); renderChrome(); }
   else if (target?.dataset.mode) { ui.mode = target.dataset.mode; paintMap(); renderChrome(); }

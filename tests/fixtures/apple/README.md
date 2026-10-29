@@ -49,6 +49,26 @@ What img4tool wrote:
   whose `BNCN` nonce is the generator stored little-endian
   (`88 77 66 55 44 33 22 11`).
 
+## Headerless Brotli fixture
+
+`kernel.macho.br` was generated on 2026-10-29 on macOS AArch64 using Node
+25.8.1 and its bundled Brotli 1.2.0 encoder, quality 4. Its input is the same
+synthetic `kernel.macho` listed below; it contains no third-party firmware.
+The fixture exercises a headerless codec trial followed by structural
+recognition. Regenerate it separately from img4tool's files:
+
+```sh
+cd tests/fixtures/apple
+node --input-type=module - kernel.macho kernel.macho.br <<'JS'
+import { readFileSync, writeFileSync } from 'node:fs';
+import { brotliCompressSync, constants } from 'node:zlib';
+const data = readFileSync(process.argv[2]);
+writeFileSync(process.argv[3], brotliCompressSync(data, {
+  params: { [constants.BROTLI_PARAM_QUALITY]: 4 },
+}));
+JS
+```
+
 ## Sizes and SHA-256
 
 | File | Size (B) | SHA-256 |
@@ -59,3 +79,4 @@ What img4tool wrote:
 | `krnl.bvx2.im4p` | 293 | `ddbe536f0c7b7ea2f24eda30cb7fc49437055e63c051839f12349cdb2be09e18` |
 | `krnl.complzss.im4p` | 1463 | `01ffa229ed87e86856a54ef9f21499e5af487b5380f1c4f9d7bfb09905cdba30` |
 | `krnl.img4` | 787 | `e4f3b6f3505e6e4c6aa774401b665a4b83af3c96f1ee68366e46752dfea2f066` |
+| `kernel.macho.br` | 80 | `edd78a0f41465771286e35095f960cc3455755d7c6f8283bc6eebbafa9aa4908` |

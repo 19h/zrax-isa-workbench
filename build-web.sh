@@ -20,6 +20,7 @@ for source in web/*.js; do
     sed "s|from '../pkg/zrax.js'|from './zrax.js'|" "$source" > "dist/$(basename "$source")"
 done
 cp src/workbench/apeiron/LICENSE dist/APEIRON-LICENSE.txt
+cp docs/third-party-firmware-parsers.txt dist/THIRD-PARTY-FIRMWARE-PARSERS.txt
 cp -R web/fonts dist/fonts
 cp -R web/classic dist/classic
 sed "s|from '../../pkg/zrax.js'|from '../zrax.js'|" web/classic/classic.js > dist/classic/classic.js
