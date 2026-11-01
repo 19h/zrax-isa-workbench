@@ -60,7 +60,13 @@ export async function holdRead(page, name) {
   await page.addInitScript(() => {
     const Original = window.Worker;
     window.Worker = class extends Original {
-      constructor(...args) { super(...args); window.testWorker = this; this.addEventListener('message', e => { if (e.data.type === 'test-read-held') window.readHeld = true; }); }
+      constructor(...args) {
+        super(...args);
+        // The page also starts a scan worker; only the analysis worker reads are held.
+        if (!String(args[0]).includes('analysis-worker')) return;
+        window.testWorker = this;
+        this.addEventListener('message', e => { if (e.data.type === 'test-read-held') window.readHeld = true; });
+      }
     };
   });
   await page.route('**/analysis-worker.js', async route => {

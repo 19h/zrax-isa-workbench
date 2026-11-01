@@ -90,6 +90,23 @@ A file that holds only certificates is classified as format `x509`
 - PEM blocks become opaque members holding their DER bytes, transform
   `base64`, so the subfiles panel can open each certificate.
 
+## Workbench
+
+The **certificates** tab (key `6`) scans the selected file in the scan
+worker as soon as it is selected, in 4 MiB windows that overlap by 2 MiB,
+and shows the count on the tab. The tab lists certificates as a tree of
+issuer links: roots (no link) first, each followed by the certificates that
+link to it. Duplicates fold into their first occurrence with a `×N` badge,
+and certificates reachable only through an issuer cycle are listed at the
+top level. Selecting one shows its fields, its validity relative to this
+computer's clock, every extension, the SHA-256 fingerprint and the regions
+that contain it, for example
+`ARM64 slice > __LINKEDIT > Mach-O code signature`. Actions: show the stored
+bytes in hex, download DER or PEM, open the DER as a file (classified as
+`x509`), and export the distinct certificates as one PEM file or the report
+as JSON. The view says "signature not verified" for each certificate and
+"name match" for each issuer link.
+
 ## Command line
 
 `zrax certs FILE...` prints each certificate with its location, names,

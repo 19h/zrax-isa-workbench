@@ -1,7 +1,11 @@
 # Zrax Workbench
 
 The reference workbench is implemented with semantic HTML, CSS, native ES
-modules, a dedicated worker, Rust/WASM, and Canvas 2D. No frontend framework,
+modules, two dedicated workers, Rust/WASM, and Canvas 2D. The analysis worker
+(`web/analysis-worker.js`) classifies files and serves the map and hex views;
+the scan worker (`web/scan-worker.js`) streams files through the string and
+certificate scanners for the strings and certificates tabs, so long scans and
+searches never delay hex or map requests. No frontend framework,
 bundler, external runtime script, or remote font service is required. Files
 remain in the browser; importing several files appends independent queue entries.
 
@@ -230,7 +234,7 @@ a 390*844 px viewport with measured document width 390 px.
 
 Primary implementation sources are `src/wasm.rs`, `src/workbench/mod.rs`, the
 vendored Apeiron files and their hash/license register, `web/viewport.js`,
-`web/canvas.js`, `web/analysis-worker.js`, `web/workbench.js`, and the browser
+`web/canvas.js`, `web/analysis-worker.js`, `web/scan-worker.js`, `web/workbench.js`, and the browser
 regressions. The supplied HTML/design archive in
 `/Users/int/Downloads/workbench` defines the visual/function reference; its
 framework runtime is replaced by native browser APIs. Font provenance and SIL

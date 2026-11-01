@@ -3,8 +3,13 @@ import { hx, ENC, encChar, parseGoto, fmtF, unixT, utf8At } from './hex-utils.js
 import { drawMap, drawProfile, drawLegend, drawHistogram, entropyClass, complexityClass } from './canvas.js';
 import { Viewport, worldSide, baseScale, bytePosition, xy2d } from './viewport.js';
 import { WORKBENCH_PROTOCOL } from './protocol.js';
+import { ScanClient } from './scan-client.js';
+import { createStringsView } from './strings-view.js';
+import { createCertificatesView } from './certificates-view.js';
 
 const MAX_SUBFILE_DEPTH = 6;
+// Tabs in display order; the number keys 1-6 select them.
+const TABS = ['classification', 'entropy', 'hex', 'json', 'strings', 'certificates'];
 const DECRYPT_DEBOUNCE_MS = 300;
 
 const $ = id => document.getElementById(id);
@@ -16,7 +21,7 @@ let saved = {};
 try { saved = JSON.parse(localStorage.getItem('isawb.v2')) || {}; } catch { /* Storage is optional. */ }
 const choose = (value, options, fallback) => options.includes(value) ? value : fallback;
 const ui = {
-  view: 'file', tab: choose(saved.tab, ['classification', 'entropy', 'hex', 'json'], 'classification'),
+  view: 'file', tab: choose(saved.tab, TABS, 'classification'),
   sideOpen: typeof saved.sideOpen === 'boolean' ? saved.sideOpen : innerWidth >= 1250,
   logOpen: saved.logOpen === true, curve: choose(saved.curve, ['hilbert', 'linear'], 'hilbert'),
   mode: choose(saved.mode, ['entropy', 'bytes'], 'entropy'),
@@ -40,6 +45,43 @@ const selected = () => entries.get(ui.selected);
 const clampOffset = offset => Math.max(0, Math.min(Math.max(0, (selected()?.size || 0) - 1), Math.floor(offset)));
 const probeOffset = () => ui.hover ?? ui.cursor;
 const archId = isa => typeof isa === 'object' ? isaName(isa).toLowerCase() : isa === 'x86_64' ? isa : String(isa).replaceAll('_', '');
+/** The hex selection as a half-open byte range, or null. */
+function hexSelection() {
+  if (ui.anchor == null) return null;
+  return { start: Math.min(ui.anchor, ui.cursor), end: Math.max(ui.anchor, ui.cursor) + 1 };
+}
+/** Select `start` to `end` (exclusive) and show it in the hex view. */
+function showRange(start, end) {
+  if (!selected()) return;
+  setCursor(Math.max(start, end - 1), start, true);
+  changeTab('hex');
+}
+/** Open bytes derived from `parent` as its child entry, or select the open one. */
+function openDerivedFile(parent, bytes, name, key) {
+  const existing = parent.children.get(key);
+  if (entries.has(existing)) {
+    selectFile(existing);
+    return;
+  }
+  if (parent.depth >= MAX_SUBFILE_DEPTH) {
+    showError(`Cannot open ${name}: subfiles nest at most ${MAX_SUBFILE_DEPTH} levels`);
+    return;
+  }
+  const file = new File([bytes], name, { type: 'application/octet-stream' });
+  enqueue([file], parent, { index: key, opaque: false });
+}
+const scanner = new ScanClient();
+const viewHooks = {
+  hexSelection,
+  showRange,
+  openDerivedFile,
+  offsetBase: () => ui.offsetBase,
+  download: (name, blob) => download(name, blob),
+  copy: value => copy(value),
+  log: (tone, message) => pushLog(tone, message),
+};
+const stringsView = createStringsView(scanner, viewHooks);
+const certificatesView = createCertificatesView(scanner, viewHooks);
 const archLabel = payload => payload.slices?.length > 1 ? [...new Set(payload.slices.map(x => archId(x.isa)))].join(' + ') : archId(payload.primary.isa);
 const statusLabel = status => ({ queued: 'queued', analyzing: 'analyzing', done: 'done', error: 'failed' })[status];
 const glyph = status => ({ queued: '[ ]', analyzing: '[*]', done: '[+]', error: '[-]' })[status];
@@ -167,13 +209,15 @@ function renderChrome() {
   document.querySelector('[data-action="file-view"]').classList.toggle('active', ui.view === 'file');
   document.querySelector('[data-action="batch-view"]').classList.toggle('active', ui.view === 'batch');
   for (const button of document.querySelectorAll('[data-tab]')) { const on = button.dataset.tab === ui.tab; button.setAttribute('aria-selected', String(on)); button.tabIndex = on ? 0 : -1; }
-  for (const tab of ['classification', 'entropy', 'hex', 'json']) setHidden(`${tab}-view`, ui.tab !== tab);
+  for (const tab of TABS) setHidden(`${tab}-view`, ui.tab !== tab);
+  stringsView.sync(ui.view === 'file' ? entry : null, ui.tab === 'strings');
+  certificatesView.sync(ui.view === 'file' ? entry : null, ui.tab === 'certificates');
   for (const button of document.querySelectorAll('[data-curve]')) button.classList.toggle('active', button.dataset.curve === ui.curve);
   for (const button of document.querySelectorAll('[data-mode]')) button.classList.toggle('active', button.dataset.mode === ui.mode);
   for (const button of document.querySelectorAll('[data-filter]')) button.classList.toggle('active', button.dataset.filter === ui.filter);
   $('classification-band').classList.toggle('compact', ui.tab !== 'classification');
   $('hex-columns').value = ui.columns; $('hex-group').value = ui.group; $('hex-encoding').value = ui.encoding; $('hex-offset').value = ui.offsetBase;
-  text('status-mode', ui.view === 'batch' ? 'BATCH' : ui.tab === 'classification' ? 'CLASSIFY' : ui.tab.toUpperCase());
+  text('status-mode', ui.view === 'batch' ? 'BATCH' : ({ classification: 'CLASSIFY', certificates: 'CERTS' })[ui.tab] || ui.tab.toUpperCase());
   text('status-file', entry?.name || 'no file');
   text('status-classification', entry?.payload ? `${archLabel(entry.payload)} · ${entry.payload.primary.bitwidth}-bit ${fmtEndianShort(entry.payload.primary.endianness)} · ${fmtFormatName(entry.payload.format.format).toLowerCase()}` : '');
   persist();
@@ -879,6 +923,7 @@ function removeFile(id) {
   counts[entry.status]--;
   if (entry.payload) { tally(archTally, archLabel(entry.payload), -1); tally(formatTally, fmtFormatName(entry.payload.format.format).toLowerCase(), -1); }
   entries.delete(id); entry.button.remove(); entry.tr.remove();
+  stringsView.forget(id); certificatesView.forget(id);
   for (const [key, layer] of mapCache) if (layer.id === id) mapCache.delete(key);
   if (ui.selected === id) {
     cancelInteractive(); ui.selected = null;
@@ -890,6 +935,7 @@ function removeFile(id) {
 function clearFiles() {
   const n = entries.size;
   worker.postMessage({ type: 'clear' }); cancelInteractive(); entries.clear(); mapCache.clear();
+  stringsView.clear(); certificatesView.clear();
   for (const key of Object.keys(counts)) counts[key] = 0;
   archTally.clear(); formatTally.clear();
   $('file-list').replaceChildren(); $('batch-rows').replaceChildren();
@@ -901,6 +947,8 @@ function changeTab(tab) {
   ui.tab = tab; ui.view = 'file'; ui.hover = null;
   if (tab === 'hex') ui.hexTop = clampHexTop(Math.floor(ui.cursor / ui.columns) - Math.floor(hexVisibleRows() / 3));
   lastHexKey = ''; renderChrome();
+  // On narrow screens the tab strip scrolls; keep the chosen tab visible.
+  $(`tab-${tab}`).scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 function download(name, content, type) {
   const blob = content instanceof Blob ? content : new Blob([content], { type });
@@ -946,6 +994,8 @@ const actions = {
   'download-file': () => selected() && download(selected().name, selected().file),
   'download-selection': () => { const e = selected(); if (e && ui.anchor != null) { const start = Math.min(ui.anchor, ui.cursor), end = Math.max(ui.anchor, ui.cursor) + 1; download(`${e.name}.${hx(start)}-${hx(end - 1)}.bin`, e.file.slice(start, end)); } },
   'clear-selection': () => { ui.anchor = null; requestSelection(); renderHex(); },
+  'strings-in-selection': () => { stringsView.showSelection(); changeTab('strings'); },
+  'strings-here': () => { stringsView.locate(ui.cursor); changeTab('strings'); },
   'clear-log': () => { log.length = 0; $('log-lines').replaceChildren(); },
 };
 document.addEventListener('click', event => {
@@ -1057,7 +1107,8 @@ document.addEventListener('keydown', event => {
     requestHex(); event.preventDefault(); return;
   }
   if (key === 'j' || key === 'k') { const ids = [...entries.keys()], i = ids.indexOf(ui.selected), id = ids[Math.max(0, Math.min(ids.length - 1, i + (key === 'j' ? 1 : -1)))]; if (id) selectFile(id); return; }
-  if (['1', '2', '3', '4'].includes(key)) { changeTab(['classification', 'entropy', 'hex', 'json'][Number(key) - 1]); return; }
+  if (/^[1-6]$/.test(key)) { changeTab(TABS[Number(key) - 1]); return; }
+  if (key === '/' && ui.tab === 'strings' && selected()) { event.preventDefault(); stringsView.focusSearch(); return; }
   if (key === 'o') { actions.browse(); return; }
   if (key === 'f') { actions['toggle-side'](); return; }
   if (key === 'b') { ui.view = ui.view === 'batch' ? 'file' : 'batch'; renderChrome(); return; }

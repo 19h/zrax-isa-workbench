@@ -26,10 +26,10 @@
 <div class="error-banner" id="error" role="alert" hidden></div>
 <section id="empty-view" class="empty-view"><h1>[ no files ]</h1><button class="empty-drop" data-action="browse"><strong>drop binaries anywhere</strong><span>one file opens in the workbench; several open the batch table. press <kbd>o</kbd> to browse.</span><small>classification and entropy run locally · nothing is uploaded</small></button><p class="muted" id="loading" role="status">Loading analysis engine…</p></section>
 <section class="file-view" id="file-view" hidden>
-<header class="bar file-header"><strong id="file-name"></strong><span class="muted" id="file-size"></span><span class="badge" id="file-status"></span><span class="spacer"></span><span class="muted key-hint"><kbd>1–4</kbd> tabs</span><button class="icon-button small" data-action="remove" aria-label="Remove file" title="Remove file"><svg viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></header>
+<header class="bar file-header"><strong id="file-name"></strong><span class="muted" id="file-size"></span><span class="badge" id="file-status"></span><span class="spacer"></span><span class="muted key-hint"><kbd>1–6</kbd> tabs</span><button class="icon-button small" data-action="remove" aria-label="Remove file" title="Remove file"><svg viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></header>
 <nav id="subfile-breadcrumb" class="subfile-breadcrumb" aria-label="Container path" hidden></nav>
 <div class="classification-band" id="classification-band"></div>
-<div class="tabs" role="tablist" aria-label="File views"><button id="tab-classification" role="tab" aria-controls="classification-view" data-tab="classification" aria-selected="true">classification</button><button id="tab-entropy" role="tab" aria-controls="entropy-view" data-tab="entropy" aria-selected="false">entropy</button><button id="tab-hex" role="tab" aria-controls="hex-view" data-tab="hex" aria-selected="false">hex</button><button id="tab-json" role="tab" aria-controls="json-view" data-tab="json" aria-selected="false">json</button></div>
+<div class="tabs" role="tablist" aria-label="File views"><button id="tab-classification" role="tab" aria-controls="classification-view" data-tab="classification" aria-selected="true">classification</button><button id="tab-entropy" role="tab" aria-controls="entropy-view" data-tab="entropy" aria-selected="false">entropy</button><button id="tab-hex" role="tab" aria-controls="hex-view" data-tab="hex" aria-selected="false">hex</button><button id="tab-json" role="tab" aria-controls="json-view" data-tab="json" aria-selected="false">json</button><button id="tab-strings" role="tab" aria-controls="strings-view" data-tab="strings" aria-selected="false">strings</button><button id="tab-certificates" role="tab" aria-controls="certificates-view" data-tab="certificates" aria-selected="false">certificates<span class="tab-count" id="certificates-count" aria-hidden="true"></span></button></div>
 <section class="tab-panel classification-view" id="classification-view" role="tabpanel" aria-labelledby="tab-classification"><div id="classification-content"></div><section class="panel profile-panel"><header>[ entropy profile ] <span class="muted" id="profile-mean"></span></header><div class="panel-body"><canvas id="hero-profile" width="1024" height="1" aria-label="Entropy profile; click to inspect an offset" tabindex="0"></canvas></div></section></section>
 <section class="tab-panel entropy-workspace" id="entropy-view" role="tabpanel" aria-labelledby="tab-entropy" hidden>
 <div class="entropy-center">
@@ -50,9 +50,51 @@
 <div class="hex-center"><div class="toolbar hex-toolbar"><label>columns <select id="hex-columns" aria-label="Hex columns"><option>8</option><option selected>16</option><option>24</option><option>32</option></select></label><label>group <select id="hex-group" aria-label="Byte grouping"><option>1</option><option>2</option><option selected>4</option><option>8</option></select></label><label>offset <select id="hex-offset" aria-label="Offset base"><option value="hex">hex</option><option value="dec">dec</option></select></label><select id="hex-encoding" aria-label="Text encoding"><option value="ascii">ascii</option><option value="latin1">latin-1</option><option value="cp437">cp437 (dos)</option><option value="ebcdic">ebcdic (cp037)</option><option value="utf16le">utf-16le</option><option value="utf16be">utf-16be</option></select><label class="goto-label">goto <input id="goto-offset" aria-label="Go to offset" placeholder="0x… / +16 / 50%" spellcheck="false"></label></div>
 <div class="hex-content"><div class="hex-viewport" id="hex-viewport" tabindex="0" role="region" aria-label="Hex bytes"><div id="hex-head" class="hex-row hex-head"></div><div id="hex-rows"></div></div><div class="hex-track" id="hex-track" role="slider" tabindex="0" aria-label="Scroll through binary" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><canvas id="hex-profile" width="1" height="1024"></canvas><div id="hex-thumb"></div><div id="hex-cursor-tick"></div></div></div>
 <footer class="toolbar hex-footer"><span id="hex-location"></span><span class="muted" id="hex-row-info"></span><span class="accent-text" id="hex-selection-info"></span><span class="spacer"></span><small class="muted key-hint"><kbd>shift</kbd> select <kbd>pgup/pgdn</kbd> page <kbd>g</kbd> goto</small></footer></div>
-<aside class="data-inspector" aria-label="Data inspector"><header class="bar"><span>[ data inspector ]</span><span class="spacer"></span><div class="segments"><button data-endian="little" class="active">le</button><button data-endian="big">be</button></div></header><div class="inspector-note" id="endian-note"></div><div id="data-values"></div><section class="inspector-section" id="selection-panel" hidden><h2>[ selection ]</h2><div id="selection-size"></div><small id="selection-entropy"></small><div><button data-action="copy-selection">copy hex</button><button data-action="download-selection">download</button><button data-action="clear-selection">clear</button></div></section></aside>
+<aside class="data-inspector" aria-label="Data inspector"><header class="bar"><span>[ data inspector ]</span><span class="spacer"></span><div class="segments"><button data-endian="little" class="active">le</button><button data-endian="big">be</button></div></header><div class="inspector-note" id="endian-note"></div><div id="data-values"></div><section class="inspector-section" id="selection-panel" hidden><h2>[ selection ]</h2><div id="selection-size"></div><small id="selection-entropy"></small><div><button data-action="copy-selection">copy hex</button><button data-action="download-selection">download</button><button data-action="strings-in-selection">strings</button><button data-action="clear-selection">clear</button></div></section></aside>
 </section>
 <section class="tab-panel json-view" id="json-view" role="tabpanel" aria-labelledby="tab-json" hidden><header class="bar"><span class="muted" id="json-meta"></span><span class="spacer"></span><button data-action="copy-json" id="json-copy">copy</button><button data-action="download-json">download</button></header><pre id="jsonRaw"></pre></section>
+<section class="tab-panel strings-workspace" id="strings-view" role="tabpanel" aria-labelledby="tab-strings" hidden>
+  <div class="strings-center">
+    <div class="toolbar strings-toolbar">
+      <input id="strings-search" class="strings-search" type="search" placeholder="search strings  /" spellcheck="false" autocomplete="off" aria-label="Search strings">
+      <button type="button" id="strings-case" class="toggle" aria-pressed="false" aria-label="Match case" title="Match case">Aa</button>
+      <button type="button" id="strings-regex" class="toggle" aria-pressed="false" aria-label="Regular expression" title="Regular expression">.*</button>
+      <label>min <input id="strings-min" class="strings-min" type="number" min="3" max="255" value="4" aria-label="Minimum length in characters"></label>
+      <select id="strings-scope" aria-label="Search scope"></select>
+      <span class="spacer"></span>
+      <button type="button" data-strings-export="txt" aria-label="Export as text" title="Export the listed strings as text">↓ txt</button>
+      <button type="button" data-strings-export="csv" aria-label="Export as CSV" title="Export the listed strings as CSV">↓ csv</button>
+      <button type="button" data-strings-export="json" aria-label="Export as JSON" title="Export the listed strings as JSON">↓ json</button>
+    </div>
+    <div class="strings-chips">
+      <div class="chip-group" id="strings-encodings" role="group" aria-label="Encodings"></div>
+      <div class="chip-group" id="strings-tags" role="group" aria-label="Tags"></div>
+    </div>
+    <div class="strings-status-line"><span id="strings-status" role="status"></span><span id="strings-problem" class="strings-problem" role="alert" hidden></span></div>
+    <div class="strings-grid" id="strings-grid" role="grid" aria-label="Strings" aria-rowcount="1" aria-multiselectable="true" tabindex="0">
+      <div class="strings-row strings-head" id="strings-head" role="row" aria-rowindex="1"></div>
+      <div class="strings-scroller" id="strings-scroller">
+        <div id="strings-spacer"></div>
+        <div class="strings-rows" id="strings-rows" role="rowgroup"></div>
+      </div>
+    </div>
+    <footer class="toolbar strings-footer"><small class="muted key-hint"><kbd>/</kbd> search <kbd>↑/↓</kbd> move <kbd>shift</kbd> extend <kbd>enter</kbd> show in hex <kbd>ctrl/cmd+c</kbd> copy</small></footer>
+  </div>
+  <aside class="strings-inspector" id="strings-inspector" aria-label="String details"></aside>
+</section>
+<section class="tab-panel certificates-workspace" id="certificates-view" role="tabpanel" aria-labelledby="tab-certificates" hidden>
+  <div class="certificates-list">
+    <header class="bar">
+      <input id="certificates-filter" class="certificates-filter" type="search" placeholder="filter subject, issuer, serial, sha-256" spellcheck="false" aria-label="Filter certificates">
+      <span class="spacer"></span>
+      <button type="button" data-certificates-export="pem" aria-label="Export distinct certificates as PEM" title="Export distinct certificates as one PEM file">↓ pem</button>
+      <button type="button" data-certificates-export="json" aria-label="Export the certificate report as JSON" title="Export the certificate report as JSON">↓ json</button>
+    </header>
+    <p class="certificates-status" id="certificates-status" role="status"></p>
+    <div class="certificates-tree" id="certificates-tree" role="tree" aria-label="Certificates" tabindex="0"></div>
+  </div>
+  <aside class="certificates-detail" id="certificates-detail" aria-label="Certificate details"></aside>
+</section>
 </section>
 <section class="batch-view" id="batch" aria-label="Batch classification results" hidden>
 <header class="bar"><strong>batch</strong><span class="muted" id="batch-summary" role="status"></span><span class="spacer"></span><button data-action="browse">+ add files</button><button data-action="export-csv">↓ csv</button><button data-action="export-json">↓ json</button><button data-action="clear" class="danger">clear files</button></header>
@@ -65,7 +107,7 @@
 </div>
 <footer class="status-bar" aria-label="Workbench status"><span id="status-mode" class="status-mode">CLASSIFY</span><span id="status-file">no file</span><span id="status-classification"></span><span id="status-cursor"></span><span class="spacer"></span><span id="status-counts">0 files</span><span id="status-engine">loading engine</span><a class="status-classic" href="./classic/" aria-label="Classic classifier" title="Open the classic ISA Classifier">CLASSIC</a></footer>
 <div class="drag-overlay" id="drag-overlay" hidden><div><strong>[ drop to queue ]</strong><span>files are read locally and classified one at a time</span></div></div>
-<div class="context-menu" id="context-menu" role="menu" hidden><button role="menuitem" data-action="open-hex">open in hex</button><button role="menuitem" data-action="copy-offset">copy offset</button><button role="menuitem" data-action="zoom-in">zoom in here</button><button role="menuitem" data-action="zoom-fit">fit entire file</button><button role="menuitem" data-action="download-file">download binary</button></div>
+<div class="context-menu" id="context-menu" role="menu" hidden><button role="menuitem" data-action="open-hex">open in hex</button><button role="menuitem" data-action="copy-offset">copy offset</button><button role="menuitem" data-action="strings-here">show strings here</button><button role="menuitem" data-action="zoom-in">zoom in here</button><button role="menuitem" data-action="zoom-fit">fit entire file</button><button role="menuitem" data-action="download-file">download binary</button></div>
 <input type="file" id="fileinput" multiple aria-label="Choose binary files" hidden><div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
 </div>
 <script type="module" src="./workbench.js"></script>

@@ -80,7 +80,9 @@ measure their displayed dimensions.
 | Inspector | Synchronized byte location, local entropy, byte histogram and measured DEFLATE ratio |
 | Hex | Virtual rows, 8/16/24/32 columns, 1/2/4/8-byte groups, hex/decimal offsets, goto, byte selection and integer/floating-point decoding |
 | Text decoding | ASCII, Latin-1, CP437, EBCDIC CP037 and UTF-16; byte order override |
-| Exports | Classification JSON, batch JSON/CSV, selected bytes, clipboard hex |
+| Strings | ASCII, UTF-8 and UTF-16LE/BE runs streamed by a scan worker; substring or regex search with highlighting, encoding and tag chips with counts, minimum length, scope (file, hex selection or a section/member), sortable columns, region per string, inspector with byte preview, show in hex, copy, TXT/CSV/JSON export; virtual grid for up to 1,000,000 strings ([string extraction](docs/strings.md)) |
+| Certificates | DER and PEM X.509 certificates found anywhere in the file, scanned in the background with a count on the tab; issuer-link tree, subject/issuer/validity/key/extension details, enclosing structure (PE attribute certificates, Mach-O code signature, IM4M chain, members), DER/PEM download, show in hex and open as file; signatures not verified ([certificate scanning](docs/certificates.md)) |
+| Exports | Classification JSON, batch JSON/CSV, selected bytes, clipboard hex, strings TXT/CSV/JSON, certificates DER/PEM/JSON |
 | Batch overview | Status filters, insertion/name/size/confidence/entropy sorting, architecture/format tallies and progress |
 | Interface | Responsive file panel and inspectors, log, status bar, context menu, keyboard navigation and persistent UI preferences |
 
@@ -106,7 +108,7 @@ is a separate CLI feature described below.
 
 | Input | Action |
 | --- | --- |
-| `1` through `4` | Classification, entropy, hex, JSON |
+| `1` through `6` | Classification, entropy, hex, JSON, strings, certificates |
 | `j` / `k` | Next / previous file |
 | `o` | Open file picker |
 | `f`, `b`, backtick | Toggle files, batch overview, log |
@@ -121,6 +123,10 @@ is a separate CLI feature described below.
 | Arrows, PageUp/Down, Home/End in hex | Move cursor; Shift extends selection |
 | `g`, Escape in hex | Goto / clear selection |
 | Ctrl/Cmd+C in hex | Copy selected bytes as hex |
+| `/` in strings | Focus the search field; Escape clears it |
+| Arrows, PageUp/Down, Home/End in strings | Move the selected string; Shift extends the selection |
+| Enter, double-click in strings or certificates | Show the bytes selected in hex |
+| Ctrl/Cmd+C in strings | Copy the selected strings, one per line |
 
 ### Continuous zoom and spatial identity
 

@@ -73,6 +73,54 @@ total by count. `extract(data, options, limit)` keeps the first `limit`
 strings and sets `truncated` when there were more. Time is linear in the
 input; each string is tagged once, linearly in its stored text.
 
+## Workbench
+
+The **strings** tab (key `5`) runs in a separate scan worker
+(`web/scan-worker.js`), so the analysis worker stays free for hex and map
+requests:
+
+```text
+File --4 MiB slices--> StringScan (WASM) --rows--> StringIndex (worker)
+                                                      |
+       strings tab <--one query result, then pages of 256 rows--+
+```
+
+- The worker reads the file through `File.slice`, so it keeps no resident
+  copy; rows appear while the scan runs. The index is columnar (offsets,
+  sizes, lengths, packed flags, text) and holds at most 1,000,000 strings or
+  128 Mi characters of text; past either limit the scan stops and the
+  status line says so. Indexes for the three most recently viewed files are
+  kept.
+- A query filters by search text (substring, case-insensitive unless
+  **Aa** is on, or a JavaScript regular expression with **.***), minimum
+  length, scope (whole file, hex selection or one region) and the encoding
+  and tag chips, then sorts by any column with scan order as the tie-break.
+  Chip counts cover the rows that pass the text, length and scope
+  conditions, ignoring the chips themselves. Filtering yields every 50,000
+  rows, and a newer query supersedes an older one.
+- A regular expression with catastrophic backtracking can block the worker
+  inside one test, so it sends nothing at all. While a query is pending,
+  every worker message re-arms a watchdog; after 4 s of silence the page
+  replaces the worker, says so, rebuilds the index and does not replay that
+  search until it is edited.
+- Lowering the minimum length below the scanned floor, or enabling an
+  encoding that was not scanned, starts a new scan; raising the length or
+  disabling an encoding only filters.
+- The region column is the smallest region (see
+  [labelled regions](subfile-inspection.md#labelled-regions)) that contains
+  the whole string.
+- The grid renders only the visible rows. Lists taller than 8 million CSS
+  pixels scroll proportionally, because browsers cap element heights.
+- Search text, chips and scope are kept per file in the session; minimum
+  length, encodings, sort and the two toggles are stored under
+  `isawb.strings.v1`.
+- Exports (TXT, CSV, JSON) contain the current view in its current order.
+
+Filtering costs `O(n)` per query plus the cost of the pattern; sorting
+costs `O(k log k)` for `k` matches. Region lookup builds elementary
+intervals from the `p` region boundaries once per index, `O(p * r)` for `r`
+regions, and then costs `O(log p)` per string.
+
 ## Command line
 
 `zrax strings FILE...` prints one string per line (`-t o|d|x` adds the

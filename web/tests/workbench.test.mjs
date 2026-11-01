@@ -32,8 +32,20 @@ test('preferred 125% UI size keeps hex rows, canvas bounds and narrow-screen tab
     const phone = await openPage(t, { viewport: { width: 390, height: 844 } }); await load(phone, path);
     await phone.locator('#fileinput').setInputFiles(elf('phone.o')); await finished(phone, 1);
     assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-    assert.equal(await phone.locator('.file-view > .tabs').evaluate(el => el.scrollWidth <= el.clientWidth), true);
-    for (const tab of ['entropy', 'hex', 'json', 'classification']) await phone.getByRole('tab', { name: tab, exact: true }).click();
+    // Six tabs do not fit 390 px: the strip scrolls without widening the page,
+    // and the chosen tab is scrolled into view.
+    const strip = phone.locator('.file-view > .tabs');
+    assert.equal(await strip.evaluate(el => el.getBoundingClientRect().right <= innerWidth), true);
+    for (const tab of ['entropy', 'hex', 'json', 'strings', 'certificates', 'classification']) {
+      const button = phone.getByRole('tab', { name: tab, exact: true });
+      await button.click();
+      assert.equal(await button.getAttribute('aria-selected'), 'true', tab);
+      assert.equal(await button.evaluate(el => {
+        const box = el.getBoundingClientRect(), frame = el.parentElement.getBoundingClientRect();
+        return box.left >= frame.left - 1 && box.right <= frame.right + 1;
+      }), true, `${tab} is visible in the strip`);
+    }
+    assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   }
 });
 
@@ -175,8 +187,18 @@ async function watchRequests(page) {
     const paint = CanvasRenderingContext2D.prototype.putImageData;
     CanvasRenderingContext2D.prototype.putImageData = function(...args) { if (this.canvas.id === 'entropy-map') window.basePaints++; return paint.apply(this, args); };
     window.Worker = class extends Original {
-      constructor(...args) { super(...args); window.testWorker = this; this.addEventListener('message', e => { if (e.data.type === 'test-detail-held') window.detailHeld = true; }); }
-      postMessage(message, ...rest) { window.workbenchRequests.push({ type: message.type, id: message.id }); return super.postMessage(message, ...rest); }
+      // The page also starts a scan worker; only analysis worker requests are watched.
+      constructor(...args) {
+        super(...args);
+        this.analysis = String(args[0]).includes('analysis-worker');
+        if (!this.analysis) return;
+        window.testWorker = this;
+        this.addEventListener('message', e => { if (e.data.type === 'test-detail-held') window.detailHeld = true; });
+      }
+      postMessage(message, ...rest) {
+        if (this.analysis) window.workbenchRequests.push({ type: message.type, id: message.id });
+        return super.postMessage(message, ...rest);
+      }
     };
   });
 }
