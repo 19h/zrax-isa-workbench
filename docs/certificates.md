@@ -80,6 +80,10 @@ A file that holds only certificates is classified as format `x509`
 - A damaged PEM file is a format error (`X.509 parse error: ...`), not raw
   text. Other PEM labels, explanatory text and `openssl x509 -text`
   output are rejected.
+- Because the boundary is strong evidence, container members whose bytes
+  open with it now count as recognized and are listed, even when the block
+  is incomplete. Bundles that open with comments, such as certifi's
+  `cacert.pem`, stay data files.
 - TI X.509 boot images keep their TI format: `ti::detect_strong` runs
   first and requires TI's enterprise extensions and an image after the
   certificate.

@@ -224,10 +224,12 @@ fn onefile_entries() -> Vec<PkgEntry> {
         ),
         pkg_entry("libpython3.12.so.1.0", b'b', X86_64_ELF, true),
         pkg_entry("o pyi-contents-directory _internal", b'o', b"", false),
+        // Like certifi's bundle, the file opens with comments, so it is a
+        // data file rather than a PEM certificate file.
         pkg_entry(
             "certifi/cacert.pem",
             b'x',
-            b"-----BEGIN CERTIFICATE-----\n",
+            b"# Issuer: CN=Example\n-----BEGIN CERTIFICATE-----\n",
             true,
         ),
         pkg_entry(
