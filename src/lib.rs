@@ -50,6 +50,8 @@ pub mod formatter;
 pub mod heuristics;
 pub mod image4;
 pub mod inspection;
+/// Printable strings in ASCII, UTF-8 and UTF-16.
+pub mod strings;
 pub mod transform;
 pub mod types;
 
