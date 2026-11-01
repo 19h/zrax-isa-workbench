@@ -24,6 +24,36 @@ function sample() {
   return { name: 'strings.bin', mimeType: 'application/octet-stream', buffer: data };
 }
 
+const LONG_TEXT = '/System/Library/PrivateFrameworks/CoreSymbolication.framework/Versions/A/CoreSymbolication';
+
+/** One 90-character path at 0x10, between 0x01 bytes. */
+function longSample() {
+  const data = Buffer.alloc(0x100, 0x01);
+  data.write(LONG_TEXT, 0x10, 'ascii');
+  return { name: 'long.bin', mimeType: 'application/octet-stream', buffer: data };
+}
+
+/** Column headers on screen, the text column's share of the grid, and what overflows. */
+function gridLayout(page) {
+  return page.evaluate(() => {
+    const grid = document.getElementById('strings-grid').getBoundingClientRect();
+    const text = document.querySelector('#strings-rows .strings-row[data-position] .col-text').getBoundingClientRect();
+    const headers = [...document.querySelectorAll('#strings-head [role=columnheader]')]
+      .filter(header => header.getBoundingClientRect().width > 0);
+    const bytes = document.getElementById('strings-bytes');
+    const inspector = document.getElementById('strings-inspector');
+    const dumpLines = bytes.textContent.split('\n').filter(line => !line.startsWith('…'));
+    return {
+      headers: headers.map(header => header.textContent.replace(/[▲▼]/g, '').trim()),
+      textShare: text.width / grid.width,
+      headersInside: headers.every(header => header.getBoundingClientRect().right <= grid.right + 0.5),
+      bytesFit: bytes.scrollWidth <= bytes.clientWidth,
+      inspectorFits: inspector.scrollWidth <= inspector.clientWidth,
+      dumpLineLengths: [...new Set(dumpLines.map(line => line.length))],
+    };
+  });
+}
+
 /** 200 000 NUL-terminated strings `s000000`..`s199999`, 8 B each. */
 function manyStrings() {
   const count = 200000;
@@ -134,6 +164,30 @@ for (const path of ['/web/index.html', '/dist/index.html']) {
     assert.ok(csv.startsWith('offset,size,chars,encoding,tags,clipped,region,text\r\n'), csv);
     assert.ok(csv.includes(`64,19,19,ascii,path,false,,${PATH_TEXT}\r\n`), csv);
     assert.ok(csv.includes(`192,22,11,utf16le,,false,,${WIDE_TEXT}\r\n`), csv);
+  });
+
+  test(`the text column keeps the width and the byte preview fits the inspector in ${path}`, async t => {
+    const page = await openPage(t, { viewport: { width: 1440, height: 900 } });
+    await load(page, path);
+    await page.evaluate(() => localStorage.clear());
+    await openStrings(page, longSample());
+    await page.locator(ROWS).first().click();
+    await elementText(page, 'strings-bytes', /^00000010 {2}2F 53 79 73/);
+
+    // Size and tags drop out first; the file has no labelled regions.
+    const narrow = await gridLayout(page);
+    assert.deepEqual(narrow.headers, ['offset', 'enc', 'len', 'text']);
+    assert.ok(narrow.textShare > 0.5, `text column is ${narrow.textShare} of the grid`);
+    assert.ok(narrow.headersInside, 'column headers stay inside the grid');
+    assert.ok(narrow.bytesFit && narrow.inspectorFits, 'byte preview fits without scrolling');
+    assert.equal(narrow.dumpLineLengths.length, 1, `uneven dump lines ${narrow.dumpLineLengths}`);
+
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.waitForFunction(() => document.querySelectorAll('#strings-head [role=columnheader]')[5].offsetWidth > 0);
+    const wide = await gridLayout(page);
+    assert.deepEqual(wide.headers, ['offset', 'enc', 'len', 'size', 'tags', 'text']);
+    assert.ok(wide.textShare > 0.5, `text column is ${wide.textShare} of the grid`);
+    assert.ok(wide.headersInside && wide.bytesFit && wide.inspectorFits, JSON.stringify(wide));
   });
 
   test(`the hex context menu and selection open matching strings in ${path}`, async t => {

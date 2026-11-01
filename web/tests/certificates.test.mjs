@@ -142,6 +142,24 @@ for (const path of ['/web/index.html', '/dist/index.html']) {
     assert.equal(FORMAT_NAMES.x509, 'X.509 Certificate');
   });
 
+  test(`certificate names stay readable beside their badges in ${path}`, async t => {
+    const page = await openPage(t, { viewport: { width: 1100, height: 800 } });
+    await load(page, path);
+    await openCertificates(page, await firmware(), 5);
+    await page.getByRole('tree', { name: 'Certificates' }).getByRole('treeitem').first().click();
+    const layout = await page.evaluate(() => {
+      const fits = element => element.scrollWidth <= element.clientWidth;
+      const names = [...document.querySelectorAll('.certificate-name')];
+      return {
+        clippedNames: names.filter(name => !fits(name)).map(name => name.textContent),
+        treeFits: fits(document.getElementById('certificates-tree')),
+        headingFits: fits(document.querySelector('.certificate-heading')),
+        detailFits: fits(document.getElementById('certificates-detail')),
+      };
+    });
+    assert.deepEqual(layout, { clippedNames: [], treeFits: true, headingFits: true, detailFits: true });
+  });
+
   test(`certificates in an IM4M chain name their enclosing structure in ${path}`, async t => {
     const page = await openPage(t);
     await load(page, path);

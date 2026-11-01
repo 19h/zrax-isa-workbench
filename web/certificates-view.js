@@ -160,14 +160,17 @@ export function createCertificatesView(scanner, hooks) {
         ? [summary.public_key_algorithm, summary.public_key_bits].filter(Boolean).join(' ')
         : '';
       const count = copies.get(index);
+      const badges = (c.self_issued ? '<span class="badge">self-issued</span>' : '')
+        + (summary?.is_ca ? '<span class="badge">ca</span>' : '')
+        + (count ? `<span class="badge" title="${count} identical copies in this file">×${count}</span>` : '');
+      const meta = [key, c.encoding, `0x${hx(c.offset)}`].filter(Boolean).join(' · ');
+      const name = displayName(c);
       return `<div class="certificate-item" role="treeitem" id="certificate-item-${index}" aria-level="${level}"`
         + ` aria-selected="${index === state.selected}" data-certificate="${index}" style="--level: ${level - 1}">`
         + `<span class="validity-dot ${status.state}" title="${esc(status.label)}"></span>`
-        + `<span class="certificate-name">${esc(displayName(c))}</span>`
-        + (c.self_issued ? '<span class="badge">self-issued</span>' : '')
-        + (summary?.is_ca ? '<span class="badge">ca</span>' : '')
-        + (count ? `<span class="badge" title="${count} identical copies in this file">×${count}</span>` : '')
-        + `<span class="certificate-meta muted">${esc(key)} · ${c.encoding} · 0x${hx(c.offset)}</span>`
+        + `<span class="certificate-name">${esc(name)}</span>`
+        + `<span class="certificate-details"><span class="certificate-badges">${badges}</span>`
+        + `<span class="certificate-meta muted">${esc(meta)}</span></span>`
         + '</div>';
     }).join('') || '<p class="muted">no certificates match the filter</p>';
     const selected = state.selected >= 0 ? `certificate-item-${state.selected}` : '';
@@ -205,7 +208,7 @@ export function createCertificatesView(scanner, hooks) {
       + fact('SHA-256', `<code>${esc(certificate.sha256)}</code>`,
         ' <button type="button" class="small" data-certificate-action="copy-sha">copy</button>');
     if (!summary) {
-      panel.innerHTML = `<header class="bar"><strong>unparsed PEM block</strong></header>`
+      panel.innerHTML = `<header class="certificate-heading"><strong>unparsed PEM block</strong></header>`
         + `<p class="certificate-error">${esc(certificate.error || 'not a certificate')}</p>`
         + `<dl class="certificate-facts">${locationFacts}</dl>${actions}`;
       return;
@@ -223,10 +226,10 @@ export function createCertificatesView(scanner, hooks) {
     const constraints = summary.is_ca == null ? '—'
       : `${summary.is_ca ? 'CA' : 'not a CA'}${summary.path_len == null ? '' : `, path length ${summary.path_len}`}`;
     const extensionRows = summary.extensions.map(e => `<tr><td>${esc(e.name)}</td><td><code>${esc(e.oid)}</code></td><td>${e.critical ? 'critical' : ''}</td></tr>`).join('');
-    panel.innerHTML = `<header class="bar"><strong>${esc(displayName(certificate))}</strong>`
+    panel.innerHTML = `<header class="certificate-heading"><strong>${esc(displayName(certificate))}</strong>`
       + `<span class="badge validity-${status.state}" title="by this computer's clock">${esc(status.label)}</span>`
       + (certificate.self_issued ? '<span class="badge">self-issued</span>' : '')
-      + '<span class="spacer"></span><span class="muted">signature not verified</span></header>'
+      + '<span class="muted">signature not verified</span></header>'
       + '<dl class="certificate-facts">'
       + fact('subject', esc(summary.subject))
       + fact('issuer', esc(summary.issuer), issuer + (certificate.issuer_index != null ? ' <small class="muted">name match</small>' : ''))

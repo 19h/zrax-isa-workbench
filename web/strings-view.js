@@ -10,6 +10,15 @@ const OVERSCAN_ROWS = 8;
 const SEARCH_DEBOUNCE_MS = 150;
 const PROGRESS_REFRESH_MS = 300;
 const PREVIEW_BYTES = 64;
+// Inspector byte-preview layouts, widest first; the first that fits is used.
+const DUMP_LAYOUTS = [
+  { bytes: 16, ascii: true },
+  { bytes: 16, ascii: false },
+  { bytes: 8, ascii: true },
+  { bytes: 8, ascii: false },
+  { bytes: 4, ascii: true },
+  { bytes: 4, ascii: false },
+];
 const MAX_COPY_ROWS = 10000;
 const MAX_HIGHLIGHTS = 64;
 // Browsers cap element heights (Firefox near 17.9 million CSS pixels); taller
@@ -130,6 +139,31 @@ function cLiteral(text) {
   return `"${escaped.join('')}"`;
 }
 
+/** The bytes as ASCII, with `.` for anything outside 0x20-0x7E. */
+function printable(bytes) {
+  return Array.from(bytes, b => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : '.')).join('');
+}
+
+/** Characters in one preview line: offset, two spaces, bytes, then optionally two spaces and their ASCII. */
+function dumpLineChars(layout, offsetDigits) {
+  const ascii = layout.ascii ? 2 + layout.bytes : 0;
+  return offsetDigits + 2 + layout.bytes * 3 - 1 + ascii;
+}
+
+/** The widest preview layout whose lines fit in `pre` without scrolling. */
+function fitDumpLayout(pre, offsetDigits) {
+  const probe = document.createElement('span');
+  probe.textContent = '0'.repeat(32);
+  pre.append(probe);
+  const charWidth = probe.getBoundingClientRect().width / 32;
+  probe.remove();
+  const style = getComputedStyle(pre);
+  const available = pre.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const columns = charWidth ? Math.floor(available / charWidth) : 0;
+  const fitting = DUMP_LAYOUTS.find(layout => dumpLineChars(layout, offsetDigits) <= columns);
+  return fitting || DUMP_LAYOUTS[DUMP_LAYOUTS.length - 1];
+}
+
 export function createStringsView(scanner, hooks) {
   const prefs = loadPrefs();
   const files = new Map();
@@ -138,6 +172,9 @@ export function createStringsView(scanner, hooks) {
   let rowHeight = 0;
   let searchTimer = 0;
   let refreshTimer = 0;
+  // Bytes shown in the inspector, kept so a resize can lay them out again.
+  let preview = null;
+  let inspectorWidth = 0;
 
   function fileState(target) {
     let state = files.get(target.id);
@@ -407,7 +444,19 @@ export function createStringsView(scanner, hooks) {
     return hooks.offsetBase() === 'dec' ? String(offset) : `0x${hx(offset)}`;
   }
 
+  /**
+   * Size the offset column for the file's largest offset, and drop the region
+   * column when the file has no labelled regions.
+   */
+  function fitColumns() {
+    const grid = $('strings-grid');
+    const widest = entry ? offsetText(Math.max(0, entry.size - 1)).length : 10;
+    grid.style.setProperty('--strings-offset-chars', String(widest));
+    grid.classList.toggle('no-regions', !entry?.regions?.length);
+  }
+
   function renderRows(state) {
+    fitColumns();
     const container = $('strings-rows');
     const { total, extent } = geometry(state);
     $('strings-spacer').style.height = `${extent}px`;
@@ -428,14 +477,15 @@ export function createStringsView(scanner, hooks) {
       const high = Math.max(state.anchor, state.selected);
       const chosen = p === state.selected || (state.anchor >= 0 && p >= low && p <= high);
       const tags = row.tags.map(tag => `<span class="strings-tag tag-${esc(tag)}">${esc(tag)}</span>`).join('');
+      const clipped = row.clipped ? '<span class="strings-clipped" title="clipped at 4096 characters">…</span>' : '';
       html.push(`<div class="strings-row${chosen ? ' selected' : ''}" id="strings-row-${p}" role="row" aria-rowindex="${p + 2}" aria-selected="${chosen}" data-position="${p}">`
-        + `<span role="gridcell" class="strings-offset">${esc(offsetText(row.offset))}</span>`
-        + `<span role="gridcell" class="strings-region" title="${esc(regionPath(row).join(' > '))}">${esc(regionLabel(row.region))}</span>`
-        + `<span role="gridcell" class="strings-encoding">${esc(ENCODING_LABELS[row.encoding] || row.encoding)}</span>`
-        + `<span role="gridcell" class="strings-number">${row.chars}</span>`
-        + `<span role="gridcell" class="strings-number">${esc(fmtSize(row.size))}</span>`
-        + `<span role="gridcell" class="strings-tags-cell">${tags}</span>`
-        + `<span role="gridcell" class="strings-text">${highlighted(row.text, current)}${row.clipped ? '<span class="strings-clipped" title="clipped at 4096 characters">…</span>' : ''}</span>`
+        + `<span role="gridcell" class="col-offset strings-offset">${esc(offsetText(row.offset))}</span>`
+        + `<span role="gridcell" class="col-region strings-region" title="${esc(regionPath(row).join(' > '))}">${esc(regionLabel(row.region))}</span>`
+        + `<span role="gridcell" class="col-encoding strings-encoding">${esc(ENCODING_LABELS[row.encoding] || row.encoding)}</span>`
+        + `<span role="gridcell" class="col-chars strings-number">${row.chars}</span>`
+        + `<span role="gridcell" class="col-size strings-number">${esc(fmtSize(row.size))}</span>`
+        + `<span role="gridcell" class="col-tags strings-tags-cell">${tags}</span>`
+        + `<span role="gridcell" class="col-text strings-text">${highlighted(row.text, current)}${clipped}</span>`
         + '</div>');
     }
     container.innerHTML = html.join('');
@@ -452,7 +502,7 @@ export function createStringsView(scanner, hooks) {
       const sorted = prefs.sort.key === key;
       const direction = sorted ? (prefs.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none';
       const arrow = sorted ? (prefs.sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
-      return `<span role="columnheader" aria-sort="${direction}" class="strings-${key}-head">`
+      return `<span role="columnheader" aria-sort="${direction}" class="col-${key} strings-${key}-head">`
         + `<button type="button" data-strings-sort="${key}" aria-label="Sort by ${label}" title="Sort by ${label}">${label}${arrow}</button></span>`;
     }).join('');
   }
@@ -462,14 +512,16 @@ export function createStringsView(scanner, hooks) {
     $('strings-encodings').innerHTML = scanner.encodingIds.map(id => {
       const on = prefs.encodings.includes(id);
       const count = counts?.encodings?.[id];
-      return `<button type="button" class="chip" data-strings-encoding="${id}" aria-pressed="${on}" aria-label="${ENCODING_LABELS[id]}"`
+      const empty = count === 0 ? ' empty' : '';
+      return `<button type="button" class="chip${empty}" data-strings-encoding="${id}" aria-pressed="${on}" aria-label="${ENCODING_LABELS[id]}"`
         + ` title="${count == null ? '' : `${count.toLocaleString()} strings`}">${ENCODING_LABELS[id]}`
         + `${count == null ? '' : ` <span class="count" aria-hidden="true">${count.toLocaleString()}</span>`}</button>`;
     }).join('');
     $('strings-tags').innerHTML = scanner.tagIds.map(([bit, id]) => {
       const on = (state.tags & bit) !== 0;
       const count = counts?.tags?.[id] ?? 0;
-      return `<button type="button" class="chip tag-${id}" data-strings-tag="${bit}" aria-pressed="${on}" aria-label="${id}"`
+      const empty = count === 0 ? ' empty' : '';
+      return `<button type="button" class="chip tag-${id}${empty}" data-strings-tag="${bit}" aria-pressed="${on}" aria-label="${id}"`
         + ` title="${count.toLocaleString()} strings; lexical pattern match">${id} <span class="count" aria-hidden="true">${count.toLocaleString()}</span></button>`;
     }).join('');
   }
@@ -511,6 +563,7 @@ export function createStringsView(scanner, hooks) {
     const panel = $('strings-inspector');
     const row = state.selected >= 0 ? rowAt(state, state.selected) : null;
     if (!row) {
+      preview = null;
       panel.innerHTML = '<p class="muted">select a string to inspect it</p>';
       return;
     }
@@ -534,16 +587,31 @@ export function createStringsView(scanner, hooks) {
       + (row.region >= 0 ? '<button type="button" data-strings-action="region">only this region</button>' : '')
       + '</div>'
       + '<h2>[ bytes ]</h2><pre class="strings-bytes" id="strings-bytes">…</pre>';
+    preview = null;
     const target = entry;
     const end = row.offset + Math.min(row.size, PREVIEW_BYTES);
     const bytes = new Uint8Array(await target.file.slice(row.offset, end).arrayBuffer());
     if (target !== entry || rowAt(state, state.selected) !== row) return;
+    preview = { offset: row.offset, size: row.size, bytes };
+    renderPreview();
+  }
+
+  /** Write the byte preview with as many bytes per line as the inspector fits. */
+  function renderPreview() {
+    const pre = $('strings-bytes');
+    if (!preview || !pre) return;
+    const { offset, size, bytes } = preview;
+    const offsetDigits = hx(offset + bytes.length).length;
+    const layout = fitDumpLayout(pre, offsetDigits);
     const lines = [];
-    for (let i = 0; i < bytes.length; i += 16) {
-      lines.push(`${hx(row.offset + i)}  ${Array.from(bytes.subarray(i, i + 16), b => hx(b, 2)).join(' ')}`);
+    for (let i = 0; i < bytes.length; i += layout.bytes) {
+      const line = bytes.subarray(i, i + layout.bytes);
+      const hexText = Array.from(line, b => hx(b, 2)).join(' ');
+      const columns = layout.ascii ? `${hexText.padEnd(layout.bytes * 3 - 1)}  ${printable(line)}` : hexText;
+      lines.push(`${hx(offset + i, offsetDigits)}  ${columns}`);
     }
-    if (row.size > PREVIEW_BYTES) lines.push(`… ${fmtSize(row.size - PREVIEW_BYTES)} more`);
-    $('strings-bytes').textContent = lines.join('\n');
+    if (size > PREVIEW_BYTES) lines.push(`… ${fmtSize(size - PREVIEW_BYTES)} more`);
+    pre.textContent = lines.join('\n');
   }
 
   function render() {
@@ -745,6 +813,12 @@ export function createStringsView(scanner, hooks) {
   new ResizeObserver(() => {
     if (entry && active) renderRows(fileState(entry));
   }).observe($('strings-scroller'));
+  new ResizeObserver(() => {
+    const width = $('strings-inspector').clientWidth;
+    if (width === inspectorWidth) return;
+    inspectorWidth = width;
+    renderPreview();
+  }).observe($('strings-inspector'));
 
   /** Scan and query the current entry when needed, then render it. */
   function refresh(changed = false) {

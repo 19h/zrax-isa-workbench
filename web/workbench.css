@@ -430,9 +430,20 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
 .strings-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.375rem 1rem;
+  gap: 0.25rem 0.75rem;
   padding: 0.375rem 0.75rem;
   border-bottom: 0.0625rem solid var(--line-default);
+}
+.strings-chips .chip {
+  padding: 0 0.375rem;
+  line-height: 1.25rem;
+}
+.strings-chips .chip.empty:not([aria-pressed=true]) {
+  color: var(--text-disabled);
+}
+#strings-scope {
+  flex: 0 1 14rem;
+  width: 14rem;
 }
 .strings-status-line {
   display: flex;
@@ -446,35 +457,132 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
 .strings-problem {
   color: var(--sig-err);
 }
+/*
+ * The grid is monospace, so columns are sized in characters. Each track
+ * includes 1.5ch of padding that separates it from the next one. The text
+ * column takes the rest; the other columns drop out as the grid narrows (see
+ * the container queries below), so the text keeps at least 48 characters.
+ */
 .strings-grid {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 12rem;
   font-size: 0.75rem;
+  container: strings-grid / inline-size;
 }
 .strings-grid:focus-visible {
   outline: 0.0625rem solid var(--accent);
   outline-offset: -0.0625rem;
 }
 .strings-row {
+  --strings-offset-width: calc(var(--strings-offset-chars, 10) * 1ch + 1.5ch);
+  --strings-region-width: 15.5ch;
+  --strings-encoding-width: 9.5ch;
+  --strings-chars-width: 6.5ch;
+  --strings-size-width: 9.5ch;
+  --strings-tags-width: 13.5ch;
   display: grid;
-  grid-template-columns: 7rem 9rem 5rem 3.5rem 4.5rem 7.5rem minmax(10rem, 1fr);
+  grid-template-columns:
+    var(--strings-offset-width)
+    var(--strings-region-width)
+    var(--strings-encoding-width)
+    var(--strings-chars-width)
+    var(--strings-size-width)
+    var(--strings-tags-width)
+    minmax(0, 1fr);
   align-items: center;
   height: 1.5rem;
   padding: 0 0.75rem;
-  gap: 0.5rem;
+  overflow: hidden;
   white-space: nowrap;
 }
 .strings-row > span {
+  min-width: 0;
+  padding-right: 1.5ch;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.strings-row > .col-text {
+  padding-right: 0;
+}
+.strings-row > .col-offset {
+  grid-column: 1;
+}
+.strings-row > .col-region {
+  grid-column: 2;
+}
+.strings-row > .col-encoding {
+  grid-column: 3;
+}
+.strings-row > .col-chars {
+  grid-column: 4;
+}
+.strings-row > .col-size {
+  grid-column: 5;
+}
+.strings-row > .col-tags {
+  grid-column: 6;
+}
+.strings-row > .col-text {
+  grid-column: 7;
+}
+.strings-grid.no-regions .strings-row {
+  --strings-region-width: 0px;
+}
+.strings-grid.no-regions .col-region {
+  display: none;
+}
+/* Narrowing order: size, tags, region, encoding, length. */
+@container strings-grid (width < 119ch) {
+  .strings-row {
+    --strings-size-width: 0px;
+  }
+  .strings-row > .col-size {
+    display: none;
+  }
+}
+@container strings-grid (width < 110ch) {
+  .strings-row {
+    --strings-tags-width: 0px;
+  }
+  .strings-row > .col-tags {
+    display: none;
+  }
+}
+@container strings-grid (width < 96ch) {
+  .strings-row {
+    --strings-region-width: 0px;
+  }
+  .strings-row > .col-region {
+    display: none;
+  }
+}
+@container strings-grid (width < 80ch) {
+  .strings-row {
+    --strings-encoding-width: 0px;
+  }
+  .strings-row > .col-encoding {
+    display: none;
+  }
+}
+@container strings-grid (width < 44ch) {
+  .strings-row {
+    --strings-chars-width: 0px;
+  }
+  .strings-row > .col-chars {
+    display: none;
+  }
 }
 .strings-head {
   flex: none;
   color: var(--text-muted);
   background: var(--surface-panel);
   border-bottom: 0.0625rem solid var(--line-default);
+}
+.strings-head > .strings-chars-head,
+.strings-head > .strings-size-head {
+  text-align: right;
 }
 .strings-head button {
   padding: 0;
@@ -545,11 +653,17 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
   border-bottom: 0;
 }
 .strings-inspector {
-  width: 21rem;
+  width: 18.75rem;
   flex: none;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border-left: 0.0625rem solid var(--line-default);
   font-size: 0.75rem;
+}
+@media (max-width: 1500px) {
+  .strings-inspector {
+    width: 16.25rem;
+  }
 }
 .strings-inspector > p,
 .strings-inspector > h2 {
@@ -595,7 +709,9 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
 }
 .strings-bytes {
   margin: 0;
-  padding: 0 0.75rem 0.75rem;
+  padding: 0.5rem 0.75rem 0.75rem;
+  overflow-x: auto;
+  font-size: 0.6875rem;
   color: var(--text-secondary);
 }
 
@@ -605,10 +721,10 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
   min-height: 0;
 }
 .certificates-list {
-  flex: 1;
+  flex: 0 1 clamp(16rem, 40%, 26rem);
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  min-width: 14rem;
   min-height: 0;
 }
 .certificates-filter {
@@ -628,19 +744,28 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
 .certificates-tree {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 0.25rem 0;
 }
 .certificates-tree > p {
   padding: 0.75rem;
 }
+/*
+ * The name gets the full width and wraps rather than being cut; badges, key,
+ * encoding and offset share the second line.
+ */
 .certificate-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "dot name"
+    ". details";
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.75rem 0.25rem calc(0.75rem + var(--level, 0) * 1.25rem);
+  gap: 0.25rem 0.5rem;
+  padding: 0.375rem 0.75rem 0.375rem calc(0.75rem + var(--level, 0) * 1.25rem);
+  border-bottom: 0.0625rem solid var(--line-hairline);
   cursor: default;
-  white-space: nowrap;
 }
 .certificate-item:hover {
   background: var(--surface-hover);
@@ -648,12 +773,39 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
 .certificate-item[aria-selected=true] {
   background: var(--surface-selected);
 }
+.certificate-item > .validity-dot {
+  grid-area: dot;
+  align-self: start;
+  margin-top: 0.4375rem;
+}
 .certificate-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  grid-area: name;
+  overflow-wrap: anywhere;
+}
+.certificate-details {
+  grid-area: details;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  white-space: nowrap;
+}
+.certificate-badges {
+  display: flex;
+  flex: none;
+  gap: 0.25rem;
+}
+.certificate-badges:empty {
+  display: none;
+}
+.certificate-badges .badge {
+  font-size: 0.625rem;
+  line-height: 1rem;
 }
 .certificate-meta {
-  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 0.6875rem;
 }
 .validity-dot {
@@ -683,11 +835,33 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
   color: var(--sig-warn);
 }
 .certificates-detail {
-  width: 32rem;
-  flex: none;
-  overflow: auto;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   border-left: 0.0625rem solid var(--line-default);
   font-size: 0.75rem;
+}
+.certificate-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.625rem;
+  min-height: 2.25rem;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 0.0625rem solid var(--line-default);
+}
+.certificate-heading strong {
+  overflow-wrap: anywhere;
+}
+.certificate-facts {
+  grid-template-columns: minmax(6rem, max-content) minmax(0, 1fr);
+}
+.certificate-facts dd {
+  text-align: left;
+}
+.certificate-facts code {
+  overflow-wrap: anywhere;
 }
 .certificates-detail .panel {
   margin: 0 0.75rem 0.75rem;
@@ -702,10 +876,14 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
     flex-direction: column;
     overflow: auto;
   }
-  .strings-center,
-  .certificates-list {
+  .strings-center {
     flex: none;
     height: 30rem;
+  }
+  /* A short chain should not push the details below the fold. */
+  .certificates-list {
+    flex: none;
+    max-height: 24rem;
   }
   .strings-inspector,
   .certificates-detail {
@@ -714,13 +892,5 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
     border-top: 0.0625rem solid var(--line-default);
     flex: none;
     overflow: visible;
-  }
-  .strings-row {
-    grid-template-columns: 6rem 4rem 3rem minmax(8rem, 1fr);
-  }
-  .strings-row > :nth-child(2),
-  .strings-row > :nth-child(5),
-  .strings-row > :nth-child(6) {
-    display: none;
   }
 }
