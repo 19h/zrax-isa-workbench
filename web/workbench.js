@@ -799,6 +799,7 @@ worker.addEventListener('message', ({ data }) => {
     entry.image4Info = data.image4Info || null;
     entry.subfiles = data.subfiles || [];
     entry.subfileError = data.subfileError || '';
+    entry.regions = Array.isArray(data.regions) ? data.regions : [];
     entry.payload = data.payload; entry.error = data.error || ''; entry.elapsed = data.elapsed ?? null;
     entry.profile = data.profile || null; entry.mean = data.mean ?? null;
     setStatus(entry, entry.payload ? 'done' : 'error');

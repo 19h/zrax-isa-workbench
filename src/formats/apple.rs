@@ -77,6 +77,17 @@ pub fn image4_info(data: &[u8]) -> Result<Option<Image4Info>> {
     img4::info(data)
 }
 
+/// The IM4M manifest, signature and certificate chain of an IMG4 or a
+/// standalone IM4M as stored ranges; empty for other inputs and for an IMG4
+/// without a manifest. Nothing is verified.
+///
+/// # Errors
+///
+/// [`ClassifierError::AppleParseError`] for a malformed IMG4 or IM4M.
+pub fn image4_manifest_ranges(data: &[u8]) -> Result<Vec<crate::formats::NamedRange>> {
+    img4::manifest_ranges(data)
+}
+
 /// Prefix of the family's metadata keys (`apple_im4p_type`,
 /// `apple_dyld_uuid`, `apple_component_0`).
 const KEY_PREFIX: &str = "apple";

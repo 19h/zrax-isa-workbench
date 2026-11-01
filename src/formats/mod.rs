@@ -1588,6 +1588,51 @@ pub fn parse_container_model<'a>(
     }
 }
 
+/// A named range of stored bytes, such as a section or a signature blob.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedRange {
+    /// Name in the format's own terms; untrusted text.
+    pub name: String,
+    /// Byte offset in the input.
+    pub offset: u64,
+    /// Size in bytes; the range lies within the input.
+    pub size: u64,
+}
+
+impl NamedRange {
+    /// The part of `offset..offset + size` inside an input of `input_len`
+    /// bytes, or `None` when that part is empty.
+    pub fn clipped(name: String, offset: u64, size: u64, input_len: usize) -> Option<Self> {
+        let input_len = input_len as u64;
+        if size == 0 || offset >= input_len {
+            return None;
+        }
+        Some(Self {
+            name,
+            offset,
+            size: size.min(input_len - offset),
+        })
+    }
+}
+
+/// A fixed-size or NUL-terminated name field as text: bytes up to the first
+/// NUL, with bytes outside printable ASCII written as `\xNN`.
+pub fn field_name(bytes: &[u8]) -> String {
+    const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    let mut name = String::with_capacity(end);
+    for &b in &bytes[..end] {
+        if (0x20..0x7f).contains(&b) {
+            name.push(char::from(b));
+        } else {
+            name.push_str("\\x");
+            name.push(char::from(HEX_DIGITS[usize::from(b >> 4)]));
+            name.push(char::from(HEX_DIGITS[usize::from(b & 0x0f)]));
+        }
+    }
+    name
+}
+
 /// Read bytes with bounds checking.
 pub fn read_bytes<'a>(data: &'a [u8], offset: usize, len: usize) -> Result<&'a [u8]> {
     if offset + len > data.len() {

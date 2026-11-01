@@ -62,6 +62,11 @@ async function run(job) {
       if (Array.isArray(result)) subfiles = result;
       else subfileError = result.error || 'Unable to list subfiles';
     } catch (error) { subfileError = String(error.message || error); }
+    let regions = [];
+    try {
+      const result = JSON.parse(engine.regions());
+      if (Array.isArray(result)) regions = result;
+    } catch { /* Regions only label strings and certificates. */ }
     let image4Info = null;
     try {
       const info = JSON.parse(engine.image4_info());
@@ -71,7 +76,7 @@ async function run(job) {
     // A failed architecture classification still gets entropy and hex analysis.
     const profile = engine.profile(1024);
     const mean = profile.reduce((sum, h) => sum + h, 0) / profile.length;
-    if (current(job)) send({ type: 'result', id: job.id, payload, error, elapsed, mean, profile, subfiles, subfileError, image4Info }, [profile.buffer]);
+    if (current(job)) send({ type: 'result', id: job.id, payload, error, elapsed, mean, profile, subfiles, subfileError, regions, image4Info }, [profile.buffer]);
   } else if (job.type === 'decrypt') {
     const bytes = engine.decrypt_image4(job.key, job.iv, job.mode);
     if (current(job)) send({ type: 'decrypted', id: job.id, request: job.request, mode: job.mode, bytes }, [bytes.buffer]);

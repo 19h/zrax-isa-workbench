@@ -31,7 +31,7 @@
 
 use super::*;
 use crate::formats::compressed::{self, Codec};
-use crate::formats::MAX_PAYLOAD;
+use crate::formats::{NamedRange, MAX_PAYLOAD};
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
@@ -878,6 +878,43 @@ pub(super) fn info(data: &[u8]) -> Result<Option<Image4Info>> {
         size: payload.data.contents.len(),
         keybags,
     }))
+}
+
+/// The `IM4M` manifest of an IMG4 (its `[0]` element) or of a standalone
+/// IM4M, with its signature and certificate chain when present, as stored
+/// ranges. The manifest is parsed as for classification; nothing is
+/// verified.
+pub(super) fn manifest_ranges(data: &[u8]) -> Result<Vec<NamedRange>> {
+    let element = match detect(data) {
+        Some(Layout::Im4m) => root(data, "IM4M")?,
+        Some(Layout::Img4) => {
+            let root = root(data, "IMG4")?;
+            let items = children(data, &root)?;
+            let manifest = items
+                .iter()
+                .skip(2)
+                .find(|part| part.identifier == CONTEXT_0);
+            match manifest {
+                Some(part) => explicit(data, *part, "IMG4 manifest")?,
+                None => return Ok(Vec::new()),
+            }
+        }
+        _ => return Ok(Vec::new()),
+    };
+    let manifest = im4m(data, element)?;
+    let range = |name: &str, element: &Element<'_>| NamedRange {
+        name: name.to_string(),
+        offset: element.offset as u64,
+        size: (element.end() - element.offset) as u64,
+    };
+    let mut ranges = vec![range("IM4M manifest", &manifest.element)];
+    if let Some(signature) = &manifest.signature {
+        ranges.push(range("IM4M signature", signature));
+    }
+    if let Some(certificates) = &manifest.certificates {
+        ranges.push(range("IM4M certificate chain", certificates));
+    }
+    Ok(ranges)
 }
 
 /// Keybag types as text: "2 keybags: production, development".

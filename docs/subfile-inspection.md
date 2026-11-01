@@ -99,6 +99,37 @@ legacy format paths outside the shared container model and ar are not yet
 enumerated. A dyld image child contains the validated header/load-command
 range supplied by that parser, not a reconstructed standalone dylib.
 
+## Labelled regions
+
+`inspection::regions(data)` lists labelled stored ranges of one input, so
+the strings and certificates views can say where a string or certificate
+lies. A region is not classification evidence; signature and certificate
+structures are located, not verified. Offsets and sizes are bytes in the
+input, and every region is clipped to it.
+
+| Input | Regions (kind) |
+| --- | --- |
+| Shared container model, ar | Children at their stored ranges (`member`), load sections (`section`) |
+| ELF | Section headers with file bytes, named from the section-name string table; `SHT_NULL` and `SHT_NOBITS` are skipped (`section`) |
+| PE | Section table entries by `PointerToRawData` and `SizeOfRawData` (`section`); the attribute certificate table of data directory 4 and each `WIN_CERTIFICATE` in it (`signature`) |
+| Mach-O | Segments (`segment`) and sections with file bytes (`section`); `LC_CODE_SIGNATURE` (`signature`) |
+| Fat Mach-O | Each slice (`member`), then its image's regions at the slice offset |
+| IMG4, IM4M | `IM4M manifest` and `IM4M signature` (`signature`); `IM4M certificate chain` (`certificates`) |
+| CAB | The Authenticode signature after the cabinet (`signature`) |
+
+Regions are ordered by offset with enclosing regions first, deduplicated
+and limited to 4096. `inspection::enclosing(regions, offset, size)` returns
+the regions that contain a range, outermost first; the browser and the
+`certs` CLI use the same rule. The section readers bound their counts by
+the bytes available (ELF also by 4096, PE by the loader's 96 sections) and
+use checked arithmetic. A PE `WIN_CERTIFICATE` walk stops at an entry
+shorter than its 8-byte header or longer than the table; at most 4096
+entries are read. PE section names are the raw 8-byte field; COFF string
+table references (`/4`) are not resolved. ELF and PE executables have no
+regions when their section tables are absent or out of range. The
+workbench engine computes regions for opaque components as well, because
+they do not reach the code model.
+
 ## Bounds and assumptions
 
 Inspection lists at most 4096 entries, returns at most 64 MiB for one opened

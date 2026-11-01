@@ -238,6 +238,7 @@ configuration.
 | `detect_multi_isa` | Families occupying sufficiently supported code windows |
 | `supported_isas` | ISA identifiers present in the embedded raw-code model |
 | `quick_check` | Budgeted raw-code family comparison |
+| `inspection::regions`, `inspection::enclosing` | Labelled sections, members and signature structures, and the regions that contain a range; see [subfile inspection](docs/subfile-inspection.md#labelled-regions) |
 | `strings::extract`, `strings::Scanner` | ASCII, UTF-8 and UTF-16 strings with lexical tags, streamed in chunks; see [string extraction](docs/strings.md) |
 | `certificates::scan`, `certificates::Scan` | DER and PEM X.509 certificates in any bytes, with decoded fields and name-based issuer links; see [certificate scanning](docs/certificates.md) |
 

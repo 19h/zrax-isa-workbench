@@ -11,7 +11,7 @@
 //! AMD64 image with CHPE metadata as ARM64EC and an ARM64 one as ARM64X).
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{read_u16, read_u32, read_u64};
+use crate::formats::{field_name, read_u16, read_u32, read_u64, NamedRange};
 use crate::types::{
     ClassificationMetadata, ClassificationResult, Endianness, FileFormat, Isa, Variant,
 };
@@ -474,6 +474,173 @@ fn clr_flags(data: &[u8], opt_off: usize, opt_size: u16, num_sections: u16, pe32
     };
     let file_off = sections.file_offset(data, rva)?;
     read_u32(data, file_off.checked_add(16)?, true).ok()
+}
+
+/// `IMAGE_DIRECTORY_ENTRY_SECURITY`: the attribute certificate table. Its
+/// `VirtualAddress` is a file offset, not an RVA ("PE Format", "The
+/// Attribute Certificate Table (Image Only)").
+const SECURITY_DIRECTORY: usize = 4;
+
+/// PE32 optional header offsets: `NumberOfRvaAndSizes` and the data
+/// directories.
+const PE32_DIRECTORY_COUNT: usize = 92;
+const PE32_DIRECTORIES: usize = 96;
+
+/// `WIN_CERTIFICATE`: `dwLength` (4, including this header), `wRevision`
+/// (2), `wCertificateType` (2), then `bCertificate`. Entries start on
+/// 8-byte boundaries.
+const WIN_CERTIFICATE_HEADER: usize = 8;
+const WIN_CERTIFICATE_ALIGN: usize = 8;
+
+/// `wCertificateType` values.
+const WIN_CERT_TYPE_X509: u16 = 1;
+const WIN_CERT_TYPE_PKCS_SIGNED_DATA: u16 = 2;
+const WIN_CERT_TYPE_RESERVED_1: u16 = 3;
+const WIN_CERT_TYPE_TS_STACK_SIGNED: u16 = 4;
+
+/// Attribute certificates read from one table.
+const MAX_ATTRIBUTE_CERTIFICATES: usize = 4096;
+
+fn le_u16(data: &[u8], at: usize) -> Option<u16> {
+    let bytes = data.get(at..at.checked_add(2)?)?;
+    Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn le_u32(data: &[u8], at: usize) -> Option<u32> {
+    let bytes = data.get(at..at.checked_add(4)?)?;
+    Some(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+/// The COFF header fields that locate the optional header, the data
+/// directories and the section table.
+struct ImageHeaders {
+    optional: OptionalHeader,
+    pe32plus: bool,
+    sections: SectionTable,
+}
+
+/// COFF header at `pe_offset + 4`: `NumberOfSections` at 2 and
+/// `SizeOfOptionalHeader` at 16; the optional header follows at 20 and
+/// starts with its magic.
+fn image_headers(data: &[u8], pe_offset: u32) -> Option<ImageHeaders> {
+    let signature = usize::try_from(pe_offset).ok()?;
+    let coff = signature.checked_add(4)?;
+    if data.get(signature..coff)? != b"PE\0\0" {
+        return None;
+    }
+    let count = le_u16(data, coff.checked_add(2)?)?;
+    let size = usize::from(le_u16(data, coff.checked_add(16)?)?);
+    let offset = coff.checked_add(20)?;
+    let pe32plus = size >= 2 && le_u16(data, offset)? == optional_magic::PE32PLUS;
+    Some(ImageHeaders {
+        optional: OptionalHeader { offset, size },
+        pe32plus,
+        sections: SectionTable {
+            offset: offset.checked_add(size)?,
+            count,
+        },
+    })
+}
+
+/// Section headers with stored bytes: the 8-byte `Name` (shown as text, not
+/// resolved through the COFF string table), and `PointerToRawData` and
+/// `SizeOfRawData`, clipped to the input. At most 96 sections are read.
+pub fn sections(data: &[u8], pe_offset: u32) -> Vec<NamedRange> {
+    let Some(headers) = image_headers(data, pe_offset) else {
+        return Vec::new();
+    };
+    let table = headers.sections;
+    (0..usize::from(table.count.min(MAX_SECTIONS)))
+        .filter_map(|index| {
+            let header = table.offset.checked_add(index * SECTION_HEADER_SIZE)?;
+            let name = data.get(header..header.checked_add(SECTION_HEADER_SIZE)?)?;
+            let raw_size = le_u32(data, header + 16)?;
+            let raw_offset = le_u32(data, header + 20)?;
+            NamedRange::clipped(
+                field_name(&name[..8]),
+                u64::from(raw_offset),
+                u64::from(raw_size),
+                data.len(),
+            )
+        })
+        .collect()
+}
+
+fn certificate_type_name(certificate_type: u16) -> String {
+    match certificate_type {
+        WIN_CERT_TYPE_X509 => "X.509".to_string(),
+        WIN_CERT_TYPE_PKCS_SIGNED_DATA => "PKCS #7 SignedData".to_string(),
+        WIN_CERT_TYPE_RESERVED_1 => "reserved".to_string(),
+        WIN_CERT_TYPE_TS_STACK_SIGNED => "terminal server stack".to_string(),
+        other => format!("type 0x{other:04X}"),
+    }
+}
+
+/// The attribute certificate table, followed by each `WIN_CERTIFICATE`
+/// entry in it. The table is clipped to the input; an entry whose
+/// `dwLength` is shorter than its header or leaves the table ends the walk.
+/// The certificates are located, not verified.
+pub fn attribute_certificates(data: &[u8], pe_offset: u32) -> Vec<NamedRange> {
+    let Some(headers) = image_headers(data, pe_offset) else {
+        return Vec::new();
+    };
+    let (count_field, directories) = if headers.pe32plus {
+        (PE32PLUS_DIRECTORY_COUNT, PE32PLUS_DIRECTORIES)
+    } else {
+        (PE32_DIRECTORY_COUNT, PE32_DIRECTORIES)
+    };
+    let entry = directories + SECURITY_DIRECTORY * DATA_DIRECTORY_SIZE;
+    let optional = &headers.optional;
+    let present = le_u32(data, optional.offset.saturating_add(count_field))
+        .is_some_and(|count| count as usize > SECURITY_DIRECTORY);
+    if !present || entry + DATA_DIRECTORY_SIZE > optional.size {
+        return Vec::new();
+    }
+    let Some(offset) = le_u32(data, optional.offset + entry) else {
+        return Vec::new();
+    };
+    let Some(size) = le_u32(data, optional.offset + entry + 4) else {
+        return Vec::new();
+    };
+    let table = NamedRange::clipped(
+        "attribute certificate table".to_string(),
+        u64::from(offset),
+        u64::from(size),
+        data.len(),
+    );
+    let Some(table) = table else {
+        return Vec::new();
+    };
+    let (Ok(mut pos), Ok(end)) = (
+        usize::try_from(table.offset),
+        usize::try_from(table.offset + table.size),
+    ) else {
+        return Vec::new();
+    };
+    let mut ranges = vec![table];
+    while ranges.len() <= MAX_ATTRIBUTE_CERTIFICATES {
+        let Some(length) = le_u32(data, pos).map(|n| n as usize) else {
+            break;
+        };
+        let Some(entry_end) = pos.checked_add(length) else {
+            break;
+        };
+        if length < WIN_CERTIFICATE_HEADER || entry_end > end {
+            break;
+        }
+        let certificate_type = le_u16(data, pos + 6).unwrap_or_default();
+        let kind = certificate_type_name(certificate_type);
+        ranges.push(NamedRange {
+            name: format!("WIN_CERTIFICATE ({kind})"),
+            offset: pos as u64,
+            size: length as u64,
+        });
+        let Some(padded) = entry_end.checked_add(WIN_CERTIFICATE_ALIGN - 1) else {
+            break;
+        };
+        pos = padded & !(WIN_CERTIFICATE_ALIGN - 1);
+    }
+    ranges
 }
 
 /// Get a human-readable description of a PE machine type.

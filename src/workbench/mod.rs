@@ -58,6 +58,18 @@ impl WorkbenchEngine {
         }
     }
 
+    /// Labelled stored ranges: sections, members and signature structures.
+    /// They place strings and certificates and are computed for opaque
+    /// components too, since they are not classification evidence.
+    pub fn regions(&self) -> String {
+        match crate::inspection::regions(&self.data) {
+            Ok(regions) => serde_json::to_string(&regions).unwrap_or_else(|error| {
+                serde_json::json!({ "error": error.to_string() }).to_string()
+            }),
+            Err(error) => serde_json::json!({ "error": error.to_string() }).to_string(),
+        }
+    }
+
     /// Extract the decoded bytes of a listed member; the new file starts at zero.
     ///
     /// # Errors
@@ -376,6 +388,19 @@ mod tests {
         assert!(engine.bytes(u32::MAX, u32::MAX).is_empty());
         let value: serde_json::Value = serde_json::from_str(&engine.inspect(0, 4096)).unwrap();
         assert!(value["deflate_ratio"].is_null());
+    }
+
+    #[test]
+    fn regions_are_json_for_containers_and_opaque_components() {
+        let tar = include_bytes!("../../tests/fixtures/archives/gnu.tar");
+        for engine in [WorkbenchEngine::new(tar), WorkbenchEngine::opaque(tar)] {
+            let value: serde_json::Value = serde_json::from_str(&engine.regions()).unwrap();
+            let regions = value.as_array().unwrap();
+            assert!(!regions.is_empty());
+            assert_eq!(regions[0]["kind"], "member");
+        }
+        let empty = WorkbenchEngine::new(b"no structure");
+        assert_eq!(empty.regions(), "[]");
     }
 
     #[test]

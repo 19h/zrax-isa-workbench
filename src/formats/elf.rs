@@ -4,7 +4,7 @@
 //! architecture-specific e_flags parsing.
 
 use crate::error::{ClassifierError, Result};
-use crate::formats::{read_u16, read_u32, read_u64};
+use crate::formats::{field_name, read_u16, read_u32, read_u64, NamedRange};
 use crate::types::{
     ClassificationMetadata, ClassificationResult, Endianness, Extension, ExtensionCategory,
     FileFormat, Isa, Variant,
@@ -1101,6 +1101,151 @@ fn has_ppc_vle_marker(data: &[u8]) -> bool {
     MARKERS
         .iter()
         .any(|marker| data.windows(marker.len()).any(|window| window == *marker))
+}
+
+/// Section types without file bytes ("System V ABI", chapter 4,
+/// "Sections", Figure 4-9).
+const SHT_NULL: u32 = 0;
+const SHT_NOBITS: u32 = 8;
+
+/// `e_shstrndx` value meaning "the index is in section 0's `sh_link`".
+const SHN_XINDEX: u16 = 0xffff;
+
+/// Section headers read from one file.
+const MAX_SECTIONS: u64 = 4096;
+
+/// Longest section name read from the section-name string table.
+const MAX_SECTION_NAME: usize = 256;
+
+/// The section header fields used for file ranges.
+struct SectionHeader {
+    name: u32,
+    kind: u32,
+    offset: u64,
+    size: u64,
+    link: u32,
+}
+
+/// The header at `at`. 32-bit: `sh_name` 0, `sh_type` 4, `sh_offset` 16,
+/// `sh_size` 20, `sh_link` 24. 64-bit: `sh_name` 0, `sh_type` 4,
+/// `sh_offset` 24, `sh_size` 32, `sh_link` 40.
+fn section_header(data: &[u8], at: usize, is_64: bool, le: bool) -> Option<SectionHeader> {
+    let field = |offset: usize| at.checked_add(offset);
+    let name = read_u32(data, field(0)?, le).ok()?;
+    let kind = read_u32(data, field(4)?, le).ok()?;
+    let (offset, size, link) = if is_64 {
+        (
+            read_u64(data, field(24)?, le).ok()?,
+            read_u64(data, field(32)?, le).ok()?,
+            read_u32(data, field(40)?, le).ok()?,
+        )
+    } else {
+        (
+            u64::from(read_u32(data, field(16)?, le).ok()?),
+            u64::from(read_u32(data, field(20)?, le).ok()?),
+            read_u32(data, field(24)?, le).ok()?,
+        )
+    };
+    Some(SectionHeader {
+        name,
+        kind,
+        offset,
+        size,
+        link,
+    })
+}
+
+/// The name at `offset` in the section-name string table.
+fn section_name(strings: &[u8], offset: u32) -> String {
+    let start = (offset as usize).min(strings.len());
+    let end = strings.len().min(start.saturating_add(MAX_SECTION_NAME));
+    field_name(&strings[start..end])
+}
+
+/// Sections with file bytes, named from the section-name string table and
+/// clipped to the input. ELF header: `e_shoff` at 0x20 (64-bit 0x28),
+/// `e_shentsize`, `e_shnum` and `e_shstrndx` at 0x2E, 0x30 and 0x32
+/// (64-bit 0x3A, 0x3C, 0x3E). `e_shnum` 0 takes the count from section 0's
+/// `sh_size`, and `SHN_XINDEX` the string-table index from its `sh_link`.
+/// The count is limited by the bytes available and by 4096.
+pub fn sections(data: &[u8]) -> Vec<NamedRange> {
+    let is_64 = match data.get(4) {
+        Some(&class::ELFCLASS32) => false,
+        Some(&class::ELFCLASS64) => true,
+        _ => return Vec::new(),
+    };
+    let le = match data.get(5) {
+        Some(&data::ELFDATA2LSB) => true,
+        Some(&data::ELFDATA2MSB) => false,
+        _ => return Vec::new(),
+    };
+    let fields = if is_64 {
+        read_u64(data, 0x28, le)
+            .ok()
+            .zip(read_u16(data, 0x3a, le).ok())
+    } else {
+        read_u32(data, 0x20, le)
+            .ok()
+            .map(u64::from)
+            .zip(read_u16(data, 0x2e, le).ok())
+    };
+    let counts = if is_64 {
+        read_u16(data, 0x3c, le)
+            .ok()
+            .zip(read_u16(data, 0x3e, le).ok())
+    } else {
+        read_u16(data, 0x30, le)
+            .ok()
+            .zip(read_u16(data, 0x32, le).ok())
+    };
+    let (Some((table, entry_size)), Some((count, string_index))) = (fields, counts) else {
+        return Vec::new();
+    };
+    let header_size = if is_64 { 64 } else { 40 };
+    let entry_size = usize::from(entry_size);
+    let Ok(table) = usize::try_from(table) else {
+        return Vec::new();
+    };
+    if table == 0 || table >= data.len() || entry_size < header_size {
+        return Vec::new();
+    }
+    let Some(first) = section_header(data, table, is_64, le) else {
+        return Vec::new();
+    };
+    let count = if count == 0 {
+        first.size
+    } else {
+        u64::from(count)
+    };
+    let available = ((data.len() - table) / entry_size) as u64;
+    let count = count.min(available).min(MAX_SECTIONS) as usize;
+    let string_index = if string_index == SHN_XINDEX {
+        first.link as usize
+    } else {
+        usize::from(string_index)
+    };
+    let header_at = |index: usize| table.checked_add(index.checked_mul(entry_size)?);
+    let strings = (string_index < count)
+        .then(|| section_header(data, header_at(string_index)?, is_64, le))
+        .flatten()
+        .and_then(|strtab| {
+            let start = usize::try_from(strtab.offset).ok()?;
+            let end = start.checked_add(usize::try_from(strtab.size).ok()?)?;
+            data.get(start..end.min(data.len()))
+        })
+        .unwrap_or_default();
+    (1..count)
+        .filter_map(|index| section_header(data, header_at(index)?, is_64, le))
+        .filter(|header| header.kind != SHT_NULL && header.kind != SHT_NOBITS)
+        .filter_map(|header| {
+            NamedRange::clipped(
+                section_name(strings, header.name),
+                header.offset,
+                header.size,
+                data.len(),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

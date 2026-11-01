@@ -11,6 +11,10 @@ use crate::formats::{
 use crate::types::FileFormat;
 use serde::Serialize;
 
+mod regions;
+
+pub use regions::{enclosing, regions, Region, RegionKind};
+
 /// A member available for opening in an independent workbench.
 #[derive(Debug, Serialize)]
 pub struct Subfile {

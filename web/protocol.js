@@ -1,2 +1,3 @@
-// Handshake version for the fixed-coordinate spatial map messages.
-export const WORKBENCH_PROTOCOL = 4;
+// Handshake version for the analysis worker: fixed-coordinate spatial map
+// messages, and classification results that carry labelled regions.
+export const WORKBENCH_PROTOCOL = 5;

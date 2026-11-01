@@ -28,6 +28,7 @@
 
 use crate::error::{ClassifierError, Result};
 use crate::formats::container::{self, Child, Container};
+use crate::formats::NamedRange;
 use crate::types::FileFormat;
 
 mod files;
@@ -134,6 +135,18 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
     match layout {
         Layout::Cabinet => parse(data, layout),
     }
+}
+
+/// The Authenticode signature after the cabinet as a stored range, when
+/// the reserve area names one. The signature is located, not verified.
+pub fn signature_range(data: &[u8]) -> Option<NamedRange> {
+    let header = Header::read(data).ok()?;
+    let signature = header.signature(data)?;
+    Some(NamedRange {
+        name: "CAB Authenticode signature".to_string(),
+        offset: signature.offset as u64,
+        size: signature.size as u64,
+    })
 }
 
 fn parse(data: &[u8], layout: Layout) -> Result<Container<'_>> {
