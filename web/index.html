@@ -12,6 +12,7 @@
 <button class="icon-button active" id="toggle-files" data-action="toggle-side" aria-label="Files panel" title="Files panel (f)"><svg viewBox="0 0 24 24"><path d="M14 2H6v20h14V8zM14 2v6h6M8 13h8M8 17h6"/></svg></button>
 <button class="icon-button" data-action="batch-view" aria-label="Batch" title="Batch (b)"><svg viewBox="0 0 24 24"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></svg></button>
 <span class="spacer"></span>
+<button class="icon-button" data-action="certificates-view" aria-label="Certificates in all files" title="Certificates in all files"><svg viewBox="0 0 24 24"><path d="M11 18H3V4h18v7M7 8h10M7 12h4"/><circle cx="17" cy="15" r="3"/><path d="M15 17.5V22l2-1.25L19 22v-4.5"/></svg></button>
 <button class="icon-button" data-action="browse" aria-label="Add files" title="Add files (o)"><svg viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 14v6h16v-6"/></svg></button>
 <button class="icon-button" id="toggle-log" data-action="toggle-log" aria-label="Analysis log" title="Log (`)"><svg viewBox="0 0 24 24"><path d="m4 5 6 7-6 7m10 0h7"/></svg></button>
 </nav>
@@ -100,6 +101,28 @@
 <div class="batch-controls"><div class="tabs" aria-label="Batch filters"><button data-filter="all" class="active">all <span id="count-all">0</span></button><button data-filter="done">done <span id="count-done">0</span></button><button data-filter="error">failed <span id="count-error">0</span></button><button data-filter="pending">pending <span id="count-pending">0</span></button></div><select id="batch-sort" aria-label="Sort files"><option value="queue">sort: queue order</option><option value="name">sort: name</option><option value="size">sort: size</option><option value="confidence">sort: confidence</option><option value="entropy">sort: mean entropy</option></select></div>
 <progress id="batch-progress" max="1" value="0" aria-label="Files processed"></progress><div id="batch-tallies" class="batch-tallies"></div>
 <div class="batch-table-wrap"><table class="batch-table" aria-label="Classification results"><thead><tr><th scope="col">status</th><th scope="col">file</th><th scope="col">isa</th><th scope="col">bits</th><th scope="col">endian</th><th scope="col">format</th><th scope="col">conf</th><th scope="col">source</th><th scope="col">size</th><th scope="col">entropy</th><th scope="col">ms</th></tr></thead><tbody id="batch-rows"></tbody></table><p id="batch-no-match" class="muted" hidden>no files match this filter</p></div>
+</section>
+<section class="all-certificates-view" id="all-certificates" aria-label="Certificates in all files" hidden>
+  <header class="bar">
+    <strong>certificates</strong>
+    <span class="muted" id="all-certificates-scope"></span>
+    <span class="spacer"></span>
+    <span class="muted">download all</span>
+    <button type="button" data-all-certificates-export="pem" title="Download the distinct certificates as one PEM file">↓ pem bundle</button>
+    <button type="button" data-all-certificates-export="pem-zip" title="Download each distinct certificate as a PEM file, in one ZIP archive">↓ pem .zip</button>
+    <button type="button" data-all-certificates-export="der-zip" title="Download each distinct certificate as a DER file, in one ZIP archive">↓ der .zip</button>
+    <button type="button" data-all-certificates-export="json" title="Download the files, the distinct certificates, their issuer links and every copy as JSON">↓ json</button>
+  </header>
+  <div class="certificates-workspace">
+    <div class="certificates-list">
+      <header class="bar">
+        <input id="all-certificates-filter" class="certificates-filter" type="search" placeholder="filter certificates" title="Matches subject, issuer, serial number, SHA-256 and file name" spellcheck="false" aria-label="Filter all certificates">
+      </header>
+      <p class="certificates-status" id="all-certificates-status" role="status"></p>
+      <div class="certificates-tree" id="all-certificates-tree" role="tree" aria-label="All certificates" tabindex="0"></div>
+    </div>
+    <aside class="certificates-detail" id="all-certificates-detail" aria-label="Certificate details"></aside>
+  </div>
 </section>
 <section class="analysis-log" id="analysis-log" aria-label="Analysis log" hidden><header class="bar"><span>[ log ]</span><span class="spacer"></span><button data-action="clear-log">clear</button><button data-action="toggle-log" aria-label="Close log">×</button></header><div id="log-lines" role="log" aria-live="polite"></div></section>
 </main>

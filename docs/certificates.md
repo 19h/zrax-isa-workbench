@@ -61,6 +61,11 @@ is shown in dotted form.
   this certificate's encoded issuer. When several match, the one whose
   subject key identifier equals this certificate's authority key identifier
   wins; otherwise the lowest index. Duplicates are never chosen.
+- `certificates::link` applies the `duplicate_of`, `issuer_index` and
+  `self_issued` rules to DER certificates gathered from several inputs, by
+  position in the list it is given. The workbench uses it to link
+  certificates across open files. An entry that is not exactly one
+  certificate gets no issuer link.
 - **No signature, chain, revocation or validity check is performed.** The
   report says so in its notes. Validity status relative to the current time
   is left to viewers, because the library never reads the clock; results
@@ -111,6 +116,41 @@ bytes in hex, download DER or PEM, open the DER as a file (classified as
 as JSON. The view says "signature not verified" for each certificate and
 "name match" for each issuer link.
 
+## All open files
+
+The rail button above **Add files** opens one view of the certificates in
+every open file, including opened members and decrypted payloads. Opening it
+scans each file not scanned yet in the scan worker, at most two at a time.
+Certificates are made unique by the SHA-256 of their DER encoding: each
+appears once, with a `×N` badge for its copies and the number of files that
+hold them. Issuer links across files come from `certificates::link`, run in
+the scan worker over the distinct certificates, so a leaf in one file links
+to an intermediate found only in another. Positions follow the tree: roots
+first, each followed by the certificates that link to it.
+
+Selecting a certificate shows its fields and a **found in** table: each
+copy's file, offset, stored size and encoding, and enclosing regions. The
+file name opens that file's certificates tab with the copy selected; **hex**
+selects the stored bytes in the hex view. The filter also matches file
+names. Files added while the view is open join it.
+
+The download buttons are enabled once every file is scanned and linked:
+
+| Button | File | Contents |
+| --- | --- | --- |
+| ↓ pem bundle | `all-certificates.pem` | The distinct certificates as canonical PEM blocks, in tree order |
+| ↓ pem .zip | `all-certificates.pem.zip` | One `NN-<name>.pem` per distinct certificate |
+| ↓ der .zip | `all-certificates.der.zip` | One `NN-<name>.der` per distinct certificate |
+| ↓ json | `all-certificates.json` | `files` (name, size, certificate count, truncation, scan error), `certificates` (position, SHA-256, DER size, `issuer_index`, `self_issued`, fields, PEM, and every occurrence with file, offset, stored size, encoding and `within`) and `notes` |
+
+`NN` is the tree position. `<name>` is the subject common name (or full
+subject) with every run of characters other than `A`-`Z`, `a`-`z`, `0`-`9`,
+`.`, `_` and `-` replaced by `_`, cut to 60 characters. PEM blocks whose
+contents are not certificates appear in the tree and the JSON report only.
+ZIP archives store entries without compression and with UTF-8 names
+(PKWARE APPNOTE.TXT 6.3.10, sections 4.3 and 4.4.4). There is no ZIP64, so
+an export over 65,535 entries or 4 GiB fails with an error.
+
 ## Command line
 
 `zrax certs FILE...` prints each certificate with its location, names,
@@ -126,6 +166,8 @@ adds `within`, the labels of the enclosing regions. `--dump DIR` writes
 | DER certificate size (`MAX_CERTIFICATE_SIZE`) | 1 MiB |
 | PEM block size (`MAX_PEM_BLOCK`) | 2 MiB |
 | Window overlap (`WINDOW_OVERLAP`) | 2 MiB |
+| Concurrent scans started by the all-files view (`MAX_BACKGROUND_SCANS` in `web/certificate-store.js`) | 2 |
+| ZIP export | 65,535 entries, 4 GiB |
 
 Each byte is searched a bounded number of times by the PEM finder, so a
 flood of `BEGIN` markers takes linear time. DER candidates are rejected by
@@ -163,6 +205,7 @@ The browser streams files this way without a resident copy.
 | C3 | Equal encoded names identify an issuer candidate | Two CAs with the same name and different keys: the AKI/SKI rule must pick the right one when present; without identifiers the lowest index is chosen and may be wrong |
 | C4 | Base64 bodies contain only the alphabet, padding and whitespace | A body with RFC 7468 explanatory headers inside is rejected; cert-dump drops `-----` lines but not headers either |
 | C5 | Windows that overlap by 2 MiB give whole-input results | `windowed_scans_equal_the_whole_input_scan` compares window sizes from 1 B to the whole input |
+| C6 | Across open files, equal encoded names identify an issuer candidate, as within one file (C3) | Open two files whose CAs share a name but not a key, with children that carry no authority key identifier: each child links to the CA that appears first in file order, which may be wrong |
 
 ## Boundaries
 
@@ -216,3 +259,30 @@ wasm-pack 0.14.0 and Playwright 1.61.1 Chromium.
 These are observations on one machine, not bounds. Signature and chain
 validation are not implemented, so they were not verified; other browsers
 were not tested.
+
+### All open files
+
+Run on 2026-11-01 on macOS 27.2 arm64 with the same toolchain, after adding
+`certificates::link` and the all-files view.
+
+- `cargo test --all-features --locked`: 2,924 passed, 0 failed, 7 ignored
+  (2,918, 0 and 7 at the base commit `b906b04`). New: five `link` tests in
+  `tests/certificates.rs` (cross-input chain, equality with a scan's links,
+  duplicates, non-certificates, byte mutations of a member) and one
+  `CertificateLinks` unit test. `cargo check --all-features --examples`
+  passes.
+- Browser suite: 397 tests, 393 passed, 0 failed, 4 skipped (the same D10
+  and RX113 skips). The 12 new tests in `all-certificates.test.mjs` cover
+  source and packaged pages, the ZIP writer, every download format, copy
+  navigation, files added while the view is open, regions that arrive after
+  scanning, and layouts at 1100 and 900 px. No other browser test changed.
+- The certificates tab now reads its reports from a shared store. A
+  temporary script rendered that tab with the base commit's and this
+  change's web code over four files (27 states: every tree item, keyboard
+  moves and filters); the tree, detail, status and count markup was
+  byte-identical.
+- ZIP archives were also read with Info-ZIP `unzip -t` and Python's
+  `zipfile.testzip`; both reported no errors.
+- Screenshots were checked at 1920, 1440, 1280 and 900 px. A synthetic
+  load of 88 files (four of 24 MiB) finished with 294 copies folded into 4
+  distinct certificates. Real firmware sets were not tested.

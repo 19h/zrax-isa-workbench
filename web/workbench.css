@@ -870,6 +870,25 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
   padding: 0.75rem;
   color: var(--sig-err);
 }
+
+/* All-files certificates view */
+.all-certificates-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.all-certificates-view > .certificates-workspace {
+  flex: 1;
+}
+/* File names and region paths wrap; offsets and sizes stay on one line. */
+.certificate-copies td:first-child,
+.certificate-copies td:nth-child(4) {
+  min-width: 8rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 1000px) {
   .strings-workspace,
   .certificates-workspace {
@@ -892,5 +911,10 @@ meter::-webkit-meter-bar { background: var(--surface-inset); border: 0; border-r
     border-top: 0.0625rem solid var(--line-default);
     flex: none;
     overflow: visible;
+  }
+  .all-certificates-view > .bar {
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
   }
 }

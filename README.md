@@ -82,7 +82,8 @@ measure their displayed dimensions.
 | Text decoding | ASCII, Latin-1, CP437, EBCDIC CP037 and UTF-16; byte order override |
 | Strings | ASCII, UTF-8 and UTF-16LE/BE runs streamed by a scan worker; substring or regex search with highlighting, encoding and tag chips with counts, minimum length, scope (file, hex selection or a section/member), sortable columns, region per string, inspector with byte preview, show in hex, copy, TXT/CSV/JSON export; virtual grid for up to 1,000,000 strings ([string extraction](docs/strings.md)) |
 | Certificates | DER and PEM X.509 certificates found anywhere in the file, scanned in the background with a count on the tab; issuer-link tree, subject/issuer/validity/key/extension details, enclosing structure (PE attribute certificates, Mach-O code signature, IM4M chain, members), DER/PEM download, show in hex and open as file; signatures not verified ([certificate scanning](docs/certificates.md)) |
-| Exports | Classification JSON, batch JSON/CSV, selected bytes, clipboard hex, strings TXT/CSV/JSON, certificates DER/PEM/JSON |
+| All certificates | Rail button above **Add files**: the certificates of every open file in one issuer-link tree, made unique by DER SHA-256, with copy counts, the files and offsets of each copy, links across files by encoded name, and download all as a PEM bundle, PEM or DER files in a ZIP archive, or JSON; signatures not verified ([certificate scanning](docs/certificates.md#all-open-files)) |
+| Exports | Classification JSON, batch JSON/CSV, selected bytes, clipboard hex, strings TXT/CSV/JSON, certificates DER/PEM/JSON, all certificates PEM/ZIP/JSON |
 | Batch overview | Status filters, insertion/name/size/confidence/entropy sorting, architecture/format tallies and progress |
 | Interface | Responsive file panel and inspectors, log, status bar, context menu, keyboard navigation and persistent UI preferences |
 
@@ -265,6 +266,7 @@ configuration.
 | `inspection::regions`, `inspection::enclosing` | Labelled sections, members and signature structures, and the regions that contain a range; see [subfile inspection](docs/subfile-inspection.md#labelled-regions) |
 | `strings::extract`, `strings::Scanner` | ASCII, UTF-8 and UTF-16 strings with lexical tags, streamed in chunks; see [string extraction](docs/strings.md) |
 | `certificates::scan`, `certificates::Scan` | DER and PEM X.509 certificates in any bytes, with decoded fields and name-based issuer links; see [certificate scanning](docs/certificates.md) |
+| `certificates::link` | Duplicate and issuer links among certificates gathered from several inputs, by the same rules as a scan |
 
 The payload contains `format`, `primary`, `candidates`, `slices`, `extensions`,
 `metadata` and `notes`. Fat Mach-O binaries expose their contained architectures;

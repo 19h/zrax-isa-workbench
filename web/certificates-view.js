@@ -4,144 +4,57 @@
 // are never verified; the view says so wherever it shows a link.
 import { esc, fmtSize } from './format.js';
 import { hx } from './hex-utils.js';
+import {
+  PEM_TYPE, certificateDetail, derBytes, enclosingRegions, fact, keyLabel, matchesFilter, treeItem, treeOrder,
+} from './certificate-common.js';
 
 const $ = id => document.getElementById(id);
-const PEM_TYPE = 'application/x-pem-file';
 
-const KEY_USAGE_LABELS = {
-  digitalSignature: 'digital signature',
-  nonRepudiation: 'non-repudiation',
-  keyEncipherment: 'key encipherment',
-  dataEncipherment: 'data encipherment',
-  keyAgreement: 'key agreement',
-  keyCertSign: 'certificate signing',
-  cRLSign: 'CRL signing',
-  encipherOnly: 'encipher only',
-  decipherOnly: 'decipher only',
-};
-
-/** Validity relative to this computer's clock, which the library never reads. */
-function validity(summary, now = Date.now() / 1000) {
-  if (now < summary.not_before_unix) return { state: 'future', label: 'not yet valid' };
-  if (now > summary.not_after_unix) return { state: 'expired', label: 'expired' };
-  return { state: 'valid', label: 'within validity period' };
-}
-
-/** DER bytes from the canonical PEM text of a certificate. */
-function derBytes(pem) {
-  const body = pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
-  return Uint8Array.from(atob(body), c => c.charCodeAt(0));
-}
-
-function displayName(certificate) {
-  const summary = certificate.summary;
-  if (!summary) return 'unparsed PEM block';
-  return summary.subject_cn || summary.subject || '(empty subject)';
-}
-
-/**
- * Tree order: each root (no issuer link) followed by the certificates it
- * links to, depth first. Duplicates are folded into their first occurrence;
- * certificates reachable only through an issuer cycle come last at level 1.
- */
-function treeOrder(certificates) {
-  const children = new Map();
-  for (const c of certificates) {
-    if (c.duplicate_of != null || c.issuer_index == null) continue;
-    if (!children.has(c.issuer_index)) children.set(c.issuer_index, []);
-    children.get(c.issuer_index).push(c.index);
-  }
-  const order = [];
-  const visited = new Set();
-  const visit = (index, level) => {
-    if (visited.has(index)) return;
-    visited.add(index);
-    order.push({ index, level });
-    for (const child of children.get(index) || []) visit(child, level + 1);
-  };
-  for (const c of certificates) {
-    if (c.duplicate_of == null && c.issuer_index == null) visit(c.index, 1);
-  }
-  for (const c of certificates) {
-    if (c.duplicate_of == null) visit(c.index, 1);
-  }
-  return order;
-}
-
-function matchesFilter(certificate, filter) {
-  if (!filter) return true;
-  const summary = certificate.summary || {};
-  return [summary.subject, summary.issuer, summary.serial, certificate.sha256, certificate.error]
-    .some(value => value && value.toLowerCase().includes(filter));
-}
-
-export function createCertificatesView(scanner, hooks) {
-  const files = new Map();
+export function createCertificatesView(store, hooks) {
+  // Selection and filter per file; the reports live in the store.
+  const views = new Map();
   let entry = null;
   let active = false;
+  let revealPending = false;
 
-  function fileState(target) {
-    let state = files.get(target.id);
-    if (!state) {
-      state = { request: 0, report: null, error: '', scanned: 0, selected: -1, filter: '' };
-      files.set(target.id, state);
+  function viewState(target) {
+    let view = views.get(target.id);
+    if (!view) {
+      view = { selected: -1, filter: '' };
+      views.set(target.id, view);
     }
-    return state;
+    return view;
   }
 
-  function start(target) {
-    const state = fileState(target);
-    if (state.request) return;
-    state.report = null;
-    state.error = '';
-    state.request = scanner.post({ type: 'certificates', id: target.id, file: target.file });
+  /** The current file's view state and scan; selects the first distinct certificate once a report exists. */
+  function current() {
+    const view = viewState(entry);
+    const scan = store.get(entry.id);
+    const report = scan?.report || null;
+    if (report && view.selected < 0) {
+      const first = report.certificates.find(c => c.duplicate_of == null);
+      if (first) view.selected = first.index;
+    }
+    return { view, scan, report };
   }
 
-  scanner.subscribe(data => {
-    if (data.type === 'boot-error' || data.type === 'restarted') {
-      for (const state of files.values()) {
-        if (!state.report) state.request = 0;
-      }
-      if (entry) start(entry);
-      return;
-    }
-    const state = files.get(data.id);
-    if (!state || data.request !== state.request) return;
-    if (data.type === 'certificates-progress') {
-      state.scanned = data.scanned;
-    } else if (data.type === 'certificates') {
-      state.report = data.report;
-      const unique = data.report.certificates.filter(c => c.duplicate_of == null);
-      if (state.selected < 0 && unique.length) state.selected = unique[0].index;
-    } else if (data.type === 'error' && data.operation === 'certificates') {
-      state.error = data.error;
-    } else {
-      return;
-    }
-    if (entry?.id === data.id) render();
+  store.subscribe(id => {
+    if (entry && entry.id === id) render();
   });
 
-  function renderBadge(state) {
-    const count = state.report?.certificates.length;
+  function renderBadge(report) {
+    const count = report?.certificates.length;
     $('certificates-count').textContent = count ? String(count) : '';
   }
 
-  function enclosing(certificate) {
-    return (entry?.regions || [])
-      .filter(r => certificate.offset >= r.offset && certificate.offset + certificate.stored_size <= r.offset + r.size)
-      .sort((a, b) => b.size - a.size)
-      .map(r => r.label);
-  }
-
-  function renderTree(state) {
-    const report = state.report;
+  function renderTree(view, report) {
     const tree = $('certificates-tree');
     if (!report) {
       tree.innerHTML = '';
       return;
     }
     const certificates = report.certificates;
-    const filter = state.filter.toLowerCase();
+    const filter = view.filter.toLowerCase();
     const items = filter
       ? certificates
         .filter(c => c.duplicate_of == null && matchesFilter(c, filter))
@@ -153,45 +66,36 @@ export function createCertificatesView(scanner, hooks) {
     }
     const now = Date.now() / 1000;
     tree.innerHTML = items.map(({ index, level }) => {
-      const c = certificates[index];
-      const summary = c.summary;
-      const status = summary ? validity(summary, now) : { state: 'error', label: 'not parsed' };
-      const key = summary
-        ? [summary.public_key_algorithm, summary.public_key_bits].filter(Boolean).join(' ')
-        : '';
+      const certificate = certificates[index];
       const count = copies.get(index);
-      const badges = (c.self_issued ? '<span class="badge">self-issued</span>' : '')
-        + (summary?.is_ca ? '<span class="badge">ca</span>' : '')
-        + (count ? `<span class="badge" title="${count} identical copies in this file">×${count}</span>` : '');
-      const meta = [key, c.encoding, `0x${hx(c.offset)}`].filter(Boolean).join(' · ');
-      const name = displayName(c);
-      return `<div class="certificate-item" role="treeitem" id="certificate-item-${index}" aria-level="${level}"`
-        + ` aria-selected="${index === state.selected}" data-certificate="${index}" style="--level: ${level - 1}">`
-        + `<span class="validity-dot ${status.state}" title="${esc(status.label)}"></span>`
-        + `<span class="certificate-name">${esc(name)}</span>`
-        + `<span class="certificate-details"><span class="certificate-badges">${badges}</span>`
-        + `<span class="certificate-meta muted">${esc(meta)}</span></span>`
-        + '</div>';
+      const meta = [keyLabel(certificate.summary), certificate.encoding, `0x${hx(certificate.offset)}`]
+        .filter(Boolean).join(' · ');
+      return treeItem({
+        id: `certificate-item-${index}`,
+        index,
+        level,
+        selected: index === view.selected,
+        certificate,
+        copies: count,
+        copiesTitle: `${count} identical copies in this file`,
+        meta,
+        now,
+      });
     }).join('') || '<p class="muted">no certificates match the filter</p>';
-    const selected = state.selected >= 0 ? `certificate-item-${state.selected}` : '';
+    const selected = view.selected >= 0 ? `certificate-item-${view.selected}` : '';
     if (selected && $(selected)) tree.setAttribute('aria-activedescendant', selected);
     else tree.removeAttribute('aria-activedescendant');
   }
 
-  function fact(label, value, extra = '') {
-    return `<dt>${esc(label)}</dt><dd>${value}${extra}</dd>`;
-  }
-
-  function renderDetail(state) {
+  function renderDetail(view, report) {
     const panel = $('certificates-detail');
-    const certificate = state.report?.certificates[state.selected];
+    const certificate = report?.certificates[view.selected];
     if (!certificate) {
       panel.innerHTML = '';
       return;
     }
-    const summary = certificate.summary;
-    const location = enclosing(certificate);
-    const occurrences = state.report.certificates
+    const location = enclosingRegions(entry.regions, certificate);
+    const occurrences = report.certificates
       .filter(c => c.index === certificate.index || c.duplicate_of === certificate.index)
       .map(c => `0x${hx(c.offset)}`);
     const actions = '<div class="certificate-actions">'
@@ -207,59 +111,18 @@ export function createCertificatesView(scanner, hooks) {
       + (occurrences.length > 1 ? fact('copies', esc(occurrences.join(', '))) : '')
       + fact('SHA-256', `<code>${esc(certificate.sha256)}</code>`,
         ' <button type="button" class="small" data-certificate-action="copy-sha">copy</button>');
-    if (!summary) {
-      panel.innerHTML = `<header class="certificate-heading"><strong>unparsed PEM block</strong></header>`
-        + `<p class="certificate-error">${esc(certificate.error || 'not a certificate')}</p>`
-        + `<dl class="certificate-facts">${locationFacts}</dl>${actions}`;
-      return;
-    }
-    const status = validity(summary);
-    const issuer = certificate.issuer_index != null
+    const issuerLink = certificate.issuer_index != null
       ? ` <button type="button" class="small" data-certificate-select="${certificate.issuer_index}">go to issuer [${certificate.issuer_index}]</button>`
       : '';
-    const keyText = [
-      summary.public_key_algorithm,
-      summary.public_key_bits && `${summary.public_key_bits}-bit`,
-      summary.curve && `(${summary.curve})`,
-    ].filter(Boolean).join(' ');
-    const list = values => (values.length ? esc(values.join(', ')) : '—');
-    const constraints = summary.is_ca == null ? '—'
-      : `${summary.is_ca ? 'CA' : 'not a CA'}${summary.path_len == null ? '' : `, path length ${summary.path_len}`}`;
-    const extensionRows = summary.extensions.map(e => `<tr><td>${esc(e.name)}</td><td><code>${esc(e.oid)}</code></td><td>${e.critical ? 'critical' : ''}</td></tr>`).join('');
-    panel.innerHTML = `<header class="certificate-heading"><strong>${esc(displayName(certificate))}</strong>`
-      + `<span class="badge validity-${status.state}" title="by this computer's clock">${esc(status.label)}</span>`
-      + (certificate.self_issued ? '<span class="badge">self-issued</span>' : '')
-      + '<span class="muted">signature not verified</span></header>'
-      + '<dl class="certificate-facts">'
-      + fact('subject', esc(summary.subject))
-      + fact('issuer', esc(summary.issuer), issuer + (certificate.issuer_index != null ? ' <small class="muted">name match</small>' : ''))
-      + fact('serial', `<code>${esc(summary.serial)}</code>`)
-      + fact('version', `v${summary.version}`)
-      + fact('not before', esc(summary.not_before))
-      + fact('not after', esc(summary.not_after), ` <small class="muted">${esc(status.label)} by this computer's clock</small>`)
-      + fact('public key', esc(keyText))
-      + fact('signature', `<span title="${esc(summary.signature_oid)}">${esc(summary.signature_algorithm)}</span>`)
-      + fact('constraints', esc(constraints))
-      + fact('key usage', list(summary.key_usage.map(u => KEY_USAGE_LABELS[u] || u)))
-      + fact('extended', list(summary.extended_key_usage))
-      + fact('alt names', list(summary.subject_alt_names))
-      + fact('subject key', summary.subject_key_id ? `<code>${esc(summary.subject_key_id)}</code>` : '—')
-      + fact('authority key', summary.authority_key_id ? `<code>${esc(summary.authority_key_id)}</code>` : '—')
-      + locationFacts
-      + '</dl>'
-      + actions
-      + (extensionRows ? '<section class="panel"><header>[ extensions ]</header><div class="panel-body results-table-scroll">'
-        + `<table class="results-table" aria-label="Certificate extensions"><thead><tr><th scope="col">name</th><th scope="col">oid</th><th scope="col">flag</th></tr></thead><tbody>${extensionRows}</tbody></table>`
-        + '</div></section>' : '');
+    panel.innerHTML = certificateDetail({ certificate, issuerLink, locationFacts, actions });
   }
 
-  function renderStatus(state) {
-    const report = state.report;
+  function renderStatus(scan, report) {
     let message;
-    if (state.error) {
-      message = state.error;
+    if (scan?.error) {
+      message = scan.error;
     } else if (!report) {
-      const percent = entry.size ? Math.floor((state.scanned / entry.size) * 100) : 0;
+      const percent = entry.size ? Math.floor(((scan?.scanned || 0) / entry.size) * 100) : 0;
       message = `scanning ${percent}% for DER and PEM certificates…`;
     } else if (!report.certificates.length) {
       message = `no certificates found in ${fmtSize(entry.size)} (DER and PEM scanned)`;
@@ -274,25 +137,30 @@ export function createCertificatesView(scanner, hooks) {
 
   function render() {
     if (!entry) return;
-    const state = fileState(entry);
-    renderBadge(state);
+    const { view, scan, report } = current();
+    renderBadge(report);
     if (!active) return;
-    $('certificates-filter').value = state.filter;
-    renderStatus(state);
-    renderTree(state);
-    renderDetail(state);
+    $('certificates-filter').value = view.filter;
+    renderStatus(scan, report);
+    renderTree(view, report);
+    renderDetail(view, report);
+    if (revealPending) {
+      revealPending = false;
+      $(`certificate-item-${view.selected}`)?.scrollIntoView({ block: 'nearest' });
+    }
   }
 
-  function selectCertificate(state, index) {
-    state.selected = index;
-    renderTree(state);
-    renderDetail(state);
+  function selectCertificate(index) {
+    const { view, report } = current();
+    view.selected = index;
+    renderTree(view, report);
+    renderDetail(view, report);
     $(`certificate-item-${index}`)?.scrollIntoView({ block: 'nearest' });
   }
 
   function act(action) {
-    const state = fileState(entry);
-    const certificate = state.report?.certificates[state.selected];
+    const { view, report } = current();
+    const certificate = report?.certificates[view.selected];
     if (!certificate) return;
     const base = `${entry.name}.cert-${certificate.index}`;
     if (action === 'hex') {
@@ -309,27 +177,26 @@ export function createCertificatesView(scanner, hooks) {
   }
 
   function exportAll(format) {
-    const state = fileState(entry);
-    if (!state.report) return;
+    const { report } = current();
+    if (!report) return;
     if (format === 'json') {
-      const json = new Blob([JSON.stringify(state.report, null, 2)], { type: 'application/json' });
+      const json = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
       hooks.download(`${entry.name}.certificates.json`, json);
       return;
     }
-    const unique = state.report.certificates.filter(c => c.duplicate_of == null && c.summary);
+    const unique = report.certificates.filter(c => c.duplicate_of == null && c.summary);
     hooks.download(`${entry.name}.certificates.pem`, new Blob(unique.map(c => c.pem), { type: PEM_TYPE }));
   }
 
   $('certificates-view').addEventListener('click', event => {
     if (!entry) return;
-    const state = fileState(entry);
     const button = event.target.closest('button');
     const item = event.target.closest('[data-certificate]');
     if (button?.dataset.certificateAction) act(button.dataset.certificateAction);
-    else if (button?.dataset.certificateSelect) selectCertificate(state, Number(button.dataset.certificateSelect));
+    else if (button?.dataset.certificateSelect) selectCertificate(Number(button.dataset.certificateSelect));
     else if (button?.dataset.certificatesExport) exportAll(button.dataset.certificatesExport);
     else if (item) {
-      selectCertificate(state, Number(item.dataset.certificate));
+      selectCertificate(Number(item.dataset.certificate));
       $('certificates-tree').focus();
     }
   });
@@ -338,17 +205,17 @@ export function createCertificatesView(scanner, hooks) {
   });
   $('certificates-tree').addEventListener('keydown', event => {
     if (!entry) return;
-    const state = fileState(entry);
+    const { view } = current();
     const nodes = $('certificates-tree').querySelectorAll('[data-certificate]');
     const items = [...nodes].map(node => Number(node.dataset.certificate));
     if (!items.length) return;
-    const position = items.indexOf(state.selected);
+    const position = items.indexOf(view.selected);
     const moves = { ArrowDown: 1, ArrowUp: -1, Home: -Infinity, End: Infinity };
     if (event.key in moves) {
       const step = moves[event.key];
       const last = items.length - 1;
       const next = Number.isFinite(step) ? Math.max(0, Math.min(last, position + step)) : step < 0 ? 0 : last;
-      selectCertificate(state, items[next]);
+      selectCertificate(items[next]);
       event.preventDefault();
       event.stopPropagation();
     } else if (event.key === 'Enter') {
@@ -358,9 +225,9 @@ export function createCertificatesView(scanner, hooks) {
   });
   $('certificates-filter').addEventListener('input', event => {
     if (!entry) return;
-    const state = fileState(entry);
-    state.filter = event.target.value;
-    renderTree(state);
+    viewState(entry).filter = event.target.value;
+    const { view, report } = current();
+    renderTree(view, report);
   });
 
   return {
@@ -372,14 +239,23 @@ export function createCertificatesView(scanner, hooks) {
         $('certificates-count').textContent = '';
         return;
       }
-      start(entry);
+      store.scan(entry, true);
+      render();
+    },
+    /** Select certificate `index` of the current file, clearing the filter, and scroll to it when shown. */
+    reveal(index) {
+      if (!entry) return;
+      const view = viewState(entry);
+      view.selected = index;
+      view.filter = '';
+      revealPending = true;
       render();
     },
     forget(id) {
-      files.delete(id);
+      views.delete(id);
     },
     clear() {
-      files.clear();
+      views.clear();
     },
   };
 }

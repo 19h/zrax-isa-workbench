@@ -6,6 +6,8 @@ import { WORKBENCH_PROTOCOL } from './protocol.js';
 import { ScanClient } from './scan-client.js';
 import { createStringsView } from './strings-view.js';
 import { createCertificatesView } from './certificates-view.js';
+import { createCertificateStore } from './certificate-store.js';
+import { createAllCertificatesView } from './all-certificates-view.js';
 
 const MAX_SUBFILE_DEPTH = 6;
 // Tabs in display order; the number keys 1-6 select them.
@@ -81,7 +83,25 @@ const viewHooks = {
   log: (tone, message) => pushLog(tone, message),
 };
 const stringsView = createStringsView(scanner, viewHooks);
-const certificatesView = createCertificatesView(scanner, viewHooks);
+const certificateStore = createCertificateStore(scanner);
+const certificatesView = createCertificatesView(certificateStore, viewHooks);
+const allCertificatesView = createAllCertificatesView(certificateStore, scanner, {
+  entries: () => [...entries.values()],
+  openCertificate: (id, index) => {
+    if (!entries.has(id)) return;
+    selectFile(id);
+    certificatesView.reveal(index);
+    changeTab('certificates');
+  },
+  showBytes: (id, start, end) => {
+    if (!entries.has(id)) return;
+    selectFile(id);
+    showRange(start, end);
+  },
+  download: (name, blob) => download(name, blob),
+  copy: value => copy(value),
+  error: message => showError(message),
+});
 const archLabel = payload => payload.slices?.length > 1 ? [...new Set(payload.slices.map(x => archId(x.isa)))].join(' + ') : archId(payload.primary.isa);
 const statusLabel = status => ({ queued: 'queued', analyzing: 'analyzing', done: 'done', error: 'failed' })[status];
 const glyph = status => ({ queued: '[ ]', analyzing: '[*]', done: '[+]', error: '[-]' })[status];
@@ -134,8 +154,11 @@ function enqueue(files, parent = null, component = null, activate = true) {
   }
   worker.postMessage({ type: 'add', files: added.map(({ id, file, opaque }) => ({ id, file, opaque })) });
   pushLog('cmd', `queue ${added.map(x => JSON.stringify(x.name)).join(' ')}`);
+  // Files added from the all-files certificates view join it there.
+  const stay = activate && ui.view === 'certificates';
   if (activate && added.length === 1) selectFile(added[0].id);
   else if (activate) { if (!selected()) selectFile(added[0].id); ui.view = 'batch'; ui.filter = 'all'; }
+  if (stay) ui.view = 'certificates';
   renderSummary(); renderBatchOrder(); renderChrome();
 }
 function createEntry(entry) {
@@ -199,25 +222,30 @@ function renderSummary() {
 }
 function renderChrome() {
   const entry = selected();
-  setHidden('files-panel', !ui.sideOpen || ui.view === 'batch');
+  setHidden('files-panel', !ui.sideOpen || ui.view !== 'file');
   setHidden('empty-view', ui.view !== 'file' || Boolean(entry));
   setHidden('file-view', ui.view !== 'file' || !entry);
   setHidden('batch', ui.view !== 'batch'); setHidden('analysis-log', !ui.logOpen);
+  setHidden('all-certificates', ui.view !== 'certificates');
   $('toggle-files').classList.toggle('active', ui.sideOpen && ui.view === 'file');
   $('toggle-files').setAttribute('aria-expanded', String(ui.sideOpen && ui.view === 'file'));
   $('toggle-log').classList.toggle('active', ui.logOpen);
   document.querySelector('[data-action="file-view"]').classList.toggle('active', ui.view === 'file');
   document.querySelector('[data-action="batch-view"]').classList.toggle('active', ui.view === 'batch');
+  document.querySelector('[data-action="certificates-view"]').classList.toggle('active', ui.view === 'certificates');
   for (const button of document.querySelectorAll('[data-tab]')) { const on = button.dataset.tab === ui.tab; button.setAttribute('aria-selected', String(on)); button.tabIndex = on ? 0 : -1; }
   for (const tab of TABS) setHidden(`${tab}-view`, ui.tab !== tab);
   stringsView.sync(ui.view === 'file' ? entry : null, ui.tab === 'strings');
   certificatesView.sync(ui.view === 'file' ? entry : null, ui.tab === 'certificates');
+  allCertificatesView.sync(ui.view === 'certificates');
   for (const button of document.querySelectorAll('[data-curve]')) button.classList.toggle('active', button.dataset.curve === ui.curve);
   for (const button of document.querySelectorAll('[data-mode]')) button.classList.toggle('active', button.dataset.mode === ui.mode);
   for (const button of document.querySelectorAll('[data-filter]')) button.classList.toggle('active', button.dataset.filter === ui.filter);
   $('classification-band').classList.toggle('compact', ui.tab !== 'classification');
   $('hex-columns').value = ui.columns; $('hex-group').value = ui.group; $('hex-encoding').value = ui.encoding; $('hex-offset').value = ui.offsetBase;
-  text('status-mode', ui.view === 'batch' ? 'BATCH' : ({ classification: 'CLASSIFY', certificates: 'CERTS' })[ui.tab] || ui.tab.toUpperCase());
+  const viewModes = { batch: 'BATCH', certificates: 'ALL CERTS' };
+  const tabModes = { classification: 'CLASSIFY', certificates: 'CERTS' };
+  text('status-mode', viewModes[ui.view] || tabModes[ui.tab] || ui.tab.toUpperCase());
   text('status-file', entry?.name || 'no file');
   text('status-classification', entry?.payload ? `${archLabel(entry.payload)} · ${entry.payload.primary.bitwidth}-bit ${fmtEndianShort(entry.payload.primary.endianness)} · ${fmtFormatName(entry.payload.format.format).toLowerCase()}` : '');
   persist();
@@ -849,6 +877,7 @@ worker.addEventListener('message', ({ data }) => {
     setStatus(entry, entry.payload ? 'done' : 'error');
     if (entry.payload) { tally(archTally, archLabel(entry.payload), 1); tally(formatTally, fmtFormatName(entry.payload.format.format).toLowerCase(), 1); }
     updateEntry(entry); renderSummary(); if (ui.sort !== 'queue') renderBatchOrder();
+    allCertificatesView.refresh(entry.id);
     pushLog(entry.payload ? 'done' : 'error', `${entry.name} · ${entry.payload ? `${archLabel(entry.payload)} · ${entry.payload.primary.bitwidth}-bit ${fmtEndianShort(entry.payload.primary.endianness)}` : entry.error}${entry.elapsed == null ? '' : ` · ${entry.elapsed.toFixed(1)} ms`}`);
     text('announcement', `${entry.name}: ${statusLabel(entry.status)}`);
     if (ui.selected === entry.id) { renderSelected(); renderChrome(); }
@@ -924,6 +953,7 @@ function removeFile(id) {
   if (entry.payload) { tally(archTally, archLabel(entry.payload), -1); tally(formatTally, fmtFormatName(entry.payload.format.format).toLowerCase(), -1); }
   entries.delete(id); entry.button.remove(); entry.tr.remove();
   stringsView.forget(id); certificatesView.forget(id);
+  certificateStore.forget(id);
   for (const [key, layer] of mapCache) if (layer.id === id) mapCache.delete(key);
   if (ui.selected === id) {
     cancelInteractive(); ui.selected = null;
@@ -936,6 +966,7 @@ function clearFiles() {
   const n = entries.size;
   worker.postMessage({ type: 'clear' }); cancelInteractive(); entries.clear(); mapCache.clear();
   stringsView.clear(); certificatesView.clear();
+  certificateStore.clear();
   for (const key of Object.keys(counts)) counts[key] = 0;
   archTally.clear(); formatTally.clear();
   $('file-list').replaceChildren(); $('batch-rows').replaceChildren();
@@ -980,6 +1011,7 @@ const actions = {
   browse: () => $('fileinput').click(),
   'file-view': () => { ui.view = 'file'; renderChrome(); },
   'batch-view': () => { ui.view = 'batch'; renderChrome(); },
+  'certificates-view': () => { ui.view = 'certificates'; renderChrome(); },
   'toggle-side': () => { ui.sideOpen = !(ui.sideOpen && ui.view === 'file'); ui.view = 'file'; renderChrome(); },
   'toggle-log': () => { ui.logOpen = !ui.logOpen; renderChrome(); },
   clear: clearFiles, remove: () => removeFile(ui.selected),

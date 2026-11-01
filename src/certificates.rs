@@ -105,6 +105,22 @@ pub struct Report {
     pub notes: Vec<String>,
 }
 
+/// Links of one certificate in a set gathered from several inputs; see
+/// [`link`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Link {
+    /// Position of the first certificate in the set with the same DER
+    /// encoding.
+    pub duplicate_of: Option<usize>,
+    /// Position of another certificate in the set whose encoded subject
+    /// equals this certificate's encoded issuer. A name match, not a verified
+    /// signature.
+    pub issuer_index: Option<usize>,
+    /// The encoded subject and issuer names are equal (RFC 5280,
+    /// section 3.2, "self-issued"). The signature is not checked.
+    pub self_issued: bool,
+}
+
 /// A certificate located by the scanners, before description and linking.
 #[derive(Debug)]
 struct Found {
@@ -188,6 +204,41 @@ pub fn scan(data: &[u8]) -> Report {
     let mut accumulator = Scan::new();
     accumulator.push_window(data, 0, data.len());
     accumulator.finish()
+}
+
+/// Duplicate and issuer links among DER certificates gathered from several
+/// inputs, such as the certificates of every file open in the workbench, in
+/// the order given.
+///
+/// The rules are those of a scan: equal encodings are duplicates of the
+/// first; an issuer is a first occurrence whose encoded subject equals the
+/// encoded issuer, preferring one whose subject key identifier equals the
+/// authority key identifier, otherwise the lowest position. An entry that is
+/// not exactly one certificate gets no issuer link.
+pub fn link(ders: Vec<Vec<u8>>) -> Vec<Link> {
+    let mut certificates: Vec<Certificate> = ders
+        .into_iter()
+        .enumerate()
+        .map(|(index, der)| {
+            let found = Found {
+                offset: 0,
+                stored_size: der.len() as u64,
+                encoding: Encoding::Der,
+                der,
+            };
+            certificate(index, found)
+        })
+        .collect();
+    link_duplicates(&mut certificates);
+    link_issuers(&mut certificates);
+    certificates
+        .iter()
+        .map(|c| Link {
+            duplicate_of: c.duplicate_of,
+            issuer_index: c.issuer_index,
+            self_issued: c.self_issued,
+        })
+        .collect()
 }
 
 /// Size of the DER certificate that starts at the beginning of `data`, under

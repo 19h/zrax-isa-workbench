@@ -1,9 +1,10 @@
 //! Certificate scanning in arbitrary bytes: DER and PEM discovery, decoded
 //! fields, duplicate and issuer links, window equivalence and hostile-input
-//! bounds. Fixtures are described in `tests/fixtures/certificates/README.md`.
+//! bounds, and links among certificates gathered from several inputs.
+//! Fixtures are described in `tests/fixtures/certificates/README.md`.
 
 use zrax::certificates::{
-    scan, to_pem, Encoding, Report, Scan, MAX_CERTIFICATES, WINDOW_OVERLAP,
+    link, scan, to_pem, Encoding, Link, Report, Scan, MAX_CERTIFICATES, WINDOW_OVERLAP,
 };
 
 const ROOT: &[u8] = include_bytes!("fixtures/certificates/root.der");
@@ -155,6 +156,104 @@ fn issuer_links_prefer_the_authority_key_identifier_and_skip_duplicates() {
     assert_eq!(certificates[0].duplicate_of, None);
     assert_eq!(certificates[2].issuer_index, Some(0));
     assert_eq!(certificates[3].issuer_index, Some(2));
+}
+
+/// The links of a scan's certificates, in the shape [`link`] returns.
+fn scan_links(report: &Report) -> Vec<Link> {
+    report
+        .certificates
+        .iter()
+        .map(|c| Link {
+            duplicate_of: c.duplicate_of,
+            issuer_index: c.issuer_index,
+            self_issued: c.self_issued,
+        })
+        .collect()
+}
+
+#[test]
+fn link_joins_certificates_from_separate_inputs() {
+    let links = link(vec![LEAF.to_vec(), INTERMEDIATE.to_vec(), ROOT.to_vec()]);
+    assert_eq!(
+        links,
+        vec![
+            Link {
+                duplicate_of: None,
+                issuer_index: Some(1),
+                self_issued: false,
+            },
+            Link {
+                duplicate_of: None,
+                issuer_index: Some(2),
+                self_issued: false,
+            },
+            Link {
+                duplicate_of: None,
+                issuer_index: None,
+                self_issued: true,
+            },
+        ]
+    );
+    assert_eq!(links, scan_links(&scan(CHAIN_PEM)));
+}
+
+#[test]
+fn link_matches_the_links_of_a_scan_over_the_same_certificates() {
+    let data = embed(
+        8000,
+        &[
+            (10, LEAF),
+            (1000, ROOT),
+            (2000, EXPIRED),
+            (3000, INTERMEDIATE),
+            (5000, ROOT),
+        ],
+    );
+    let report = scan(&data);
+    let ders = report.certificates.iter().map(|c| c.der.clone()).collect();
+    assert_eq!(link(ders), scan_links(&report));
+}
+
+#[test]
+fn link_marks_duplicates_and_never_chooses_them_as_issuers() {
+    let links = link(vec![ROOT.to_vec(), ROOT.to_vec(), INTERMEDIATE.to_vec()]);
+    assert_eq!(links[0].duplicate_of, None);
+    assert_eq!(links[1].duplicate_of, Some(0));
+    assert!(links[1].self_issued);
+    assert_eq!(links[2].issuer_index, Some(0));
+}
+
+#[test]
+fn link_gives_entries_that_are_not_certificates_no_links() {
+    let mut trailing = LEAF.to_vec();
+    trailing.push(0);
+    let inputs = vec![
+        Vec::new(),
+        noise(600, 3),
+        trailing,
+        LEAF[..LEAF.len() - 1].to_vec(),
+        INTERMEDIATE.to_vec(),
+    ];
+    let links = link(inputs);
+    assert_eq!(links.len(), 5);
+    assert!(links
+        .iter()
+        .all(|l| l.issuer_index.is_none() && !l.self_issued));
+    assert!(links.iter().all(|l| l.duplicate_of.is_none()));
+    assert!(link(Vec::new()).is_empty());
+}
+
+#[test]
+fn link_survives_byte_mutations_of_a_member() {
+    for at in 0..LEAF.len() {
+        for mutation in [0x00, 0xff, LEAF[at] ^ (1 << (at % 8))] {
+            let mut leaf = LEAF.to_vec();
+            leaf[at] = mutation;
+            let links = link(vec![leaf, INTERMEDIATE.to_vec(), ROOT.to_vec()]);
+            assert_eq!(links[1].issuer_index, Some(2), "at {at}");
+            assert!(links[0].issuer_index.map_or(true, |i| i == 1), "at {at}");
+        }
+    }
 }
 
 #[test]

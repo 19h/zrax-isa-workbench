@@ -3,7 +3,7 @@
 // analysis worker stays free for hex and map requests. Queries run here in
 // slices and yield between them, so a newer request supersedes an older one.
 import init, {
-  StringScan, CertificateScan, string_encoding_ids, string_tag_ids, certificate_window_overlap,
+  StringScan, CertificateScan, CertificateLinks, string_encoding_ids, string_tag_ids, certificate_window_overlap,
 } from '../pkg/zrax.js';
 import { SCAN_PROTOCOL } from './protocol.js';
 import { StringIndex, compileQuery, emptyCounts, exportParts, filterRange, sortView } from './strings-index.js';
@@ -200,6 +200,19 @@ async function scanCertificates(job) {
   }
 }
 
+/** Duplicate and issuer links among DER certificates gathered from several files. */
+function linkCertificates(job) {
+  const links = new CertificateLinks();
+  try {
+    for (const der of job.ders) links.push(der);
+    const result = JSON.parse(links.finish());
+    if (result.error) throw new Error(result.error);
+    send({ type: 'certificates-links', id: job.id, request: job.request, links: result });
+  } finally {
+    links.free();
+  }
+}
+
 const handlers = {
   'strings-scan': scanStrings,
   'strings-query': queryStrings,
@@ -207,6 +220,7 @@ const handlers = {
   'strings-locate': locateString,
   'strings-export': exportStrings,
   certificates: scanCertificates,
+  'certificates-link': linkCertificates,
 };
 
 async function handle(job) {

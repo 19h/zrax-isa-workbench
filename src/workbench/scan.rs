@@ -133,6 +133,37 @@ impl CertificateScan {
     }
 }
 
+/// Duplicate and issuer links among certificates gathered from several
+/// files, for the workbench's all-files certificate view.
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct CertificateLinks {
+    ders: Vec<Vec<u8>>,
+}
+
+#[wasm_bindgen]
+impl CertificateLinks {
+    /// An empty set.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> CertificateLinks {
+        Self::default()
+    }
+
+    /// Add one DER certificate to the set.
+    pub fn push(&mut self, der: &[u8]) {
+        self.ders.push(der.to_vec());
+    }
+
+    /// Link the set (see [`certificates::link`]); the links in push order
+    /// as JSON, `[{"duplicate_of", "issuer_index", "self_issued"}, ...]`.
+    /// The set is empty afterwards.
+    pub fn finish(&mut self) -> String {
+        let links = certificates::link(std::mem::take(&mut self.ders));
+        serde_json::to_string(&links)
+            .unwrap_or_else(|error| serde_json::json!({ "error": error.to_string() }).to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +195,25 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&scan.finish()).unwrap();
         assert_eq!(report["certificates"][0]["offset"], 100);
         assert_eq!(certificate_window_overlap(), 2 << 20);
+    }
+
+    #[test]
+    fn certificate_links_link_certificates_pushed_separately() {
+        let root = include_bytes!("../../tests/fixtures/certificates/root.der");
+        let leaf = include_bytes!("../../tests/fixtures/certificates/leaf.der");
+        let intermediate = include_bytes!("../../tests/fixtures/certificates/intermediate.der");
+        let mut links = CertificateLinks::new();
+        for der in [&leaf[..], &intermediate[..], &root[..]] {
+            links.push(der);
+        }
+        assert_eq!(
+            links.finish(),
+            concat!(
+                r#"[{"duplicate_of":null,"issuer_index":1,"self_issued":false},"#,
+                r#"{"duplicate_of":null,"issuer_index":2,"self_issued":false},"#,
+                r#"{"duplicate_of":null,"issuer_index":null,"self_issued":true}]"#,
+            )
+        );
+        assert_eq!(links.finish(), "[]");
     }
 }

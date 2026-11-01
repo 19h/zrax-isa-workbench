@@ -4,10 +4,11 @@ The reference workbench is implemented with semantic HTML, CSS, native ES
 modules, two dedicated workers, Rust/WASM, and Canvas 2D. The analysis worker
 (`web/analysis-worker.js`) classifies files and serves the map and hex views;
 the scan worker (`web/scan-worker.js`) streams files through the string and
-certificate scanners for the strings and certificates tabs, so long scans and
-searches never delay hex or map requests. No frontend framework,
-bundler, external runtime script, or remote font service is required. Files
-remain in the browser; importing several files appends independent queue entries.
+certificate scanners for the strings and certificates tabs and the all-files
+certificates view, so long scans and searches never delay hex or map requests.
+No frontend framework, bundler, external runtime script, or remote font service
+is required. Files remain in the browser; importing several files appends
+independent queue entries.
 
 ```sh
 ./build-web.sh
@@ -53,6 +54,7 @@ Controlled layout inspection covered viewport widths 390, 800, 1000, 1440 and
 | Hex | Virtual rows; 8/16/24/32 columns; 1/2/4/8-byte groups; hex/decimal offsets; ASCII, Latin-1, CP437, EBCDIC CP037 and UTF-16; absolute/relative/percentage goto; endian override; exact integer and floating-point decoding; byte selection, entropy, copy and download. |
 | JSON | Full classification JSON, copy and download. |
 | Batch | Status filters, insertion/name/size/confidence/entropy sorting, architecture/format tallies, progress, CSV and JSON exports. |
+| All certificates | Rail button above **Add files**: one issuer-link tree of the distinct certificates in every open file, each copy's file and offset, and download all as a PEM bundle, PEM or DER ZIP archive, or JSON. |
 | Chrome | Responsive sidebar and inspectors, log, status bar, accessible tabs, context menu, keyboard navigation and persistent UI preferences. |
 
 | Shortcut / gesture | Action |
