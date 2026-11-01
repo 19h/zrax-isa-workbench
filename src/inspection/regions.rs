@@ -12,6 +12,8 @@
 //! | IMG4, IM4M | The `IM4M` manifest and its signature (`signature`) and certificate chain (`certificates`) |
 //! | CAB | The Authenticode signature after the cabinet |
 
+use std::collections::HashSet;
+
 use serde::Serialize;
 
 use super::container;
@@ -21,7 +23,7 @@ use crate::formats::container::{Kind, MAX_COMPONENTS};
 use crate::formats::{self, cab, elf, macho, pe, DetectedFormat, NamedRange};
 
 /// What a region holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RegionKind {
     /// A container child or a fat Mach-O slice.
@@ -37,7 +39,7 @@ pub enum RegionKind {
 }
 
 /// One labelled stored range.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Region {
     /// Name in the format's own terms; untrusted text.
     pub label: String,
@@ -203,18 +205,18 @@ pub fn regions(data: &[u8]) -> Result<Vec<Region>> {
         _ => {}
     }
     push_container(data, &mut regions)?;
-    regions.sort_by(|a, b| {
-        a.offset
-            .cmp(&b.offset)
-            .then(b.size.cmp(&a.size))
-            .then_with(|| a.label.cmp(&b.label))
-    });
-    regions.dedup();
+    // A stable sort keeps the push order for equal ranges, so a structure
+    // stays ahead of the entries it holds (a PE attribute certificate table
+    // that one WIN_CERTIFICATE fills exactly).
+    regions.sort_by(|a, b| a.offset.cmp(&b.offset).then(b.size.cmp(&a.size)));
+    let mut seen = HashSet::new();
+    regions.retain(|region| seen.insert(region.clone()));
     regions.truncate(MAX_COMPONENTS);
     Ok(regions)
 }
 
-/// The regions that contain `size` bytes at `offset`, outermost first.
+/// The regions that contain `size` bytes at `offset`, outermost first;
+/// equal ranges keep their order in `regions`.
 pub fn enclosing(regions: &[Region], offset: u64, size: u64) -> Vec<&Region> {
     let mut found: Vec<&Region> = regions
         .iter()

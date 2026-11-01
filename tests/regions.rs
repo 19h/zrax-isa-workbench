@@ -110,7 +110,11 @@ fn pe_with_certificate() -> Vec<u8> {
     }
     put(&mut data, 0x600, &(entry_len as u32).to_le_bytes());
     put(&mut data, 0x604, &WIN_CERT_REVISION_2_0.to_le_bytes());
-    put(&mut data, 0x606, &WIN_CERT_TYPE_PKCS_SIGNED_DATA.to_le_bytes());
+    put(
+        &mut data,
+        0x606,
+        &WIN_CERT_TYPE_PKCS_SIGNED_DATA.to_le_bytes(),
+    );
     put(&mut data, 0x608, LEAF);
     data
 }
@@ -167,7 +171,10 @@ fn elf_sections_are_named_from_the_string_table_and_nobits_is_skipped() {
     let found = regions(&data).unwrap();
     assert_eq!(labels(&found), vec![".text", ".shstrtab"]);
     let text = find(&found, ".text");
-    assert_eq!((text.kind, text.offset, text.size), (RegionKind::Section, 0x100, 16));
+    assert_eq!(
+        (text.kind, text.offset, text.size),
+        (RegionKind::Section, 0x100, 16)
+    );
 }
 
 #[test]
@@ -206,7 +213,32 @@ fn pe_sections_and_attribute_certificates_enclose_the_leaf() {
         .collect();
     assert_eq!(
         path,
-        vec!["attribute certificate table", "WIN_CERTIFICATE (PKCS #7 SignedData)"]
+        vec![
+            "attribute certificate table",
+            "WIN_CERTIFICATE (PKCS #7 SignedData)"
+        ]
+    );
+}
+
+#[test]
+fn a_table_filled_by_one_entry_still_encloses_it() {
+    let mut data = pe_with_certificate();
+    // Shrink the table to the entry's exact length, so both ranges are equal.
+    let entry_len = (8 + LEAF.len()) as u32;
+    let security = 0x44 + 20 + 112 + 4 * 8;
+    data[security + 4..security + 8].copy_from_slice(&entry_len.to_le_bytes());
+    let found = regions(&data).unwrap();
+    let leaf = &certificates::scan(&data).certificates[0];
+    let path: Vec<&str> = enclosing(&found, leaf.offset, leaf.stored_size)
+        .iter()
+        .map(|r| r.label.as_str())
+        .collect();
+    assert_eq!(
+        path,
+        vec![
+            "attribute certificate table",
+            "WIN_CERTIFICATE (PKCS #7 SignedData)"
+        ]
     );
 }
 
@@ -214,9 +246,13 @@ fn pe_sections_and_attribute_certificates_enclose_the_leaf() {
 fn pe_certificate_walk_stops_at_a_short_or_overlong_entry() {
     let mut data = pe_with_certificate();
     data[0x600..0x604].copy_from_slice(&4u32.to_le_bytes());
-    assert!(!labels(&regions(&data).unwrap()).iter().any(|l| l.starts_with("WIN_CERTIFICATE")));
+    assert!(!labels(&regions(&data).unwrap())
+        .iter()
+        .any(|l| l.starts_with("WIN_CERTIFICATE")));
     data[0x600..0x604].copy_from_slice(&u32::MAX.to_le_bytes());
-    assert!(!labels(&regions(&data).unwrap()).iter().any(|l| l.starts_with("WIN_CERTIFICATE")));
+    assert!(!labels(&regions(&data).unwrap())
+        .iter()
+        .any(|l| l.starts_with("WIN_CERTIFICATE")));
 }
 
 #[test]
@@ -269,7 +305,10 @@ fn fat_slices_place_their_segments_at_slice_offsets() {
         put(&mut data, offset, image);
     }
     let found = regions(&data).unwrap();
-    let slices: Vec<&Region> = found.iter().filter(|r| r.kind == RegionKind::Member).collect();
+    let slices: Vec<&Region> = found
+        .iter()
+        .filter(|r| r.kind == RegionKind::Member)
+        .collect();
     assert_eq!(slices.len(), 2);
     assert_eq!(slices[1].offset, second as u64);
     let thin = regions(&x86_64).unwrap();
@@ -292,7 +331,10 @@ fn im4m_chain_encloses_the_certificates_it_holds() {
         labels(&found),
         vec!["IM4M manifest", "IM4M signature", "IM4M certificate chain"]
     );
-    assert_eq!(find(&found, "IM4M certificate chain").kind, RegionKind::Certificates);
+    assert_eq!(
+        find(&found, "IM4M certificate chain").kind,
+        RegionKind::Certificates
+    );
     let report = certificates::scan(&data);
     assert_eq!(report.certificates.len(), 2);
     for certificate in &report.certificates {
