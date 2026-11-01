@@ -124,18 +124,18 @@ impl Options {
     ///
     /// # Errors
     ///
-    /// [`ClassifierError::InspectionError`] when `min_chars` is outside
+    /// [`ClassifierError::StringsError`] when `min_chars` is outside
     /// 3..=255 or no encoding is selected.
     pub fn new(min_chars: usize, encodings: Encodings) -> Result<Self> {
         if !(MIN_MIN_CHARS..=MAX_MIN_CHARS).contains(&min_chars) {
-            return Err(ClassifierError::InspectionError {
+            return Err(ClassifierError::StringsError {
                 message: format!(
                     "Invalid minimum string length {min_chars}; expected {MIN_MIN_CHARS} to {MAX_MIN_CHARS}"
                 ),
             });
         }
         if encodings.is_empty() {
-            return Err(ClassifierError::InspectionError {
+            return Err(ClassifierError::StringsError {
                 message: "Missing string encoding".to_string(),
             });
         }

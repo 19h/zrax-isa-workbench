@@ -27,6 +27,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Invalid string extraction options.
+    #[error("String extraction error: {message}")]
+    StringsError {
+        /// What is wrong with the options.
+        message: String,
+    },
+
     /// Error decoding an X.509 certificate or a certificate file.
     #[error("X.509 parse error: {message}")]
     X509ParseError {
