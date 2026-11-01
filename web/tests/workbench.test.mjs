@@ -96,6 +96,8 @@ test('failed architecture classification retains entropy and hex inspection', as
   await page.locator('#fileinput').setInputFiles({ name: 'zeros.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(4096) }); await finished(page, 1);
   assert.equal(await page.locator('#file-status').textContent(), 'failed');
   await page.getByRole('tab', { name: 'entropy', exact: true }).click(); await mapReady(page);
+  // The probe statistics arrive after the map; wait for them to replace the placeholder.
+  await page.waitForFunction(() => document.getElementById('entropy-value').textContent !== '—');
   assert.equal(await page.locator('#entropy-value').textContent(), '0.0000');
   await page.getByRole('tab', { name: 'hex', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[data-value-type="u8"]'));
