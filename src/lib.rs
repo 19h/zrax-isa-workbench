@@ -41,6 +41,8 @@
 #![allow(clippy::similar_names)]
 #![allow(clippy::too_many_lines)]
 
+/// X.509 certificates found anywhere in a byte buffer.
+pub mod certificates;
 pub mod error;
 pub mod extensions;
 pub mod formats;

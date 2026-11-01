@@ -64,6 +64,12 @@ ctr = "0.9"
 # Hex display
 hex = "0.4"
 
+# X.509 certificate scanning, ported from cert-dump (pure Rust, native and
+# WASM). Never call `Validity::is_valid`: it reads the clock, which panics on
+# wasm32-unknown-unknown and would make results time-dependent.
+x509-parser = "0.16"
+base64 = "0.22"
+
 # WASM support
 wasm-bindgen = { version = "0.2", optional = true }
 wide = { version = "0.7", optional = true }

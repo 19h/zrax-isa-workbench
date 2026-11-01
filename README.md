@@ -238,6 +238,7 @@ configuration.
 | `detect_multi_isa` | Families occupying sufficiently supported code windows |
 | `supported_isas` | ISA identifiers present in the embedded raw-code model |
 | `quick_check` | Budgeted raw-code family comparison |
+| `certificates::scan`, `certificates::Scan` | DER and PEM X.509 certificates in any bytes, with decoded fields and name-based issuer links; see [certificate scanning](docs/certificates.md) |
 
 The payload contains `format`, `primary`, `candidates`, `slices`, `extensions`,
 `metadata` and `notes`. Fat Mach-O binaries expose their contained architectures;
@@ -626,6 +627,11 @@ Vendored Apeiron code retains its [MIT license](src/workbench/apeiron/LICENSE).
 Its [snapshot record](src/workbench/apeiron/README.md) identifies the source
 commit, original and vendored SHA-256 hashes, and browser-specific adaptations.
 The entropy snapshot includes the source working tree's existing changes.
+
+Certificate scanning is ported from the MIT-licensed
+[cert-dump](https://github.com/19h/cert-dump) 3.0.1 (commit `0c4baea`, same
+author) and uses `x509-parser` (MIT or Apache-2.0);
+[certificate scanning](docs/certificates.md) lists the differences.
 
 DM Mono and Martian Mono are self-hosted with their SIL Open Font License
 notices; [font provenance](web/fonts/README.md) records their source. Reference

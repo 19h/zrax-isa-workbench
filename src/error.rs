@@ -27,6 +27,13 @@ pub enum ClassifierError {
         message: String,
     },
 
+    /// Error decoding an X.509 certificate or a certificate file.
+    #[error("X.509 parse error: {message}")]
+    X509ParseError {
+        /// What is wrong with the certificate.
+        message: String,
+    },
+
     /// Unsupported or unknown file format.
     #[error("Unknown file format: magic bytes {magic:02X?}")]
     UnknownFormat { magic: Vec<u8> },
