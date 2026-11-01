@@ -7,6 +7,8 @@ mod apeiron {
     pub mod hilbert;
 }
 
+mod scan;
+
 use apeiron::{byte::ByteAnalysis, entropy, hilbert};
 use wasm_bindgen::prelude::*;
 
