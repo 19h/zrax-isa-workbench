@@ -70,6 +70,14 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// List X.509 certificates found in files and optionally write them out.
+    ///
+    /// Finds DER structures and PEM blocks anywhere in each input.
+    /// Signatures and chains are not verified; issuer links compare encoded
+    /// names only.
+    Certs(CertsArgs),
+    /// Print printable strings in ASCII, UTF-8 and UTF-16.
+    Strings(StringsArgs),
     /// Batch classify and store files for S3 ingestion.
     ///
     /// Recursively walks an input directory, classifies each file by ISA and
@@ -77,6 +85,125 @@ enum Commands {
     /// the S3 key layout. Upload with `rclone sync`.
     #[cfg(feature = "batch")]
     Batch(BatchArgs),
+}
+
+/// Output formats of the `certs` subcommand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CertsFormat {
+    /// Human-readable listing
+    Human,
+    /// One JSON object per file
+    Json,
+}
+
+/// Arguments for the `certs` subcommand.
+#[derive(Parser, Debug)]
+struct CertsArgs {
+    /// Files to scan
+    #[arg(required = true)]
+    files: Vec<PathBuf>,
+
+    /// Output format
+    #[arg(short, long, default_value = "human")]
+    format: CertsFormat,
+
+    /// Write each certificate to DIR as cert_<index>.der and .pem; with
+    /// several inputs, into DIR/input_<n>/
+    #[arg(long, value_name = "DIR")]
+    dump: Option<PathBuf>,
+
+    /// With --dump, write only DER files
+    #[arg(long, requires = "dump", conflicts_with = "pem")]
+    der: bool,
+
+    /// With --dump, write only PEM files
+    #[arg(long, requires = "dump")]
+    pem: bool,
+
+    /// With --dump, write into a directory that is not empty
+    #[arg(long, requires = "dump")]
+    force: bool,
+
+    /// Show issuer links as a tree (human output only)
+    #[arg(long)]
+    tree: bool,
+}
+
+/// Output formats of the `strings` subcommand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum StringsFormat {
+    /// One string per line, as GNU strings prints them
+    Text,
+    /// offset,size,chars,encoding,tags,clipped,text
+    Csv,
+    /// One JSON object per file
+    Json,
+}
+
+/// Offset radix of the `strings` text output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Radix {
+    /// Octal
+    #[value(name = "o")]
+    Octal,
+    /// Decimal
+    #[value(name = "d")]
+    Decimal,
+    /// Hexadecimal
+    #[value(name = "x")]
+    Hex,
+}
+
+/// Arguments for the `strings` subcommand.
+#[derive(Parser, Debug)]
+struct StringsArgs {
+    /// Files to scan
+    #[arg(required = true)]
+    files: Vec<PathBuf>,
+
+    /// Minimum string length in characters (3 to 255)
+    #[arg(short = 'n', long = "min-len", default_value_t = zrax::strings::DEFAULT_MIN_CHARS)]
+    min_len: usize,
+
+    /// Encodings to report, comma-separated: ascii, utf8, utf16le, utf16be
+    #[arg(
+        short,
+        long,
+        value_delimiter = ',',
+        default_value = "ascii,utf8,utf16le",
+        value_parser = parse_encoding
+    )]
+    encodings: Vec<zrax::strings::Encoding>,
+
+    /// Only strings with this tag (repeatable): url, email, ipv4, path, uuid,
+    /// format, digest, mangled, pem
+    #[arg(long = "tag", value_parser = parse_tag)]
+    tags: Vec<zrax::strings::Tags>,
+
+    /// Print each offset in this radix before the text
+    #[arg(short = 't', long)]
+    radix: Option<Radix>,
+
+    /// Output format
+    #[arg(short, long, default_value = "text")]
+    format: StringsFormat,
+}
+
+fn parse_encoding(id: &str) -> Result<zrax::strings::Encoding, String> {
+    zrax::strings::Encoding::from_id(id).ok_or_else(|| {
+        let ids: Vec<&str> = zrax::strings::ENCODINGS.iter().map(|e| e.id()).collect();
+        format!(
+            "unknown encoding {id:?}; expected one of {}",
+            ids.join(", ")
+        )
+    })
+}
+
+fn parse_tag(id: &str) -> Result<zrax::strings::Tags, String> {
+    zrax::strings::Tags::from_id(id).ok_or_else(|| {
+        let ids: Vec<&str> = zrax::strings::TAG_NAMES.iter().map(|(_, id)| *id).collect();
+        format!("unknown tag {id:?}; expected one of {}", ids.join(", "))
+    })
 }
 
 /// Arguments for the `batch` subcommand.
@@ -192,18 +319,12 @@ fn main() -> ExitCode {
 
     // Handle subcommands
     if let Some(command) = &cli.command {
-        #[cfg(feature = "batch")]
-        {
-            return match command {
-                Commands::Batch(args) => run_batch(args),
-            };
-        }
-        #[cfg(not(feature = "batch"))]
-        {
-            let _ = command;
-            eprintln!("Error: subcommand not available. Rebuild with --features batch.");
-            return ExitCode::FAILURE;
-        }
+        return match command {
+            Commands::Certs(args) => run_certs(args),
+            Commands::Strings(args) => run_strings(args),
+            #[cfg(feature = "batch")]
+            Commands::Batch(args) => run_batch(args),
+        };
     }
 
     // Default mode: classify individual files
@@ -454,6 +575,220 @@ fn ctrlc_handler(shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>) {
 }
 
 // ---------------------------------------------------------------------------
+// Certificate and string subcommands
+// ---------------------------------------------------------------------------
+
+/// One input's certificates with their enclosing regions, for JSON output.
+#[derive(serde::Serialize)]
+struct CertificateFile<'a> {
+    file: String,
+    certificates: Vec<LocatedCertificate<'a>>,
+    truncated: bool,
+    notes: &'a [String],
+}
+
+/// A certificate and the labels of the regions that contain it, outermost
+/// first.
+#[derive(serde::Serialize)]
+struct LocatedCertificate<'a> {
+    #[serde(flatten)]
+    certificate: &'a zrax::certificates::Certificate,
+    within: Vec<&'a str>,
+}
+
+fn is_nonempty_dir(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some())
+}
+
+/// Write each certificate as `cert_<index>.der` and/or `.pem` in `dir` and
+/// return the paths written.
+fn dump_certificates(
+    dir: &std::path::Path,
+    report: &zrax::certificates::Report,
+    args: &CertsArgs,
+) -> std::io::Result<Vec<PathBuf>> {
+    std::fs::create_dir_all(dir)?;
+    let write_der = args.der || !args.pem;
+    let write_pem = args.pem || !args.der;
+    let mut written = Vec::new();
+    for certificate in &report.certificates {
+        if write_der {
+            let path = dir.join(format!("cert_{}.der", certificate.index));
+            std::fs::write(&path, &certificate.der)?;
+            written.push(path);
+        }
+        if write_pem {
+            let path = dir.join(format!("cert_{}.pem", certificate.index));
+            std::fs::write(&path, &certificate.pem)?;
+            written.push(path);
+        }
+    }
+    Ok(written)
+}
+
+fn certs_file(
+    path: &std::path::Path,
+    input: usize,
+    args: &CertsArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read(path)?;
+    let report = zrax::certificates::scan(&data);
+    // Regions only label certificates; a malformed container still lists them.
+    let regions = zrax::inspection::regions(&data).unwrap_or_default();
+    let written = match &args.dump {
+        Some(dir) if args.files.len() > 1 => {
+            dump_certificates(&dir.join(format!("input_{input}")), &report, args)?
+        }
+        Some(dir) => dump_certificates(dir, &report, args)?,
+        None => Vec::new(),
+    };
+    match args.format {
+        CertsFormat::Json => {
+            let certificates = report
+                .certificates
+                .iter()
+                .map(|certificate| LocatedCertificate {
+                    certificate,
+                    within: zrax::inspection::enclosing(
+                        &regions,
+                        certificate.offset,
+                        certificate.stored_size,
+                    )
+                    .iter()
+                    .map(|region| region.label.as_str())
+                    .collect(),
+                })
+                .collect();
+            let output = CertificateFile {
+                file: path.display().to_string(),
+                certificates,
+                truncated: report.truncated,
+                notes: &report.notes,
+            };
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        CertsFormat::Human if args.tree => {
+            print!("{}", zrax::formatter::certificates_tree(path, &report));
+        }
+        CertsFormat::Human => {
+            print!(
+                "{}",
+                zrax::formatter::certificates_human(path, &report, &regions)
+            );
+            for written in &written {
+                println!("  Wrote: {}", written.display());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_certs(args: &CertsArgs) -> ExitCode {
+    if args.tree && args.format != CertsFormat::Human {
+        eprintln!("Error: --tree requires --format human");
+        return ExitCode::FAILURE;
+    }
+    if let Some(dir) = &args.dump {
+        if !args.force && is_nonempty_dir(dir) {
+            eprintln!(
+                "Error: {} is not empty; use --force to write into it",
+                dir.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    }
+    let mut success = true;
+    for (index, path) in args.files.iter().enumerate() {
+        if let Err(e) = certs_file(path, index + 1, args) {
+            eprintln!("Error scanning {}: {e}", path.display());
+            success = false;
+        }
+    }
+    if success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// One input's strings, for JSON output.
+#[derive(serde::Serialize)]
+struct StringsFile<'a> {
+    file: String,
+    strings: &'a [zrax::strings::FoundString],
+}
+
+fn strings_file(
+    path: &std::path::Path,
+    options: &zrax::strings::Options,
+    args: &StringsArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read(path)?;
+    let mut strings = zrax::strings::extract(&data, options, usize::MAX).strings;
+    if !args.tags.is_empty() {
+        let wanted = args
+            .tags
+            .iter()
+            .fold(zrax::strings::Tags::empty(), |all, tag| all | *tag);
+        strings.retain(|found| found.tags.intersects(wanted));
+    }
+    match args.format {
+        StringsFormat::Text => {
+            let radix = args.radix.map(|radix| match radix {
+                Radix::Octal => zrax::formatter::OffsetRadix::Octal,
+                Radix::Decimal => zrax::formatter::OffsetRadix::Decimal,
+                Radix::Hex => zrax::formatter::OffsetRadix::Hex,
+            });
+            let text = zrax::formatter::strings_text(&strings, radix);
+            if args.files.len() > 1 {
+                for line in text.lines() {
+                    println!("{}: {line}", path.display());
+                }
+            } else {
+                print!("{text}");
+            }
+        }
+        StringsFormat::Csv => print!("{}", zrax::formatter::strings_csv(&strings)),
+        StringsFormat::Json => {
+            let output = StringsFile {
+                file: path.display().to_string(),
+                strings: &strings,
+            };
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+    }
+    Ok(())
+}
+
+fn run_strings(args: &StringsArgs) -> ExitCode {
+    let encodings = args
+        .encodings
+        .iter()
+        .fold(zrax::strings::Encodings::empty(), |all, encoding| {
+            all | encoding.flag()
+        });
+    let options = match zrax::strings::Options::new(args.min_len, encodings) {
+        Ok(options) => options,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut success = true;
+    for path in &args.files {
+        if let Err(e) = strings_file(path, &options, args) {
+            eprintln!("Error scanning {}: {e}", path.display());
+            success = false;
+        }
+    }
+    if success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Default classify mode (unchanged from original)
 // ---------------------------------------------------------------------------
 
@@ -642,6 +977,31 @@ mod tests {
         let cli = Cli::try_parse_from(["zrax", "--multi-isa", "test.bin"]).unwrap();
         assert!(cli.multi_isa);
         assert_eq!(cli.window_size, 1024);
+    }
+
+    #[test]
+    fn certs_and_strings_subcommands_parse_their_options() {
+        let cli =
+            Cli::try_parse_from(["zrax", "certs", "--dump", "out", "--der", "a.bin"]).unwrap();
+        let Some(Commands::Certs(args)) = cli.command else {
+            panic!("certs subcommand expected");
+        };
+        assert!(args.der && !args.pem);
+        assert_eq!(args.files, vec![PathBuf::from("a.bin")]);
+        assert!(Cli::try_parse_from(["zrax", "certs", "--der", "a.bin"]).is_err());
+
+        let cli = Cli::try_parse_from([
+            "zrax", "strings", "-n", "6", "-e", "utf16be", "-t", "x", "a",
+        ])
+        .unwrap();
+        let Some(Commands::Strings(args)) = cli.command else {
+            panic!("strings subcommand expected");
+        };
+        assert_eq!(args.min_len, 6);
+        assert_eq!(args.encodings, vec![zrax::strings::Encoding::Utf16be]);
+        assert_eq!(args.radix, Some(Radix::Hex));
+        assert!(Cli::try_parse_from(["zrax", "strings", "-e", "ebcdic", "a"]).is_err());
+        assert!(Cli::try_parse_from(["zrax", "strings", "--tag", "nope", "a"]).is_err());
     }
 
     #[test]

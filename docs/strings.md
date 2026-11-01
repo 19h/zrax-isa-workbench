@@ -31,6 +31,10 @@ characters (Unicode scalars).
   and both parities are scanned. A UTF-16LE run preceded by `0x00` also
   reads as a UTF-16BE run one byte earlier. Both are reported when both
   encodings are enabled, which is why UTF-16BE is off by default.
+- A UTF-16 run can absorb a preceding character: an ASCII byte followed by
+  `0x00` at the same parity is a valid UTF-16LE unit, so a C string's last
+  character can prefix a wide string that follows it. GNU `strings -el`
+  behaves the same way.
 - Text keeps the first 4096 characters (`MAX_TEXT_CHARS`); `clipped` marks a
   longer run, whose `size` and `chars` still cover the whole run.
 
@@ -68,6 +72,13 @@ wait in a buffer until the watermark passes them; a consumer bounds the
 total by count. `extract(data, options, limit)` keeps the first `limit`
 strings and sets `truncated` when there were more. Time is linear in the
 input; each string is tagged once, linearly in its stored text.
+
+## Command line
+
+`zrax strings FILE...` prints one string per line (`-t o|d|x` adds the
+offset), or CSV/JSON with `--format`. `-n` sets the minimum length,
+`-e` the encodings and `--tag` keeps only tagged strings. The CLI has no
+string limit; it holds the input in memory.
 
 ## Assumption register
 

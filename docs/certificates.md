@@ -90,6 +90,13 @@ A file that holds only certificates is classified as format `x509`
 - PEM blocks become opaque members holding their DER bytes, transform
   `base64`, so the subfiles panel can open each certificate.
 
+## Command line
+
+`zrax certs FILE...` prints each certificate with its location, names,
+validity, key, signature algorithm, fingerprint and links. `--format json`
+adds `within`, the labels of the enclosing regions. `--dump DIR` writes
+`cert_<index>.der` and `.pem`; `--tree` prints the issuer links.
+
 ## Bounds
 
 | Bound | Value |

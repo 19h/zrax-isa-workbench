@@ -165,6 +165,10 @@ cargo build --release --locked
 ./target/release/zrax --format short executable.elf
 ./target/release/zrax --mode thorough --candidates firmware.bin
 ./target/release/zrax --multi-isa --window-size 1024 firmware.bin
+./target/release/zrax certs firmware.bin                # certificates and where they lie
+./target/release/zrax certs --tree --dump certs/ app.exe
+./target/release/zrax strings -n 6 -t x -e ascii,utf16le firmware.bin
+./target/release/zrax strings --tag url --format csv firmware.bin
 
 # Install the executable into Cargo's bin directory:
 cargo install --path . --locked
@@ -201,6 +205,20 @@ also scans the whole file, regardless of the normal single-ISA budget.
 
 These are code-model budgets, not file-read limits: the CLI and file-oriented
 Rust helpers load their input bytes into memory.
+
+`zrax certs` lists the DER and PEM certificates in each input with the regions
+that contain them; `--format json` writes one object per file with a `within`
+list per certificate. `--dump DIR` writes `cert_<index>.der` and `.pem`
+(`--der` or `--pem` for one of them), into `DIR/input_<n>/` when several
+inputs are given, and refuses a non-empty directory unless `--force` is set.
+`--tree` prints the issuer links. Signatures and chains are not verified.
+
+`zrax strings` prints strings like GNU `strings`: `-n/--min-len` (3 to 255,
+default 4), `-e/--encodings` (`ascii`, `utf8`, `utf16le`, `utf16be`; default
+the first three), repeatable `--tag`, `-t/--radix o|d|x` for offsets, and
+`--format text|csv|json`. With several inputs, text lines start with the file
+name. A file literally named `certs` or `strings` needs a path such as
+`./certs`, because the name selects the subcommand.
 
 ## Rust library
 

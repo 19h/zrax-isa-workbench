@@ -9,6 +9,13 @@ use crate::types::{
 };
 use std::path::Path;
 
+mod inspection;
+
+pub use inspection::{
+    certificate_location, certificates_human, certificates_tree, strings_csv, strings_text,
+    OffsetRadix,
+};
+
 /// Trait for formatting detection payloads.
 ///
 /// Implementors provide methods for rendering each component of a detection
