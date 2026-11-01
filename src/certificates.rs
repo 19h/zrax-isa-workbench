@@ -190,6 +190,25 @@ pub fn scan(data: &[u8]) -> Report {
     accumulator.finish()
 }
 
+/// Size of the DER certificate that starts at the beginning of `data`, under
+/// the scanner's acceptance rules, or `None`.
+pub fn der_certificate_at_start(data: &[u8]) -> Option<usize> {
+    scan::der_candidate(data, 0).map(<[u8]>::len)
+}
+
+/// Decode the fields of one DER certificate, which must be exactly one
+/// `Certificate`. Nothing is verified.
+///
+/// # Errors
+///
+/// [`ClassifierError::X509ParseError`] when `der` is not a certificate or
+/// has trailing bytes.
+///
+/// [`ClassifierError::X509ParseError`]: crate::ClassifierError::X509ParseError
+pub fn describe(der: &[u8]) -> crate::Result<Summary> {
+    describe::describe(der).map(|(summary, _)| summary)
+}
+
 /// The DER encoding as a PEM block: RFC 7468 labels, 64-character base64
 /// lines and a final line break.
 pub fn to_pem(der: &[u8]) -> String {

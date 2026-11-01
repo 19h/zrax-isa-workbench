@@ -49,7 +49,7 @@ fn der_lengths(data: &[u8], at: usize) -> Option<(usize, usize)> {
 /// `SEQUENCE` whose first element is the `TBSCertificate` `SEQUENCE`,
 /// starting with a version or a serial number. Only then does the full
 /// parser run, and it must consume the structure exactly.
-fn der_candidate(window: &[u8], at: usize) -> Option<&[u8]> {
+pub(super) fn der_candidate(window: &[u8], at: usize) -> Option<&[u8]> {
     let (header, content) = der_lengths(window, at)?;
     let size = header.checked_add(content)?;
     if size > MAX_CERTIFICATE_SIZE {

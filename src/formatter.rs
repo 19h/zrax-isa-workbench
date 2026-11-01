@@ -850,6 +850,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Ntfs => "NTFS volume",
         FileFormat::Wim => "WIM image",
         FileFormat::Udf => "UDF volume",
+        FileFormat::X509 => "X.509 Certificate",
     }
 }
 

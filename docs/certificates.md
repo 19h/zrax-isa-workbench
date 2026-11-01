@@ -67,6 +67,29 @@ is shown in dotted form.
   depend only on the bytes. (`x509-parser`'s `Validity::is_valid` would also
   panic on `wasm32-unknown-unknown`.)
 
+## Certificate files
+
+A file that holds only certificates is classified as format `x509`
+("X.509 Certificate"), an opaque container with an unknown ISA.
+
+| Layout | Detection | Accepted when |
+| --- | --- | --- |
+| DER | Weak, after the other magic-less checks and before `ti::detect_weak` | The scanner's DER rules accept a certificate at offset 0 and only `0x00`/`0xFF` bytes follow |
+| PEM | Strong, before the text hex formats | The text, after an optional UTF-8 BOM and whitespace, opens with `-----BEGIN CERTIFICATE-----`; then every non-whitespace byte must belong to a `CERTIFICATE` block whose contents parse |
+
+- A damaged PEM file is a format error (`X.509 parse error: ...`), not raw
+  text. Other PEM labels, explanatory text and `openssl x509 -text`
+  output are rejected.
+- TI X.509 boot images keep their TI format: `ti::detect_strong` runs
+  first and requires TI's enterprise extensions and an image after the
+  certificate.
+- Metadata: `x509_certificate_count`; for one certificate `x509_subject`,
+  `x509_issuer`, `x509_not_before`, `x509_not_after`, `x509_public_key`,
+  `x509_signature_algorithm` and `x509_sha256`; for bundles
+  `x509_certificate_<n>` lines with subject, issuer and SHA-256.
+- PEM blocks become opaque members holding their DER bytes, transform
+  `base64`, so the subfiles panel can open each certificate.
+
 ## Bounds
 
 | Bound | Value |

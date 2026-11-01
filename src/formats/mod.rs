@@ -124,6 +124,7 @@ pub mod vdisk;
 pub mod wasm;
 pub mod wim;
 pub mod wince;
+pub mod x509;
 pub mod xcoff;
 pub mod zxtape;
 
@@ -1189,6 +1190,14 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         return DetectedFormat::Ecoff { variant };
     }
 
+    // PEM certificate files open with a 27-byte encapsulation boundary, so
+    // a damaged one is a format error rather than text.
+    if let Some(layout) = x509::detect_strong(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::X509(layout),
+        };
+    }
+
     // Text-based hex formats (Intel HEX, S-record, TI-TXT)
     if let Some(variant) = hex::detect(data) {
         return DetectedFormat::Hex { variant };
@@ -1505,6 +1514,17 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if uarp::detect(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Uarp,
+        };
+    }
+
+    // A DER certificate file has no magic: the whole input must be one
+    // certificate that x509-parser consumes exactly, plus erased-flash
+    // padding. TI X.509 boot images are claimed by `ti::detect_strong`
+    // first: they need TI's enterprise extensions and carry an image after
+    // the certificate.
+    if let Some(layout) = x509::detect_weak(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::X509(layout),
         };
     }
 

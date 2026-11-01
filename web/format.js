@@ -140,6 +140,7 @@ const FORMAT_NAMES = {
   ntfs: 'NTFS volume',
   wim: 'WIM image',
   udf: 'UDF volume',
+  x509: 'X.509 Certificate',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

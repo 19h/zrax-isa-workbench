@@ -186,6 +186,8 @@ pub enum Kind {
     Wim(super::wim::Layout),
     /// A UDF volume or UDF bridge disc.
     Udf(super::udf::Layout),
+    /// A standalone X.509 certificate file.
+    X509(super::x509::Layout),
 }
 
 impl Kind {
@@ -255,6 +257,7 @@ impl Kind {
             Self::Ntfs(layout) => layout.format(),
             Self::Wim(layout) => layout.format(),
             Self::Udf(layout) => layout.format(),
+            Self::X509(layout) => layout.format(),
         }
     }
 
@@ -324,6 +327,7 @@ impl Kind {
             Self::Ntfs(layout) => layout.label(),
             Self::Wim(layout) => layout.label(),
             Self::Udf(layout) => layout.label(),
+            Self::X509(layout) => layout.label(),
         }
     }
 
@@ -393,6 +397,7 @@ impl Kind {
             Self::Ntfs(layout) => layout.is_weak(),
             Self::Wim(layout) => layout.is_weak(),
             Self::Udf(layout) => layout.is_weak(),
+            Self::X509(layout) => layout.is_weak(),
         }
     }
 }
@@ -467,6 +472,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Ntfs(layout) => super::ntfs::parse_container(data, layout),
         Kind::Wim(layout) => super::wim::parse_container(data, layout),
         Kind::Udf(layout) => super::udf::parse_container(data, layout),
+        Kind::X509(layout) => super::x509::parse_container(data, layout),
     }
 }
 

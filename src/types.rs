@@ -1260,6 +1260,10 @@ pub enum FileFormat {
     /// UDF volume (OSTA Universal Disk Format on ECMA-167): DVD, Blu-ray,
     /// packet-written and hard disk UDF, and UDF bridge discs
     Udf,
+    // Certificates
+    /// Standalone X.509 certificate file: one DER certificate or PEM
+    /// `CERTIFICATE` blocks
+    X509,
 }
 
 impl fmt::Display for FileFormat {
@@ -1601,6 +1605,8 @@ impl fmt::Display for FileFormat {
             FileFormat::Wim => write!(f, "WIM image"),
             // UDF volumes
             FileFormat::Udf => write!(f, "UDF volume"),
+            // Certificates
+            FileFormat::X509 => write!(f, "X.509 Certificate"),
         }
     }
 }
