@@ -191,27 +191,50 @@ impl Text {
     }
 }
 
-/// An open run.
-#[derive(Debug)]
+/// One runner's run: its start while open, and a text buffer that is
+/// cleared rather than reallocated between runs, since most runs end before
+/// the minimum length.
+#[derive(Debug, Default)]
 struct Run {
-    start: u64,
+    start: Option<u64>,
     text: Text,
 }
 
-fn emit(run: Run, end: u64, encoding: Encoding, options: &Options, out: &mut Vec<FoundString>) {
-    if run.text.chars < options.min_chars as u64 || !options.encodings.contains(encoding.flag()) {
-        return;
+impl Run {
+    fn push(&mut self, at: u64, c: char) {
+        if self.start.is_none() {
+            self.start = Some(at);
+        }
+        self.text.push(c);
     }
-    let tags = tag_text(&run.text.text);
-    out.push(FoundString {
-        offset: run.start,
-        size: end - run.start,
-        chars: run.text.chars,
-        encoding,
-        clipped: run.text.chars > MAX_TEXT_CHARS as u64,
-        text: run.text.text,
-        tags,
-    });
+
+    /// End the open run at `end`, appending it to `out` when it is long
+    /// enough and its encoding is reported.
+    fn close(
+        &mut self,
+        end: u64,
+        encoding: Encoding,
+        options: &Options,
+        out: &mut Vec<FoundString>,
+    ) {
+        let Some(start) = self.start.take() else {
+            return;
+        };
+        let text = &mut self.text;
+        if text.chars >= options.min_chars as u64 && options.encodings.contains(encoding.flag()) {
+            out.push(FoundString {
+                offset: start,
+                size: end - start,
+                chars: text.chars,
+                encoding,
+                clipped: text.chars > MAX_TEXT_CHARS as u64,
+                tags: tag_text(&text.text),
+                text: text.text.clone(),
+            });
+        }
+        text.text.clear();
+        text.chars = 0;
+    }
 }
 
 /// A UTF-8 sequence after its lead byte.
@@ -247,35 +270,32 @@ fn is_ascii_printable(b: u8) -> bool {
 /// ASCII and UTF-8 runs over single bytes.
 #[derive(Debug, Default)]
 struct ByteRuns {
-    run: Option<Run>,
+    run: Run,
     multibyte: bool,
     pending: Option<Pending>,
 }
 
 impl ByteRuns {
     fn close(&mut self, end: u64, options: &Options, out: &mut Vec<FoundString>) {
-        if let Some(run) = self.run.take() {
-            let encoding = if self.multibyte {
-                Encoding::Utf8
-            } else {
-                Encoding::Ascii
-            };
-            emit(run, end, encoding, options, out);
-        }
+        let encoding = if self.multibyte {
+            Encoding::Utf8
+        } else {
+            Encoding::Ascii
+        };
+        self.run.close(end, encoding, options, out);
         self.multibyte = false;
     }
 
     fn push_char(&mut self, start: u64, c: char) {
-        self.run
-            .get_or_insert_with(|| Run {
-                start,
-                text: Text::default(),
-            })
-            .text
-            .push(c);
+        self.run.push(start, c);
     }
 
     fn byte(&mut self, at: u64, b: u8, options: &Options, out: &mut Vec<FoundString>) {
+        // The common case first: a printable ASCII byte outside a sequence.
+        if self.pending.is_none() && is_ascii_printable(b) {
+            self.run.push(at, char::from(b));
+            return;
+        }
         if let Some(mut pending) = self.pending {
             let (low, high) = if pending.seen == 0 {
                 pending.second
@@ -326,11 +346,9 @@ impl ByteRuns {
     }
 
     fn open_start(&self) -> Option<u64> {
-        match (&self.run, &self.pending) {
-            (Some(run), _) => Some(run.start),
-            (None, Some(pending)) => Some(pending.start),
-            (None, None) => None,
-        }
+        self.run
+            .start
+            .or_else(|| self.pending.map(|pending| pending.start))
     }
 }
 
@@ -345,36 +363,22 @@ fn utf16_char(unit: u16) -> Option<char> {
 #[derive(Debug)]
 struct UnitRuns {
     encoding: Encoding,
-    run: Option<Run>,
+    run: Run,
 }
 
 impl UnitRuns {
     fn unit(&mut self, at: u64, unit: u16, options: &Options, out: &mut Vec<FoundString>) {
         match utf16_char(unit) {
-            Some(c) => self
-                .run
-                .get_or_insert_with(|| Run {
-                    start: at,
-                    text: Text::default(),
-                })
-                .text
-                .push(c),
-            None => self.close(at, options, out),
-        }
-    }
-
-    fn close(&mut self, end: u64, options: &Options, out: &mut Vec<FoundString>) {
-        if let Some(run) = self.run.take() {
-            emit(run, end, self.encoding, options, out);
+            Some(c) => self.run.push(at, c),
+            None => self.run.close(at, self.encoding, options, out),
         }
     }
 
     /// Close at the end of the last whole unit of this parity before `end`.
     fn finish(&mut self, end: u64, options: &Options, out: &mut Vec<FoundString>) {
-        if let Some(run) = &self.run {
-            let whole_units = (end - run.start) / 2;
-            let run_end = run.start + whole_units * 2;
-            self.close(run_end, options, out);
+        if let Some(start) = self.run.start {
+            let run_end = start + (end - start) / 2 * 2;
+            self.run.close(run_end, self.encoding, options, out);
         }
     }
 }
@@ -396,7 +400,7 @@ impl Scanner {
     pub fn new(options: Options) -> Self {
         let unit_runs = |encoding| UnitRuns {
             encoding,
-            run: None,
+            run: Run::default(),
         };
         Self {
             options,
@@ -469,7 +473,7 @@ impl Scanner {
         } else {
             self.units
                 .iter()
-                .filter_map(|runner| runner.run.as_ref().map(|run| run.start))
+                .filter_map(|runner| runner.run.start)
                 .chain(self.bytes.open_start())
                 .min()
                 .unwrap_or(self.position)
