@@ -145,3 +145,35 @@ string limit; it holds the input in memory.
 - Strings inside compressed or encrypted members are found only after
   opening the decoded member.
 - Tags are not validated against the program's use of the string.
+
+## Verification
+
+Run on 2026-11-01 on macOS 27.2 arm64 with rustc 1.99.1, Node.js 25.8.1
+and Playwright 1.61.1 Chromium.
+
+- `tests/strings.rs` (16) and the unit tests in `src/strings.rs` and
+  `src/strings/tags.rs` passed as part of the full native suite (2,918
+  passed, 0 failed, 7 ignored).
+- `web/tests/strings-index.test.mjs` (6) and `web/tests/strings.test.mjs`
+  (10, source and packaged pages) passed within the browser suite:
+  381 tests, 377 passed, 0 failed, 4 skipped (the skips need D10 and RX113
+  firmware that is not in the repository; 355, 351, 0 and 4 at the base
+  commit). One earlier run hit the known entropy placeholder flake in
+  `workbench.test.mjs`, which now waits for the probe. They cover search,
+  regex errors, chips, sorting, the hex
+  link, CSV export, a 200,000-string virtual grid reached by keyboard, and
+  a catastrophically backtracking regular expression that the watchdog
+  stops.
+- The buffer-reuse refactor was compared against the previous scanner on
+  8 MiB of planted noise for three option sets (48 MB of JSON); the output
+  was byte-identical.
+- Throughput with the default options:
+  - optimized native build without LTO: 48.1 MiB/s on a 21.1 MiB debug
+    executable, 70.7 MiB/s on an 11.1 MiB WASM module, 66.3 MiB/s on
+    `/bin/ls`;
+  - Chromium WASM: 28.4 MiB/s on 64 MiB of noise, where every branch is
+    unpredictable;
+  - in the workbench, a 128 MiB file with 524,288 strings scanned in
+    2.1 s, and a hex jump during that scan rendered in 38 ms.
+
+These are observations on one machine, not bounds.

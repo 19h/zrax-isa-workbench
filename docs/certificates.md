@@ -173,3 +173,46 @@ The browser streams files this way without a resident copy.
 - Certificates inside compressed or encrypted members are found only after
   opening the decoded member as its own file.
 - `TRUSTED CERTIFICATE` and `X509 CERTIFICATE` PEM labels are not matched.
+
+## Verification
+
+Run on 2026-11-01 on macOS 27.2 arm64 with rustc 1.99.1, Node.js 25.8.1,
+wasm-pack 0.14.0 and Playwright 1.61.1 Chromium.
+
+- `cargo test --all-features --locked`: 2,918 passed, 0 failed, 7 ignored
+  (2,844, 0 and 7 at the base commit `c26189d`). The new suites are
+  `tests/certificates.rs` (17), `tests/x509_format.rs` (9),
+  `tests/regions.rs` (12) and `tests/cli.rs` (5), plus unit tests in the
+  modules.
+- Browser suite (`node --test --test-concurrency=4 tests/*.test.mjs`):
+  381 tests, 377 passed, 0 failed, 4 skipped (the skips need D10 and RX113
+  firmware that is not in the repository; 355, 351, 0 and 4 at the base
+  commit). One earlier run hit the known entropy placeholder flake in
+  `workbench.test.mjs`, which now waits for the probe.
+  `certificates.test.mjs` covers source and packaged pages.
+- Differential snapshot, a temporary test removed afterwards: every
+  committed fixture, every truncation of files up to 1 KiB and 256 evenly
+  spaced truncations of larger ones, and single-byte `0x00`, `0xFF` and
+  bit-flip mutations of the first 256 bytes, 180,372 inputs. The hashes of
+  `detect_payload` `Debug` and JSON (or the error text) on the base commit
+  and on the labelled-regions commit were identical. Against the x509
+  format commit, 4,519 inputs differed, all derived from the seven files in
+  `tests/fixtures/certificates`.
+- Parity with cert-dump 3.0.1 built from `0c4baea`: the sets of
+  (offset, size, SHA-256) matched for all 16 inputs tried. They were the
+  seven fixtures, `/bin/ls`, `/usr/bin/ssh`, `/usr/bin/curl`, a system SEP
+  firmware IMG4, an IM4P and four Windows PE files, one with an Authenticode
+  signature. Only the fixtures are in the repository. The comparison found
+  one zrax defect, the region order of a `WIN_CERTIFICATE` that fills its
+  table, which is fixed.
+- Throughput in an optimized build without LTO:
+  - 64 MiB of noise with one planted certificate per MiB: about
+    3,400 MiB/s natively and 1,050 MiB/s in Chromium WASM;
+  - real binaries: 392 MiB/s (`/bin/ls`, 9 certificates) and 8,545 MiB/s
+    (an 11.1 MiB WASM module);
+  - 1 Mi PEM `BEGIN` markers (27 MiB) in 3 ms, and 16 MiB of `0x30` bytes
+    in 0.15 s.
+
+These are observations on one machine, not bounds. Signature and chain
+validation are not implemented, so they were not verified; other browsers
+were not tested.

@@ -130,6 +130,12 @@ regions when their section tables are absent or out of range. The
 workbench engine computes regions for opaque components as well, because
 they do not reach the code model.
 
+`tests/regions.rs` covers synthetic ELF, PE and fat Mach-O builders, the
+Mach-O and IMG4 fixtures, an IM4M carrying the fixture certificates,
+archive members, truncations and mutations. On 2026-11-01 the regions
+commit left `detect_payload` unchanged on 180,372 snapshot inputs (see
+[certificate scanning](certificates.md#verification)).
+
 ## Bounds and assumptions
 
 Inspection lists at most 4096 entries, returns at most 64 MiB for one opened
