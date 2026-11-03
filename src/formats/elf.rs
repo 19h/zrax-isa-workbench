@@ -1248,6 +1248,126 @@ pub fn sections(data: &[u8]) -> Vec<NamedRange> {
         .collect()
 }
 
+/// `e_phnum` value meaning that the program header count is in section
+/// 0's `sh_info` ("System V ABI", "ELF Header", `e_phnum`). Not followed
+/// by [`file_extent`].
+const PN_XNUM: u16 = 0xffff;
+
+/// Where one ELF class keeps the fields that place file content.
+struct Placement {
+    /// Size of the ELF header (`Elf32_Ehdr`, `Elf64_Ehdr`).
+    header_size: u64,
+    /// Offsets of `e_phoff` and `e_shoff` in the ELF header.
+    phoff: usize,
+    shoff: usize,
+    /// Offset of `e_phentsize`; `e_phnum`, `e_shentsize` and `e_shnum`
+    /// follow it in 2-byte steps.
+    phentsize: usize,
+    /// Size of a program header (`Elf32_Phdr`, `Elf64_Phdr`), and the
+    /// offsets of `p_offset` and `p_filesz` in it.
+    phdr_size: usize,
+    p_offset: usize,
+    p_filesz: usize,
+    /// Offset of `sh_size` in a section header.
+    sh_size: usize,
+}
+
+const PLACEMENT_32: Placement = Placement {
+    header_size: 52,
+    phoff: 0x1c,
+    shoff: 0x20,
+    phentsize: 0x2a,
+    phdr_size: 32,
+    p_offset: 0x04,
+    p_filesz: 0x10,
+    sh_size: 0x14,
+};
+
+const PLACEMENT_64: Placement = Placement {
+    header_size: 64,
+    phoff: 0x20,
+    shoff: 0x28,
+    phentsize: 0x36,
+    phdr_size: 56,
+    p_offset: 0x08,
+    p_filesz: 0x20,
+    sh_size: 0x20,
+};
+
+/// The bytes an ELF image occupies from its start: the furthest end of
+/// the ELF header, the program header table, the file range of every
+/// segment and the section header table. Section contents outside every
+/// segment count only when they lie before the section header table,
+/// where linkers place them. An `e_shnum` of 0 with a section header
+/// table takes the count from section 0's `sh_size`.
+///
+/// `None` for an invalid class or byte order, a truncated ELF header, a
+/// program header entry smaller than `Elf32_Phdr`/`Elf64_Phdr`,
+/// `PN_XNUM`, or an end past `u64::MAX`. When the program header table is
+/// cut short, the result is the table's end, which exceeds `data.len()`.
+pub(crate) fn file_extent(data: &[u8]) -> Option<u64> {
+    let is_64 = match data.get(4) {
+        Some(&class::ELFCLASS32) => false,
+        Some(&class::ELFCLASS64) => true,
+        _ => return None,
+    };
+    let le = match data.get(5) {
+        Some(&data::ELFDATA2LSB) => true,
+        Some(&data::ELFDATA2MSB) => false,
+        _ => return None,
+    };
+    let place = if is_64 { &PLACEMENT_64 } else { &PLACEMENT_32 };
+    let word = |at: usize| {
+        if is_64 {
+            read_u64(data, at, le).ok()
+        } else {
+            read_u32(data, at, le).ok().map(u64::from)
+        }
+    };
+    let half = |at: usize| read_u16(data, at, le).ok();
+    let phoff = word(place.phoff)?;
+    let shoff = word(place.shoff)?;
+    let phentsize = half(place.phentsize)?;
+    let phnum = half(place.phentsize + 2)?;
+    let shentsize = half(place.phentsize + 4)?;
+    let shnum = half(place.phentsize + 6)?;
+    if phnum == PN_XNUM || (phnum > 0 && usize::from(phentsize) < place.phdr_size) {
+        return None;
+    }
+
+    let mut extent = place.header_size;
+    if phnum > 0 {
+        let table_size = u64::from(phentsize) * u64::from(phnum);
+        let table_end = phoff.checked_add(table_size)?;
+        if table_end > data.len() as u64 {
+            return Some(table_end);
+        }
+        extent = extent.max(table_end);
+        // The whole table lies inside `data`, so every entry is readable.
+        for index in 0..u64::from(phnum) {
+            let entry = usize::try_from(phoff + index * u64::from(phentsize)).ok()?;
+            let file_size = word(entry + place.p_filesz)?;
+            if file_size > 0 {
+                let segment_end = word(entry + place.p_offset)?.checked_add(file_size)?;
+                extent = extent.max(segment_end);
+            }
+        }
+    }
+    if shoff > 0 {
+        let count = if shnum == 0 {
+            usize::try_from(shoff)
+                .ok()
+                .and_then(|table| word(table.checked_add(place.sh_size)?))
+                .unwrap_or(1)
+        } else {
+            u64::from(shnum)
+        };
+        let table_end = shoff.checked_add(count.checked_mul(u64::from(shentsize))?)?;
+        extent = extent.max(table_end);
+    }
+    Some(extent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1339,5 +1459,93 @@ mod tests {
         assert_eq!(e_machine_to_isa(0x47, 1).0, Isa::Hc08);
         assert_eq!(e_machine_to_isa(0xA5, 1).0, Isa::I8051);
         assert_eq!(e_machine_to_isa(0xB1, 1).0, Isa::Cr16);
+    }
+
+    /// Write `value` as `size` bytes at `at` in the given byte order.
+    fn put(data: &mut [u8], at: usize, size: usize, value: u64, le: bool) {
+        let bytes = if le {
+            value.to_le_bytes()[..size].to_vec()
+        } else {
+            value.to_be_bytes()[8 - size..].to_vec()
+        };
+        data[at..at + size].copy_from_slice(&bytes);
+    }
+
+    /// An ELF32 header (`e_phoff` 0x1C, `e_shoff` 0x20, `e_phentsize`,
+    /// `e_phnum`, `e_shentsize`, `e_shnum` at 0x2A..0x32) with a program
+    /// header table at 0x34 whose entries (`p_offset` 4, `p_filesz` 0x10)
+    /// hold `segments` as (offset, file size), and a section header table
+    /// of `sections` 40-byte entries at `shoff` (0 for none).
+    fn elf32(le: bool, segments: &[(u64, u64)], shoff: u64, sections: u64) -> Vec<u8> {
+        let mut data = make_elf_header(0x28, 1, if le { 1 } else { 2 });
+        data.resize(0x34 + 32 * segments.len(), 0);
+        put(&mut data, 0x1c, 4, 0x34, le);
+        put(&mut data, 0x20, 4, shoff, le);
+        put(&mut data, 0x2a, 2, 32, le);
+        put(&mut data, 0x2c, 2, segments.len() as u64, le);
+        put(&mut data, 0x2e, 2, 40, le);
+        put(&mut data, 0x30, 2, sections, le);
+        for (index, &(offset, file_size)) in segments.iter().enumerate() {
+            let entry = 0x34 + 32 * index;
+            put(&mut data, entry + 0x04, 4, offset, le);
+            put(&mut data, entry + 0x10, 4, file_size, le);
+        }
+        data
+    }
+
+    #[test]
+    fn file_extent_covers_headers_segments_and_section_headers() {
+        for le in [true, false] {
+            // The furthest end wins, not the last entry; an empty segment
+            // has no file range.
+            let data = elf32(le, &[(0x100, 0x80), (0x1000, 0), (0x120, 0x10)], 0, 0);
+            assert_eq!(file_extent(&data), Some(0x180), "little-endian {le}");
+            let data = elf32(le, &[(0x100, 0x80)], 0x400, 3);
+            assert_eq!(file_extent(&data), Some(0x400 + 3 * 40));
+        }
+        // No segments and no sections: the ELF header alone.
+        assert_eq!(file_extent(&elf32(true, &[], 0, 0)), Some(52));
+    }
+
+    #[test]
+    fn file_extent_reads_the_64_bit_layout() {
+        // ELF64: `e_phoff` 0x20, `e_phentsize` 0x36, `e_phnum` 0x38; one
+        // program header at 0x40 with `p_offset` 8 and `p_filesz` 0x20.
+        let mut data = make_elf_header(0xb7, 2, 1);
+        data.resize(0x40 + 56, 0);
+        put(&mut data, 0x20, 8, 0x40, true);
+        put(&mut data, 0x36, 2, 56, true);
+        put(&mut data, 0x38, 2, 1, true);
+        put(&mut data, 0x40 + 0x08, 8, 0x1_0000, true);
+        put(&mut data, 0x40 + 0x20, 8, 0x2345, true);
+        assert_eq!(file_extent(&data), Some(0x1_2345));
+    }
+
+    #[test]
+    fn file_extent_takes_a_large_section_count_from_section_0() {
+        // `e_shnum` 0: section 0's `sh_size` (0x14) holds the count.
+        let mut data = elf32(true, &[], 0x40, 0);
+        data.resize(0x40 + 40, 0);
+        put(&mut data, 0x40 + 0x14, 4, 0xff00, true);
+        assert_eq!(file_extent(&data), Some(0x40 + 0xff00 * 40));
+    }
+
+    #[test]
+    fn file_extent_rejects_what_it_cannot_place() {
+        let valid = elf32(true, &[(0x100, 0x80)], 0, 0);
+        let mut bad_class = valid.clone();
+        bad_class[4] = 3;
+        let mut bad_order = valid.clone();
+        bad_order[5] = 0;
+        let mut short_entry = valid.clone();
+        put(&mut short_entry, 0x2a, 2, 31, true);
+        let mut extended_count = valid.clone();
+        put(&mut extended_count, 0x2c, 2, u64::from(PN_XNUM), true);
+        for data in [bad_class, bad_order, short_entry, extended_count] {
+            assert_eq!(file_extent(&data), None);
+        }
+        assert_eq!(file_extent(&valid[..0x30]), None, "truncated ELF header");
+        // A program header table cut short reports its own end.
+        assert_eq!(file_extent(&valid[..0x40]), Some(0x34 + 32));
     }
 }

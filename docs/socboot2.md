@@ -3,7 +3,8 @@
 `src/formats/socboot2.rs` and its submodules (`egon.rs`, `rockchip.rs`,
 `mediatek.rs`, `qualcomm.rs`) parse the images that system-on-chip boot ROMs
 load: Allwinner `eGON.BT0` and TOC0, Rockchip RKFW, RKAF, RKBOOT and
-idbloaders, MediaTek preloaders, and legacy Qualcomm MBN headers. They are
+idbloaders, MediaTek preloaders, legacy Qualcomm MBN headers, and Qualcomm
+SBL ELF images after a NAND preamble. They are
 built on the shared container model
 ([compressed streams and the container model](compressed-streams.md)): the
 boot image is reported as the format, and the code it carries is classified
@@ -23,7 +24,8 @@ else the code model answers from the extracted code.
 | `rockchipimage` | `idbloader (header v2)` | Strong: `RKNS`. One to four images in sectors inside the file; SHA-256 or SHA-512 header and image hashes checked when `boot_flag` names them; a mismatch is a note, since the header field may hold a signature | None | U-Boot `5e3b01c8` `tools/rkcommon.c` |
 | `mediatekpreloader` | `EMMC_BOOT preloader`, `SF_BOOT preloader`, `SDMMC_BOOT preloader`, `UFS_BOOT preloader` | Strong: the NUL-padded device name (`UFS_BOOT` on its 8 characters). Device header version 1; BRLYT at the header's size field with name, version 1 and magic `BBBB`; NAND types rejected; then the GFH as below | As for the GFH | U-Boot `5e3b01c8` `tools/mtk_image.[ch]`; MediaTek `fbtool.c` (`c0779f00`); mtkclient `7cb40e72` |
 | `mediatekpreloader` | `GFH preloader` | Strong: a `GFH_FILE_INFO` record at 0 (`MMM`, size `0x38`, type 0, `FILE_INFO`). File length at least jump offset plus signature, inside the file; GFH chain records inside the content offset; code from the jump offset to the signature; a SHA-256 hash (signature type 1, 32 B) checked over the image before it | `GFH_BROM_CFG` with `cfg_bits & 0x1000` and `jump_bl_arm64 == 0x64` gives AArch64 for the container and the code child; otherwise no ISA is claimed and the code model classifies the code | U-Boot `5e3b01c8` `tools/mtk_image.[ch]`; MediaTek `fbtool.c` (`strip_pl_hdr`) |
-| `qualcommmbn` | `SBL MBN (80-byte header)` | Strong: codeword `0x844BDCD1` and magic `0x73D71034` at 0. A NAND preamble (autodetect magic in the third word) is skipped by finding the next SBL header on a 512 B boundary; `image_src` (the file offset of the code) must lie past the header; code inside the file; signature and certificate chain listed as opaque when the pointers place them after the code | `booting_image_config` `0xF` gives AArch64 (little-endian), `0x0` gives AArch32 (byte order from the code); `0xFFFFFFFF` or other values claim nothing | coreboot `99a3e1e8` `util/qualcomm/mbn_tools.py`, `mbncat.py` |
+| `qualcommmbn` | `SBL MBN (80-byte header)` | Strong: codeword `0x844BDCD1` and magic `0x73D71034` at 0; a virtual block cookie at 0 is a parse error. A NAND preamble (autodetect magic in the third word) is skipped by finding the first 512 B boundary that holds an SBL header (codeword and magic, and a third word that is neither an autodetect magic nor the cookie magic `0xD48B54C6`); `image_src` (the file offset of the code) must lie past the header; code inside the file; signature and certificate chain listed as opaque when the pointers place them after the code | `booting_image_config` `0xF` gives AArch64 (little-endian), `0x0` gives AArch32 (byte order from the code); `0xFFFFFFFF` or other values claim nothing | coreboot `99a3e1e8` `util/qualcomm/mbn_tools.py`, `mbncat.py` |
+| `qualcommmbn` | `SBL ELF (NAND preamble)` | Strong: codeword and magic at 0 with a NAND preamble, and the ELF magic on the first 512 B boundary that holds an SBL header or an ELF image. Virtual block cookies (codeword, magic, `0xD48B54C6`; 12 B) are removed at each 128 KiB file boundary after the ELF start while present (S12, S13); the ELF's extent (ELF header, program header table, segment file ranges, section header table) must lie inside the run of cookies. Cookies and erased flash after the ELF up to the end of the run belong to the image | None from the preamble. The rebuilt ELF image is a child, classified by its `e_machine` | coreboot `99a3e1e8` `util/qualcomm/mbn_tools.py` (`image_preamble`, `insert_SBL1_magicCookie`, `VIRTUAL_BLOCK_SIZE`, `MAGIC_COOKIE_LENGTH`, `SBL_VIRTUAL_BLOCK_MAGIC_NUM`); cookie placement from a vendor image (see source conflicts) |
 | `qualcommmbn` | `MBN (40-byte header)` | Weak (no magic): version 3, a known image ID, nonzero code, image size equal to code plus signature plus certificate chain rounded up to 4 B, signature and certificate pointers directly after the code, the whole image present and only erased flash after it | None: the image ID names a boot role. The code at 0x28 goes to the code model | coreboot `99a3e1e8` `util/qualcomm/mbn_tools.py`, `ipqheader.py` |
 
 Pinned URLs have the form `https://github.com/<repository>/blob/<revision>/<path>`;
@@ -50,7 +52,8 @@ code entry (`load_addr + jump_offset`) and the Qualcomm destination address
 are reported as metadata or as the entry point. Header byte order is never
 reported as code byte order: A32 and RISC-V jump words are fetched
 little-endian, AArch64 is always little-endian, and the AArch32 SBL byte
-order comes from the code.
+order comes from the code. Virtual block cookie positions are file offsets
+counted from the start of the NAND preamble, not from the ELF image.
 
 ## Validation and resource bounds
 
@@ -63,13 +66,18 @@ order comes from the code.
 - RKAF lists at most 16 parts, idbloader v2 at most 4 images. The TOC0 item
   count must fit the checksummed image. GFH records are at least 8 B and lie
   inside the content offset, so the record walk is bounded by the file.
-- The SBL header after a NAND preamble is searched for at 512 B steps up to
-  1 MiB (2048 candidates).
+- The SBL header or ELF image after a NAND preamble is searched for at 512 B
+  steps up to 1 MiB (2048 candidates).
+- Virtual block cookies are followed through at most 64 MiB (`MAX_PAYLOAD`)
+  of the file from the ELF start, so at most 512 cookies, and the rebuilt ELF
+  is one copy of at most that size. An ELF image that needs more is a parse
+  error (`Unsupported`); one that needs bytes past a 128 KiB boundary without
+  a cookie is a parse error (`Missing SBL virtual block cookie`).
 - The eGON device tree name is read up to 64 B and only as printable ASCII.
 - Trailing bytes after an RKFW, RKAF, RKBOOT or 40-byte MBN image must be
-  erased flash (`0x00`/`0xFF`). After an eGON, TOC0, idbloader, MediaTek or
-  SBL image, non-padding data is listed as a member only when it is a
-  recognized format (U-Boot proper after an SPL).
+  erased flash (`0x00`/`0xFF`). After an eGON, TOC0, idbloader, MediaTek,
+  SBL or SBL ELF image, non-padding data is listed as a member only when it
+  is a recognized format (U-Boot proper after an SPL).
 - Container nesting (RKFW, RKAF, RKBOOT inside one another) is capped at six
   levels by `lib.rs`.
 
@@ -83,6 +91,19 @@ loader entries per 512-byte block, and `unpackEntry` reverses it without
 reading `rc4Flag`. `getBoothdr` sets `rc4Flag = 1` when RC4 is disabled,
 which only governs the ID block that flashing tools build. The parser follows
 the source.
+
+coreboot's `insert_SBL1_magicCookie` (pinned revision, read on 2026-11-02)
+appends a cookie after every 128 KiB of its input, so in its output the k-th
+cookie sits at k × 128 KiB + (k − 1) × 12 B. A vendor-built NAND SBL ELF
+image (32-bit Arm, a small preamble with the ELF at 0x2800, five cookies;
+examined on 2026-11-02, not in the repository) has its cookies at exact
+multiples of 128 KiB of the file instead: each block after the first starts
+with the cookie and holds the next 128 KiB − 12 B of the image. With those
+12-byte runs removed, all seven non-empty segments other than the hash
+segment match their SHA-384 digests in the hash segment; with them left in,
+only the first segment (which ends before 0x20000) does. The parser follows
+the image. The generator's placement is a parse error at the second
+boundary, which a test pins.
 
 ## Assumption register
 
@@ -99,6 +120,9 @@ the source.
 | S9 | Qualcomm code, signature and certificate chain are stored back to back, as the writer's pointers say | Non-contiguous pointers: the signature and certificates are not listed and a note says so; the 40-byte header is then not recognized at all |
 | S10 | The SBL `image_src` is the file offset of the code (80, or 80 plus the preamble size) | The preamble fixture; an `image_src` inside the header is a parse error |
 | S11 | idbloader v2 image hashes cover the sector-padded image range | A mismatch is a note, not an error |
+| S12 | Qualcomm virtual block cookies sit at every 128 KiB boundary of the file, counted from the preamble, as in the one image examined, not where the generator puts them | A cookie missing inside the ELF's extent is a parse error naming the boundary; the generator's placement fails at 0x40000. The hash segment digests would confirm a rebuild, but the parser does not check them |
+| S13 | An ELF after a NAND preamble with no cookie at the first 128 KiB boundary past its start carries no cookies | Cookies placed elsewhere (counted from the ELF start, say) would stay inside the ELF bytes; only the unchecked hash segment digests would show it |
+| S14 | An ELF image's file extent is the furthest end of its header tables and segment ranges; section contents outside every segment lie before the section header table | An ELF with section contents after its section header table would be cut short, and the rest reported as trailing data |
 
 ## Known boundaries
 
@@ -115,6 +139,10 @@ the source.
 | Qualcomm MBN versions 5, 6 and 7 as standalone files | Not recognized: words 2 and 3 are QTI sizes rather than pointers; modern images are ELF and classified by `e_machine` |
 | Qualcomm pointers at or above 2^32 | The writer clamps them to `0xFFFFFFFF`; such 40-byte headers fail the pointer checks and are not recognized |
 | IPQ8064 combined SBL (`mbncat.py`) | Parsed as an SBL whose code is the concatenated MBNs; the first contained header is classified as a nested container |
+| Qualcomm SBL ELF hash segment | Segment digests, signature and certificate chain are not verified; a note says so |
+| Qualcomm virtual block cookies in an 80-byte SBL image | Not removed: code that spans a 128 KiB boundary keeps the cookie bytes. No such image was available |
+| Qualcomm ELF images with cookies but no preamble | The file starts with the ELF magic and is classified as a plain ELF by `e_machine`; cookies are not removed |
+| Qualcomm cookie placement of `insert_SBL1_magicCookie` | Not implemented (S12): a parse error at the second boundary |
 
 ## Verification
 
@@ -132,3 +160,24 @@ and RV64 code (`tests/fixtures/socboot2/README.md`). No vendor-built image of
 any of these formats was tested, so behavior on vendor images, including
 Allwinner's own boot0 header, MediaTek-built preloaders and Rockchip loaders
 from Rockchip's tools, is not verified.
+
+On 2026-11-03 (macOS AArch64, rustc 1.99.1 `58cf8f9c3`, Node v25.8.1,
+Playwright Chromium), after adding the SBL ELF layout: `tests/socboot2.rs`
+(25 tests), the 19 unit tests in `src/formats/socboot2*` and the 4
+`file_extent` unit tests in `src/formats/elf.rs` passed. The every-prefix and
+every-byte mutation sweeps now include a small SBL ELF instance, and a
+bounded sweep covers an instance with three cookies (cuts around the ELF
+start and every cookie and every 4093 B; mutations of the ELF and program
+headers and of every cookie byte). The whole native suite passed with 2940
+tests and 7 ignored (also 7 ignored on the base commit).
+`web/tests/socboot2.test.mjs` (4 tests, now with an SBL ELF fixture) passed;
+the whole browser suite ran 397 tests with 393 passed and 4 skipped (they
+need D10 and RX113 firmware that is not in the repository). A differential
+snapshot of the 80-byte SBL and 40-byte MBN paths over 52,543 inputs (seven
+fixtures, every truncation, every single-byte `0x00`/`0xFF`/bit-flip
+mutation) matched the base commit except for the renamed message
+`Missing SBL header or ELF image after the NAND preamble`. The vendor image
+described under source conflicts classifies as an Arm ELF image inside an
+`SBL ELF (NAND preamble)` container; its rebuilt ELF is byte-identical to an
+independently stripped copy whose segments match the hash segment digests.
+No other vendor-built SBL ELF image was tested.

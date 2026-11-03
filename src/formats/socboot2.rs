@@ -1,8 +1,8 @@
 //! System-on-chip boot ROM images: Allwinner `eGON.BT0` boot0/SPL and TOC0
 //! images, Rockchip RKFW update images, RKAF firmware packages, RKBOOT
 //! loaders and idbloaders, `MediaTek` preloaders (device header, BRLYT and
-//! GFH records) and legacy Qualcomm MBN headers (40-byte version 3 and
-//! 80-byte SBL).
+//! GFH records), legacy Qualcomm MBN headers (40-byte version 3 and
+//! 80-byte SBL) and Qualcomm SBL ELF images after a NAND preamble.
 //!
 //! Primary sources, at pinned revisions
 //! (`https://github.com/<repo>/blob/<revision>/<path>`):
@@ -81,6 +81,8 @@ pub enum Layout {
     MediatekGfh,
     /// Qualcomm MBN with the 80-byte SBL header.
     QualcommSbl,
+    /// Qualcomm SBL ELF image after a NAND preamble.
+    QualcommSblElf,
     /// Qualcomm MBN with the 40-byte version 3 header (no magic).
     QualcommMbn,
 }
@@ -98,7 +100,7 @@ impl Layout {
             | Self::MediatekSdmmc
             | Self::MediatekUfs
             | Self::MediatekGfh => FileFormat::MediatekPreloader,
-            Self::QualcommSbl | Self::QualcommMbn => FileFormat::QualcommMbn,
+            Self::QualcommSbl | Self::QualcommSblElf | Self::QualcommMbn => FileFormat::QualcommMbn,
         }
     }
 
@@ -118,6 +120,7 @@ impl Layout {
             Self::MediatekUfs => "UFS_BOOT preloader",
             Self::MediatekGfh => "GFH preloader",
             Self::QualcommSbl => "SBL MBN (80-byte header)",
+            Self::QualcommSblElf => "SBL ELF (NAND preamble)",
             Self::QualcommMbn => "MBN (40-byte header)",
         }
     }
@@ -163,7 +166,7 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
             mediatek::parse_device(data, layout)
         }
         Layout::MediatekGfh => mediatek::parse_gfh_image(data),
-        Layout::QualcommSbl => qualcomm::parse_sbl(data),
+        Layout::QualcommSbl | Layout::QualcommSblElf => qualcomm::parse_sbl(data),
         Layout::QualcommMbn => qualcomm::parse_mbn(data),
     }
 }

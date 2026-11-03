@@ -157,6 +157,46 @@ function mbn(code) {
   return Buffer.concat([header, code]);
 }
 
+// A Qualcomm virtual block cookie: codeword, magic, 0xD48B54C6.
+function cookie() {
+  const bytes = Buffer.alloc(12);
+  [0x844bdcd1, 0x73d71034, 0xd48b54c6].forEach((word, i) => bytes.writeUInt32LE(word, 4 * i));
+  return bytes;
+}
+
+// An ELF32 little-endian Arm executable (e_machine 40) with one PT_LOAD
+// program header at 0x34 for `code` at file offset 0x100.
+function armElf(code) {
+  const header = Buffer.alloc(0x100);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 1, 1, 1]).copy(header);
+  header.writeUInt16LE(2, 0x10); // e_type ET_EXEC
+  header.writeUInt16LE(40, 0x12); // e_machine EM_ARM
+  header.writeUInt32LE(1, 0x14); // e_version
+  header.writeUInt32LE(0x10000100, 0x18); // e_entry
+  header.writeUInt32LE(0x34, 0x1c); // e_phoff
+  header.writeUInt16LE(0x34, 0x28); // e_ehsize
+  header.writeUInt16LE(32, 0x2a); // e_phentsize
+  header.writeUInt16LE(1, 0x2c); // e_phnum
+  const segment = [1, 0x100, 0x10000100, 0x10000100, code.length, code.length, 5, 0x100];
+  segment.forEach((word, i) => header.writeUInt32LE(word, 0x34 + 4 * i));
+  return Buffer.concat([header, code]);
+}
+
+// Qualcomm small NAND preamble (four 2048-byte pages with the codeword, the
+// magic and the autodetect magic, then a 2048-byte 0xFF page), an ELF image
+// at 0x2800 that crosses the 128 KiB boundary, and the virtual block cookie
+// at that boundary.
+function sblElf(code) {
+  const preamble = Buffer.alloc(0x2800, 0xff);
+  for (let page = 0; page < 4 * 2048; page += 2048) {
+    [0x844bdcd1, 0x73d71034, 0x7d0b435a].forEach((word, i) => preamble.writeUInt32LE(word, page + 4 * i));
+  }
+  const filler = Buffer.alloc(160 * 1024, 0x5a);
+  const image = Buffer.concat([preamble, armElf(Buffer.concat([code, filler]))]);
+  const boundary = 128 * 1024;
+  return Buffer.concat([image.subarray(0, boundary), cookie(), image.subarray(boundary)]);
+}
+
 async function fixtures() {
   const arm = await fixture('socboot2/arm.text.bin');
   const aarch64 = await fixture('transforms/aarch64.text.bin');
@@ -165,6 +205,7 @@ async function fixtures() {
     rkboot: rkboot(arm),
     emmc: emmcBoot(aarch64),
     sbl: sbl(aarch64),
+    sblElf: sblElf(arm),
     mbn: mbn(arm),
   };
 }
@@ -183,7 +224,7 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
       assert.ok(!p.error, `${name}: ${p.error}`);
       assert.ok(Object.hasOwn(FORMAT_NAMES, p.format.format), `${p.format.format} has a display name`);
     }
-    const { egon, rkboot, emmc, sbl, mbn } = payloads;
+    const { egon, rkboot, emmc, sbl, sblElf, mbn } = payloads;
     assert.deepEqual([egon.format.format, egon.primary.isa, egon.primary.bitwidth], ['allwinneregon', 'arm', 32]);
     assert.equal(egon.primary.source, 'file_format');
     assert.equal(rkboot.format.format, 'rockchipimage');
@@ -197,6 +238,13 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
     assert.deepEqual([sbl.format.format, sbl.primary.isa], ['qualcommmbn', 'a_arch64']);
     const mbnResult = [mbn.format.format, mbn.format.variant_name, mbn.primary.isa];
     assert.deepEqual(mbnResult, ['qualcommmbn', 'MBN (40-byte header)', 'arm']);
+    const sblElfResult = [sblElf.format.format, sblElf.format.variant_name, sblElf.primary.isa];
+    assert.deepEqual(sblElfResult, ['qualcommmbn', 'SBL ELF (NAND preamble)', 'arm']);
+    // Stored from the ELF start to the end of the file; rebuilt without the 12-byte cookie.
+    const stored = inputs.find(f => f.name === 'sblElf').bytes.length - 0x2800;
+    const elfImage = sblElf.slices.find(s => s.label === 'ELF image');
+    assert.deepEqual([elfImage.offset, elfImage.size], [0x2800, stored]);
+    assert.deepEqual([elfImage.decoded.transform, elfImage.decoded.size], ['SBL virtual blocks', stored - 12]);
   });
 }
 

@@ -3,7 +3,8 @@
 //! descrambling, RKCRC, v2 hashes), MediaTek preloaders (device header,
 //! BRLYT, GFH, `GFH_BROM_CFG` AArch64 hand-off) and Qualcomm MBN headers
 //! (80-byte SBL with `booting_image_config`, NAND preamble, magic-less
-//! 40-byte version 3), with corruption, truncation and mutation sweeps.
+//! 40-byte version 3, SBL ELF images after a NAND preamble with virtual
+//! block cookies), with corruption, truncation and mutation sweeps.
 
 use sha2::{Digest, Sha256};
 use zrax::{
@@ -924,6 +925,300 @@ fn mbn_v3_without_magic_is_recognized_only_when_consistent() {
     assert_ne!(classify(&trailing).format.format, FileFormat::QualcommMbn);
 }
 
+/// `AUTODETECT_PAGE_SIZE_MAGIC_NUM` and `SBL_VIRTUAL_BLOCK_MAGIC_NUM`
+/// (coreboot `mbn_tools.py`).
+const AUTODETECT_MAGIC: u32 = 0x7d0b_435a;
+const VIRTUAL_BLOCK_MAGIC: u32 = 0xd48b_54c6;
+/// `VIRTUAL_BLOCK_SIZE` and `MAGIC_COOKIE_LENGTH`.
+const VIRTUAL_BLOCK: usize = 128 << 10;
+const COOKIE: usize = 12;
+/// The ELF image's file offset after `small_preamble`.
+const ELF_AT: usize = 0x2800;
+
+/// The small NAND preamble `image_preamble` writes with its default page
+/// sizes (`FLASH_AUTO_DETECT_MAX_PAGE` 8192, `FLASH_AUTO_DETECT_MIN_PAGE`
+/// 2048) and `IMAGE_KEY_BOOT_SMALL_PREAMBLE`: four 2048-byte pages that
+/// start with the codeword, the magic and the autodetect magic, the rest
+/// `0xFF`, then one more page of `0xFF`. The image follows at 0x2800.
+fn small_preamble() -> Vec<u8> {
+    let mut data = vec![0xffu8; ELF_AT];
+    for page in (0..4).map(|index| index * 2048) {
+        put_u32(&mut data, page, SBL_CODEWORD);
+        put_u32(&mut data, page + 4, SBL_MAGIC);
+        put_u32(&mut data, page + 8, AUTODETECT_MAGIC);
+    }
+    data
+}
+
+/// An ELF32 little-endian Arm executable with one `PT_LOAD` program
+/// header per segment and no section headers; each segment starts at the
+/// next 0x100-byte boundary and loads 0x1000_0000 above its file offset.
+fn arm_elf(segments: &[&[u8]]) -> Vec<u8> {
+    const LOAD_BASE: u32 = 0x1000_0000;
+    const ALIGN: usize = 0x100;
+    const PHDR_TABLE: usize = 0x34;
+    let mut data = vec![0u8; PHDR_TABLE + 32 * segments.len()];
+    // `e_ident`: magic, ELFCLASS32, ELFDATA2LSB, EV_CURRENT.
+    data[..7].copy_from_slice(&[0x7f, b'E', b'L', b'F', 1, 1, 1]);
+    put_u16(&mut data, 0x10, 2); // e_type ET_EXEC
+    put_u16(&mut data, 0x12, 40); // e_machine EM_ARM
+    put_u32(&mut data, 0x14, 1); // e_version
+    put_u32(&mut data, 0x1c, PHDR_TABLE as u32); // e_phoff
+    put_u16(&mut data, 0x28, 0x34); // e_ehsize
+    put_u16(&mut data, 0x2a, 32); // e_phentsize
+    put_u16(&mut data, 0x2c, segments.len() as u16); // e_phnum
+    for (index, segment) in segments.iter().enumerate() {
+        pad_to(&mut data, ALIGN);
+        let offset = data.len() as u32;
+        let size = segment.len() as u32;
+        let header = PHDR_TABLE + 32 * index;
+        put_u32(&mut data, header, 1); // p_type PT_LOAD
+        put_u32(&mut data, header + 0x04, offset); // p_offset
+        put_u32(&mut data, header + 0x08, LOAD_BASE + offset); // p_vaddr
+        put_u32(&mut data, header + 0x0c, LOAD_BASE + offset); // p_paddr
+        put_u32(&mut data, header + 0x10, size); // p_filesz
+        put_u32(&mut data, header + 0x14, size); // p_memsz
+        put_u32(&mut data, header + 0x18, 5); // p_flags PF_R | PF_X
+        put_u32(&mut data, header + 0x1c, ALIGN as u32); // p_align
+        if index == 0 {
+            put_u32(&mut data, 0x18, LOAD_BASE + offset); // e_entry
+        }
+        data.extend_from_slice(segment);
+    }
+    data
+}
+
+/// `len` bytes that are never erased flash, so a misplaced cookie or a
+/// cut cannot hide in padding.
+fn filler(len: usize) -> Vec<u8> {
+    (0..len).map(|i| (i % 251 + 1) as u8).collect()
+}
+
+/// A virtual block cookie: codeword, magic and 0xD48B54C6.
+fn cookie() -> Vec<u8> {
+    let mut data = vec![0u8; COOKIE];
+    put_u32(&mut data, 0, SBL_CODEWORD);
+    put_u32(&mut data, 4, SBL_MAGIC);
+    put_u32(&mut data, 8, VIRTUAL_BLOCK_MAGIC);
+    data
+}
+
+/// `image` with a cookie at every 128 KiB boundary of the file, as in the
+/// NAND image recorded in `docs/socboot2.md` (S12): each block after the
+/// first holds the cookie and the next 128 KiB - 12 B of the image.
+fn with_cookies(image: &[u8]) -> Vec<u8> {
+    let first = image.len().min(VIRTUAL_BLOCK);
+    let mut data = image[..first].to_vec();
+    for block in image[first..].chunks(VIRTUAL_BLOCK - COOKIE) {
+        data.extend_from_slice(&cookie());
+        data.extend_from_slice(block);
+    }
+    data
+}
+
+/// `image` with cookies where coreboot's `insert_SBL1_magicCookie` puts
+/// them: after every 128 KiB of the image while more than 128 KiB remain.
+fn with_generator_cookies(image: &[u8]) -> Vec<u8> {
+    let mut data = Vec::new();
+    let mut rest = image;
+    while rest.len() > VIRTUAL_BLOCK {
+        data.extend_from_slice(&rest[..VIRTUAL_BLOCK]);
+        data.extend_from_slice(&cookie());
+        rest = &rest[VIRTUAL_BLOCK..];
+    }
+    data.extend_from_slice(rest);
+    data
+}
+
+/// The small preamble followed by `elf`.
+fn preamble_elf(elf: &[u8]) -> Vec<u8> {
+    [small_preamble(), elf.to_vec()].concat()
+}
+
+/// An ELF image of A32 code and 400 KiB of data, which spans three block
+/// boundaries after the preamble.
+fn large_arm_elf() -> Vec<u8> {
+    arm_elf(&[&arm_code(), &filler(400 << 10)])
+}
+
+fn custom_metadata(p: &DetectionPayload, key: &str) -> String {
+    p.metadata
+        .iter()
+        .find(|m| m.key == MetadataKey::Custom(key.into()))
+        .unwrap_or_else(|| panic!("metadata {key}"))
+        .value
+        .to_string()
+}
+
+#[test]
+fn sbl_elf_after_a_nand_preamble_is_rebuilt_without_its_cookies() {
+    let elf = large_arm_elf();
+    let plain = preamble_elf(&elf);
+    let image = with_cookies(&plain);
+    let cookies = (image.len() - plain.len()) / COOKIE;
+    assert_eq!(cookies, 3);
+    let p = classify(&image);
+    assert_eq!(p.format.format, FileFormat::QualcommMbn);
+    assert_eq!(
+        p.format.variant_name.as_deref(),
+        Some("SBL ELF (NAND preamble)")
+    );
+    assert_eq!(p.primary.isa, Isa::Arm);
+    assert!(has_note(
+        &p,
+        "NAND preamble (autodetect magic 0x7D0B435A); ELF image at 0x2800"
+    ));
+    assert!(has_note(
+        &p,
+        "3 virtual block cookies (third word 0xD48B54C6) removed at 128 KiB file boundaries"
+    ));
+    assert!(has_note(
+        &p,
+        "Segment hashes, signature and certificate chain are not verified"
+    ));
+    let slice = p
+        .slices
+        .iter()
+        .find(|s| s.label.as_deref() == Some("ELF image"))
+        .expect("ELF image slice");
+    assert_eq!(slice.isa, Isa::Arm);
+    assert_eq!(
+        (slice.offset, slice.size),
+        (ELF_AT as u64, (image.len() - ELF_AT) as u64)
+    );
+    let decoded = slice.decoded.as_ref().expect("rebuilt bytes");
+    assert_eq!(decoded.transform, "SBL virtual blocks");
+    assert_eq!(decoded.size, elf.len() as u64);
+    assert_eq!(custom_metadata(&p, "qualcomm_elf_offset"), "0x2800");
+    assert_eq!(
+        custom_metadata(&p, "qualcomm_elf_size"),
+        elf.len().to_string()
+    );
+    assert_eq!(custom_metadata(&p, "qualcomm_virtual_block_cookies"), "3");
+}
+
+#[test]
+fn sbl_elf_inside_the_first_block_is_stored_as_is() {
+    let elf = arm_elf(&[&arm_code()]);
+    let p = classify(&preamble_elf(&elf));
+    assert_eq!(
+        p.format.variant_name.as_deref(),
+        Some("SBL ELF (NAND preamble)")
+    );
+    assert_eq!(p.primary.isa, Isa::Arm);
+    assert!(has_note(&p, "No virtual block cookies"));
+    let slice = &p.slices[0];
+    assert_eq!(slice.label.as_deref(), Some("ELF image"));
+    assert_eq!(
+        (slice.offset, slice.size),
+        (ELF_AT as u64, elf.len() as u64)
+    );
+    assert!(slice.decoded.is_none());
+}
+
+#[test]
+fn cookies_in_fill_after_the_elf_belong_to_the_image() {
+    // Zero fill to 512 KiB, as `pad_SBL1_image` writes, then cookies over
+    // the whole file: four of them lie in the fill.
+    let mut plain = preamble_elf(&arm_elf(&[&arm_code()]));
+    plain.resize(512 << 10, 0);
+    let p = classify(&with_cookies(&plain));
+    assert_eq!(
+        p.format.variant_name.as_deref(),
+        Some("SBL ELF (NAND preamble)")
+    );
+    assert!(has_note(&p, "4 virtual block cookies"));
+    assert!(!has_note(&p, "after the image"), "{:?}", p.notes);
+    assert!(p.slices[0].decoded.is_none(), "no cookie inside the ELF");
+}
+
+#[test]
+fn a_missing_or_misplaced_virtual_block_cookie_is_an_error() {
+    let plain = preamble_elf(&large_arm_elf());
+    let mut missing = with_cookies(&plain);
+    put_u32(&mut missing, 2 * VIRTUAL_BLOCK + 8, 0);
+    let text = error_text(&missing);
+    assert!(
+        text.contains("Missing SBL virtual block cookie at 0x40000"),
+        "{text}"
+    );
+    // The generator's own placement puts the second cookie 12 B past the
+    // boundary; it is not implemented (docs/socboot2.md, S12).
+    let text = error_text(&with_generator_cookies(&plain));
+    assert!(
+        text.contains("Missing SBL virtual block cookie at 0x40000"),
+        "{text}"
+    );
+}
+
+#[test]
+fn sbl_elf_header_and_extent_errors_name_the_elf_offset() {
+    let plain = preamble_elf(&arm_elf(&[&arm_code()]));
+    let mut bad_class = plain.clone();
+    bad_class[ELF_AT + 4] = 9;
+    assert!(error_text(&bad_class).contains("Invalid ELF header at 0x2800"));
+    // The first program header's `p_filesz` one byte past the file.
+    let mut long_segment = plain.clone();
+    let file_size_at = ELF_AT + 0x34 + 0x10;
+    put_u32(
+        &mut long_segment,
+        file_size_at,
+        get_u32(&plain, file_size_at) + 1,
+    );
+    let text = error_text(&long_segment);
+    assert!(text.contains("Truncated ELF image at 0x2800"), "{text}");
+}
+
+#[test]
+fn virtual_block_cookies_are_never_read_as_sbl_headers() {
+    // A cookie after a preamble with neither header nor ELF (the cookie
+    // used to be taken for an SBL header and code for its fields).
+    let mut data = small_preamble();
+    data.resize(VIRTUAL_BLOCK, 0xff);
+    data.extend_from_slice(&cookie());
+    data.extend_from_slice(&arm_code());
+    let text = error_text(&data);
+    assert!(
+        text.contains("Missing SBL header or ELF image after the NAND preamble"),
+        "{text}"
+    );
+    // A file that starts with a cookie starts inside a NAND image.
+    let data = [cookie(), arm_code()].concat();
+    let text = error_text(&data);
+    assert!(
+        text.contains("Invalid SBL header at 0x0: a virtual block cookie"),
+        "{text}"
+    );
+}
+
+#[test]
+fn sbl_elf_with_cookies_rejects_cuts_and_survives_mutations() {
+    let image = with_cookies(&preamble_elf(&large_arm_elf()));
+    // Cuts around the ELF start and every cookie, and every 4093 bytes.
+    let mut ends: Vec<usize> = (0..image.len()).step_by(4093).collect();
+    for at in [ELF_AT, VIRTUAL_BLOCK, 2 * VIRTUAL_BLOCK, 3 * VIRTUAL_BLOCK] {
+        ends.extend(at - 16..at + 32);
+    }
+    for end in ends {
+        if let Ok(p) = detect_payload(&image[..end], &ClassifierOptions::new()) {
+            assert_ne!(p.format.format, FileFormat::QualcommMbn, "prefix {end}");
+        }
+    }
+    // Every byte of the ELF and program headers and of every cookie.
+    let mut positions: Vec<usize> = (ELF_AT..ELF_AT + 0x34 + 64).collect();
+    for block in 1..=3 {
+        positions.extend(block * VIRTUAL_BLOCK..block * VIRTUAL_BLOCK + COOKIE);
+    }
+    let mutations: [fn(u8) -> u8; 3] = [|_| 0x00, |_| 0xff, |b| b ^ 0x01];
+    for at in positions {
+        for mutate in mutations {
+            let mut mutated = image.clone();
+            mutated[at] = mutate(mutated[at]);
+            let _ = detect_payload(&mutated, &ClassifierOptions::new());
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Robustness
 // ---------------------------------------------------------------------------
@@ -949,6 +1244,7 @@ fn small_fixtures() -> Vec<(&'static str, Vec<u8>)> {
         ("emmc", emmc_boot(&gfh_image(aarch64, true))),
         ("gfh", gfh_image(code, false)),
         ("sbl", sbl(0xf, aarch64, 0)),
+        ("sbl elf", preamble_elf(&arm_elf(&[code]))),
         ("mbn", mbn_v3(code, &[0x11; 16], &[])),
     ]
 }

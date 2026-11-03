@@ -1,17 +1,22 @@
 //! Legacy Qualcomm MBN headers: the 40-byte version 3 header (no magic)
 //! and the 80-byte SBL header (`FLASH_CODE_WORD`, `MAGIC_NUM`), including
-//! the NAND preamble that may precede an SBL header.
+//! the NAND preamble that may precede an SBL header. Also SBL ELF images
+//! after a NAND preamble, with the virtual block cookies of NAND images
+//! removed.
 //!
 //! Source: coreboot `util/qualcomm/mbn_tools.py` (`Boot_Hdr`, `Sbl_Hdr`,
-//! `ImageType`, `image_preamble`), `mbncat.py` and `ipqheader.py`.
-//! Modern Qualcomm images are ELF files whose hash segment holds these
-//! headers; the ELF parser classifies them by `e_machine`.
+//! `ImageType`, `image_preamble`, `insert_SBL1_magicCookie`), `mbncat.py`
+//! and `ipqheader.py`. Modern Qualcomm images are ELF files whose hash
+//! segment holds these headers; the ELF parser classifies them by
+//! `e_machine`, and an ELF image after a NAND preamble becomes a child
+//! that is classified the same way.
 //!
 //! Code, signature and certificate chain are stored back to back: the
 //! writer sets `sig_ptr = image_dest_ptr + code_size` and `cert_chain_ptr
 //! = sig_ptr + sig_size`.
 
 use super::*;
+use crate::formats::{elf, MAX_PAYLOAD};
 
 /// 40-byte header (10 × u32): image ID (0), header version (4), image
 /// source (8), destination pointer (0x0C), image size (0x10), code size
@@ -54,10 +59,33 @@ const SBL_CONFIG_UNSET: u32 = 0xffff_ffff;
 /// `..128`); the SBL header follows the preamble.
 const AUTODETECT_MAGICS: [u32; 3] = [0x7d0b_435a, 0x7d0b_5436, 0x7d0b_6577];
 
-/// The SBL header after a preamble is searched for on 512-byte boundaries
-/// up to this offset (a bound chosen here, not from the source).
+/// The SBL header or ELF image after a preamble is searched for on
+/// 512-byte boundaries up to this offset (a bound chosen here, not from
+/// the source).
 const MAX_PREAMBLE: usize = 1 << 20;
 const PREAMBLE_STEP: usize = 512;
+
+/// A virtual block cookie is `FLASH_CODE_WORD`, `MAGIC_NUM` and
+/// `SBL_VIRTUAL_BLOCK_MAGIC_NUM`: `MAGIC_COOKIE_LENGTH` (12) bytes per
+/// `VIRTUAL_BLOCK_SIZE` (128 KiB) block.
+///
+/// Where the cookies sit is an observation, not the generator's rule.
+/// `insert_SBL1_magicCookie` appends a cookie after every 128 KiB of its
+/// input, so its cookies drift 12 B further from the block boundaries
+/// with each block. The NAND SBL ELF image examined on 2026-11-02 instead
+/// has a cookie at every 128 KiB boundary of the file (counted from the
+/// preamble), and its segments match their hash segment digests only
+/// with those 12 bytes removed. Only that placement is implemented.
+const VIRTUAL_BLOCK_MAGIC: u32 = 0xd48b_54c6;
+const VIRTUAL_BLOCK_SIZE: usize = 128 << 10;
+const COOKIE_SIZE: usize = 12;
+
+/// The ELF identification magic (`EI_MAG0` to `EI_MAG3`).
+const ELF_MAGIC: &[u8] = b"\x7fELF";
+
+/// Child label and transform name for the ELF image after a preamble.
+const ELF_LABEL: &str = "ELF image";
+const VIRTUAL_BLOCKS_TRANSFORM: &str = "SBL virtual blocks";
 
 /// `ImageType` values and names (`mibib.h` order).
 const IMAGE_TYPES: &[(u32, &str)] = &[
@@ -90,9 +118,17 @@ const IMAGE_TYPES: &[(u32, &str)] = &[
 ];
 
 pub(super) fn detect(data: &[u8]) -> Option<Layout> {
-    let is_sbl =
-        le_u32(data, 0).ok() == Some(SBL_CODEWORD) && le_u32(data, 4).ok() == Some(SBL_MAGIC);
-    is_sbl.then_some(Layout::QualcommSbl)
+    if !has_sbl_magic(data, 0) {
+        return None;
+    }
+    // A preamble followed by neither payload stays an SBL, whose parse
+    // reports the missing header.
+    let payload = preamble_magic(data).and_then(|_| payload_after_preamble(data));
+    let layout = match payload {
+        Some(Payload::Elf(_)) => Layout::QualcommSblElf,
+        Some(Payload::SblHeader(_)) | None => Layout::QualcommSbl,
+    };
+    Some(layout)
 }
 
 pub(super) fn detect_weak(data: &[u8]) -> Option<Layout> {
@@ -298,37 +334,66 @@ pub(super) fn parse_mbn(data: &[u8]) -> Result<Container<'_>> {
     Ok(c)
 }
 
-/// Whether an SBL header (codeword and magic) starts at `at` and is not a
-/// NAND preamble page.
+/// Whether the codeword and magic start at `at`. They open an SBL header,
+/// a NAND preamble page and a virtual block cookie alike; the third word
+/// tells them apart.
+fn has_sbl_magic(data: &[u8], at: usize) -> bool {
+    le_u32(data, at).ok() == Some(SBL_CODEWORD) && le_u32(data, at + 4).ok() == Some(SBL_MAGIC)
+}
+
+/// The page-size autodetect magic when `data` starts with a NAND preamble
+/// page.
+fn preamble_magic(data: &[u8]) -> Option<u32> {
+    le_u32(data, SBL_IMAGE_ID)
+        .ok()
+        .filter(|third| AUTODETECT_MAGICS.contains(third))
+}
+
+/// Whether a virtual block cookie starts at `at`.
+fn is_cookie(data: &[u8], at: usize) -> bool {
+    has_sbl_magic(data, at) && le_u32(data, at + 8).ok() == Some(VIRTUAL_BLOCK_MAGIC)
+}
+
+/// Whether an SBL header (codeword and magic) starts at `at`. A NAND
+/// preamble page and a virtual block cookie start the same way and are
+/// not headers: a cookie is followed by code, not header fields.
 fn is_sbl_header(data: &[u8], at: usize) -> bool {
     let words = (le_u32(data, at), le_u32(data, at + 4), le_u32(data, at + 8));
     match words {
-        (Ok(SBL_CODEWORD), Ok(SBL_MAGIC), Ok(third)) => !AUTODETECT_MAGICS.contains(&third),
+        (Ok(SBL_CODEWORD), Ok(SBL_MAGIC), Ok(third)) => {
+            !AUTODETECT_MAGICS.contains(&third) && third != VIRTUAL_BLOCK_MAGIC
+        }
         _ => false,
     }
 }
 
-/// The offset of the SBL header: 0, or after a NAND preamble the first
-/// 512-byte boundary that holds a header whose image source lies past it.
-fn sbl_header_offset(data: &[u8], notes: &mut Vec<String>) -> Result<usize> {
-    let third = le_u32(data, SBL_IMAGE_ID)?;
-    if !AUTODETECT_MAGICS.contains(&third) {
-        return Ok(0);
-    }
+/// What follows a NAND preamble, at its file offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Payload {
+    /// An 80-byte SBL header.
+    SblHeader(usize),
+    /// An ELF image.
+    Elf(usize),
+}
+
+/// The first 512-byte boundary after a NAND preamble that holds an SBL
+/// header or an ELF image.
+fn payload_after_preamble(data: &[u8]) -> Option<Payload> {
     let limit = MAX_PREAMBLE.min(data.len());
-    let found = (PREAMBLE_STEP..limit)
+    (PREAMBLE_STEP..limit)
         .step_by(PREAMBLE_STEP)
-        .find(|&at| is_sbl_header(data, at));
-    let Some(at) = found else {
-        return Err(error(format!(
-            "Missing SBL header after the NAND preamble (searched {})",
-            size_text(limit)
-        )));
-    };
-    notes.push(format!(
-        "NAND preamble (autodetect magic 0x{third:08X}); SBL header at 0x{at:X}"
-    ));
-    Ok(at)
+        .find_map(|at| payload_at(data, at))
+}
+
+/// The payload that starts at `at`, if any.
+fn payload_at(data: &[u8], at: usize) -> Option<Payload> {
+    if is_sbl_header(data, at) {
+        Some(Payload::SblHeader(at))
+    } else if data.get(at..)?.starts_with(ELF_MAGIC) {
+        Some(Payload::Elf(at))
+    } else {
+        None
+    }
 }
 
 /// The instruction set `booting_image_config` names, and its note.
@@ -355,13 +420,45 @@ fn booting_image_target(config: u32) -> IsaEvidence {
     }
 }
 
+/// An image that starts with the SBL codeword and magic: an SBL header at
+/// 0, or a NAND preamble followed by an SBL header or an ELF image.
 pub(super) fn parse_sbl(data: &[u8]) -> Result<Container<'_>> {
     range(data, 0, SBL_HEADER_SIZE, "SBL header")?;
-    if !(le_u32(data, 0)? == SBL_CODEWORD && le_u32(data, 4)? == SBL_MAGIC) {
+    if !has_sbl_magic(data, 0) {
         return Err(error("Missing SBL codeword and magic"));
     }
-    let mut notes = Vec::new();
-    let header_offset = sbl_header_offset(data, &mut notes)?;
+    // A cookie is followed by code, which must not be read as header
+    // fields: such a file starts inside a NAND image.
+    if is_cookie(data, 0) {
+        return Err(error(
+            "Invalid SBL header at 0x0: a virtual block cookie (third word 0xD48B54C6)",
+        ));
+    }
+    let Some(autodetect) = preamble_magic(data) else {
+        return parse_sbl_header(data, 0, Vec::new());
+    };
+    match payload_after_preamble(data) {
+        Some(Payload::SblHeader(at)) => {
+            let note = format!(
+                "NAND preamble (autodetect magic 0x{autodetect:08X}); SBL header at 0x{at:X}"
+            );
+            parse_sbl_header(data, at, vec![note])
+        }
+        Some(Payload::Elf(at)) => parse_preamble_elf(data, autodetect, at),
+        None => Err(error(format!(
+            "Missing SBL header or ELF image after the NAND preamble (searched {})",
+            size_text(MAX_PREAMBLE.min(data.len()))
+        ))),
+    }
+}
+
+/// The 80-byte SBL header at `header_offset`, its code, signature and
+/// certificate chain. `notes` describe the preamble before the header.
+fn parse_sbl_header(
+    data: &[u8],
+    header_offset: usize,
+    mut notes: Vec<String>,
+) -> Result<Container<'_>> {
     let header = range(data, header_offset, SBL_HEADER_SIZE, "SBL header")?;
     let image_id = le_u32(header, SBL_IMAGE_ID)?;
     let image_src = le_size(header, SBL_IMAGE_SRC)?;
@@ -400,6 +497,209 @@ pub(super) fn parse_sbl(data: &[u8]) -> Result<Container<'_>> {
     Ok(c)
 }
 
+/// Why a run of virtual block cookies ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunEnd {
+    /// The file ends before the next block boundary's cookie.
+    EndOfFile,
+    /// The block boundary at this file offset holds no cookie.
+    MissingCookie(usize),
+    /// The run reached `MAX_PAYLOAD` bytes of the file.
+    Limit,
+}
+
+/// The bytes from a file offset on with the virtual block cookies
+/// removed.
+struct VirtualBlocks<'a> {
+    /// File offset of the first byte.
+    start: usize,
+    /// The bytes without cookies, up to `end`.
+    stream: Cow<'a, [u8]>,
+    /// File offsets of the removed cookies, ascending.
+    cookies: Vec<usize>,
+    /// File offset where `stream` ends.
+    end: usize,
+    /// Why the stream ends at `end`.
+    run_end: RunEnd,
+}
+
+impl VirtualBlocks<'_> {
+    /// The file offset just past the first `len` bytes of `stream`.
+    fn file_end(&self, len: usize) -> usize {
+        let mut offset = self.start + len;
+        for &cookie in &self.cookies {
+            if cookie >= offset {
+                break;
+            }
+            offset += COOKIE_SIZE;
+        }
+        offset
+    }
+}
+
+/// The bytes of `data` from `start` without their virtual block cookies.
+/// Cookies sit at the 128 KiB boundaries of the file after `start`, and
+/// the run ends at the first boundary without one or after `MAX_PAYLOAD`
+/// bytes of the file. When the first boundary holds no cookie, the bytes
+/// are taken as stored, to the end of the file.
+fn virtual_blocks(data: &[u8], start: usize) -> VirtualBlocks<'_> {
+    let limit = data.len().min(start.saturating_add(MAX_PAYLOAD));
+    let mut cookies = Vec::new();
+    // Boundaries stay within one block past `limit` (at most `data.len()`),
+    // so these sums cannot overflow.
+    let mut boundary = (start / VIRTUAL_BLOCK_SIZE + 1) * VIRTUAL_BLOCK_SIZE;
+    let run_end = loop {
+        if boundary + COOKIE_SIZE > limit {
+            break if limit == data.len() {
+                RunEnd::EndOfFile
+            } else {
+                RunEnd::Limit
+            };
+        }
+        if !is_cookie(data, boundary) {
+            break RunEnd::MissingCookie(boundary);
+        }
+        cookies.push(boundary);
+        boundary += VIRTUAL_BLOCK_SIZE;
+    };
+    if cookies.is_empty() {
+        return VirtualBlocks {
+            start,
+            stream: Cow::Borrowed(&data[start..]),
+            cookies,
+            end: data.len(),
+            run_end: RunEnd::EndOfFile,
+        };
+    }
+    let end = match run_end {
+        RunEnd::MissingCookie(at) => at,
+        RunEnd::EndOfFile | RunEnd::Limit => limit.min(boundary),
+    };
+    // Every cookie lies in `start..end` with its 12 bytes before `end`.
+    let mut stream = Vec::with_capacity(end - start - COOKIE_SIZE * cookies.len());
+    let mut piece = start;
+    for &cookie in &cookies {
+        stream.extend_from_slice(&data[piece..cookie]);
+        piece = cookie + COOKIE_SIZE;
+    }
+    stream.extend_from_slice(&data[piece..end]);
+    VirtualBlocks {
+        start,
+        stream: Cow::Owned(stream),
+        cookies,
+        end,
+        run_end,
+    }
+}
+
+/// The size of the ELF image at the start of `blocks`, given the extent
+/// its headers declare, or why `blocks` does not hold all of it.
+fn elf_size(blocks: &VirtualBlocks<'_>, extent: u64) -> Result<usize> {
+    let available = blocks.stream.len();
+    if let Some(size) = usize::try_from(extent)
+        .ok()
+        .filter(|&size| size <= available)
+    {
+        return Ok(size);
+    }
+    let start = blocks.start;
+    let message = match blocks.run_end {
+        RunEnd::MissingCookie(at) => format!(
+            "Missing SBL virtual block cookie at 0x{at:X}: the ELF image at 0x{start:X} declares {extent} B"
+        ),
+        RunEnd::Limit => format!(
+            "Unsupported ELF image of {extent} B at 0x{start:X}: larger than the {} extraction limit",
+            size_text(MAX_PAYLOAD)
+        ),
+        RunEnd::EndOfFile => format!(
+            "Truncated ELF image at 0x{start:X}: {extent} B declared, {available} B present"
+        ),
+    };
+    Err(error(message))
+}
+
+/// A NAND preamble with page-size magic `autodetect`, followed by an ELF
+/// image at `elf_at` (modern SBL builds). The ELF image is rebuilt without
+/// its virtual block cookies and classified on its own; the preamble names
+/// no instruction set.
+fn parse_preamble_elf(data: &[u8], autodetect: u32, elf_at: usize) -> Result<Container<'_>> {
+    let blocks = virtual_blocks(data, elf_at);
+    let extent = elf::file_extent(&blocks.stream)
+        .ok_or_else(|| error(format!("Invalid ELF header at 0x{elf_at:X}")))?;
+    let size = elf_size(&blocks, extent)?;
+    let elf_end = blocks.file_end(size);
+    // Erased flash after the ELF image, up to the end of the cookie run,
+    // belongs to the image together with its cookies.
+    let consumed = if is_padding(&blocks.stream[size..]) {
+        blocks.end
+    } else {
+        elf_end
+    };
+    let removed = blocks
+        .cookies
+        .iter()
+        .filter(|&&cookie| cookie < consumed)
+        .count();
+    let in_elf = blocks
+        .cookies
+        .iter()
+        .filter(|&&cookie| cookie < elf_end)
+        .count();
+
+    let mut c = Container::new(
+        FileFormat::QualcommMbn,
+        Layout::QualcommSblElf.label(),
+        "qualcomm",
+    );
+    c.notes.push(
+        "Qualcomm SBL ELF image after a NAND preamble (codeword 0x844BDCD1, magic 0x73D71034)"
+            .into(),
+    );
+    c.notes.push(format!(
+        "NAND preamble (autodetect magic 0x{autodetect:08X}); ELF image at 0x{elf_at:X}"
+    ));
+    c.notes.push(match removed {
+        0 => "No virtual block cookies".into(),
+        1 => "1 virtual block cookie (third word 0xD48B54C6) removed at a 128 KiB file boundary"
+            .into(),
+        n => format!(
+            "{n} virtual block cookies (third word 0xD48B54C6) removed at 128 KiB file boundaries"
+        ),
+    });
+    c.notes
+        .push("Segment hashes, signature and certificate chain are not verified".into());
+    c.push_metadata(
+        "qualcomm_elf_offset",
+        "ELF image offset",
+        format!("0x{elf_at:X}"),
+    );
+    c.push_metadata("qualcomm_elf_size", "ELF image size (B)", size as u64);
+    c.push_metadata(
+        "qualcomm_virtual_block_cookies",
+        "Virtual block cookies",
+        removed as u64,
+    );
+    let child = if in_elf == 0 {
+        Child::stored(ELF_LABEL, elf_at, &data[elf_at..elf_end])
+    } else {
+        let mut elf_image = blocks.stream.into_owned();
+        elf_image.truncate(size);
+        Child::decoded(
+            ELF_LABEL,
+            elf_at,
+            elf_end - elf_at,
+            Cow::Owned(elf_image),
+            VIRTUAL_BLOCKS_TRANSFORM,
+        )
+    };
+    c.children.push(child);
+    c.consumed = consumed;
+    if let Some(member) = trailing_member(data, consumed, &mut c.notes) {
+        c.children.push(member);
+    }
+    Ok(c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,5 +732,120 @@ mod tests {
         assert!(fields.is_contiguous());
         fields.cert_chain_ptr += 4;
         assert!(!fields.is_contiguous());
+    }
+
+    /// Codeword, magic and `third` as 12 little-endian bytes.
+    fn three_words(third: u32) -> Vec<u8> {
+        [SBL_CODEWORD, SBL_MAGIC, third]
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect()
+    }
+
+    /// `blocks` 128 KiB blocks of a byte pattern that is never padding,
+    /// with a cookie at the start of each block in `cookie_blocks`.
+    fn blocks_with_cookies(blocks: usize, cookie_blocks: &[usize]) -> Vec<u8> {
+        let mut data: Vec<u8> = (1..=251)
+            .cycle()
+            .take(blocks * VIRTUAL_BLOCK_SIZE)
+            .collect();
+        for &block in cookie_blocks {
+            let at = block * VIRTUAL_BLOCK_SIZE;
+            data[at..at + COOKIE_SIZE].copy_from_slice(&three_words(VIRTUAL_BLOCK_MAGIC));
+        }
+        data
+    }
+
+    /// `data` from `start` without the 12 bytes at each of `cookies`.
+    fn without(data: &[u8], start: usize, cookies: &[usize]) -> Vec<u8> {
+        (start..data.len())
+            .filter(|&i| !cookies.iter().any(|&c| (c..c + COOKIE_SIZE).contains(&i)))
+            .map(|i| data[i])
+            .collect()
+    }
+
+    #[test]
+    fn virtual_blocks_drop_the_cookie_at_each_block_boundary() {
+        let start = 0x2800;
+        let data = blocks_with_cookies(3, &[1, 2]);
+        let cookies = [VIRTUAL_BLOCK_SIZE, 2 * VIRTUAL_BLOCK_SIZE];
+        let blocks = virtual_blocks(&data, start);
+        assert_eq!(blocks.cookies, cookies);
+        assert_eq!(blocks.stream.as_ref(), without(&data, start, &cookies));
+        assert_eq!(
+            (blocks.end, blocks.run_end),
+            (data.len(), RunEnd::EndOfFile)
+        );
+        // An end on a boundary stops before that block's cookie; one byte
+        // more starts after it.
+        let first_block = VIRTUAL_BLOCK_SIZE - start;
+        assert_eq!(blocks.file_end(first_block), VIRTUAL_BLOCK_SIZE);
+        assert_eq!(
+            blocks.file_end(first_block + 1),
+            VIRTUAL_BLOCK_SIZE + COOKIE_SIZE + 1
+        );
+        assert_eq!(blocks.file_end(blocks.stream.len()), data.len());
+    }
+
+    #[test]
+    fn the_cookie_run_ends_at_the_first_boundary_without_one() {
+        let data = blocks_with_cookies(3, &[1]);
+        let blocks = virtual_blocks(&data, 0x2800);
+        let second = 2 * VIRTUAL_BLOCK_SIZE;
+        assert_eq!(
+            (blocks.end, blocks.run_end),
+            (second, RunEnd::MissingCookie(second))
+        );
+        assert_eq!(
+            blocks.stream.len(),
+            second - 0x2800 - COOKIE_SIZE,
+            "the run excludes the block without a cookie"
+        );
+    }
+
+    #[test]
+    fn without_a_first_cookie_the_bytes_are_taken_as_stored() {
+        let data = blocks_with_cookies(3, &[2]);
+        let blocks = virtual_blocks(&data, 0x2800);
+        assert!(matches!(blocks.stream, Cow::Borrowed(_)));
+        assert_eq!(blocks.cookies, Vec::<usize>::new());
+        assert_eq!(blocks.stream.len(), data.len() - 0x2800);
+        assert_eq!(blocks.run_end, RunEnd::EndOfFile);
+    }
+
+    #[test]
+    fn the_cookie_run_stops_at_the_extraction_limit() {
+        let count = MAX_PAYLOAD / VIRTUAL_BLOCK_SIZE + 2;
+        let cookie_blocks: Vec<usize> = (1..count).collect();
+        let data = blocks_with_cookies(count, &cookie_blocks);
+        let blocks = virtual_blocks(&data, 0x2800);
+        assert_eq!(blocks.run_end, RunEnd::Limit);
+        assert!(blocks.stream.len() <= MAX_PAYLOAD);
+        assert!(blocks.end <= 0x2800 + MAX_PAYLOAD);
+    }
+
+    #[test]
+    fn preamble_pages_and_cookies_are_not_sbl_headers() {
+        let mut data = vec![0xff; 4 * PREAMBLE_STEP];
+        data[..COOKIE_SIZE].copy_from_slice(&three_words(AUTODETECT_MAGICS[0]));
+        let page = PREAMBLE_STEP;
+        data[page..page + COOKIE_SIZE].copy_from_slice(&three_words(AUTODETECT_MAGICS[1]));
+        let cookie = 2 * PREAMBLE_STEP;
+        data[cookie..cookie + COOKIE_SIZE].copy_from_slice(&three_words(VIRTUAL_BLOCK_MAGIC));
+        assert!(!is_sbl_header(&data, 0));
+        assert!(!is_sbl_header(&data, page));
+        assert!(!is_sbl_header(&data, cookie));
+        assert!(is_cookie(&data, cookie));
+        assert_eq!(payload_after_preamble(&data), None);
+
+        let elf = 3 * PREAMBLE_STEP;
+        data[elf..elf + ELF_MAGIC.len()].copy_from_slice(ELF_MAGIC);
+        assert_eq!(payload_after_preamble(&data), Some(Payload::Elf(elf)));
+        data[cookie + 8..cookie + 12].copy_from_slice(&21u32.to_le_bytes());
+        assert_eq!(
+            payload_after_preamble(&data),
+            Some(Payload::SblHeader(cookie)),
+            "the first payload wins"
+        );
     }
 }
