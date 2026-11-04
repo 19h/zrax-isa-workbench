@@ -912,8 +912,10 @@ fn squashfs_lists_recognized_members_with_stored_offsets_and_decoded_ranges() {
 /// signature's size as a big-endian u64.
 fn rauc_bundle(image: &[u8]) -> Vec<u8> {
     let mut bundle = image.to_vec();
-    bundle.resize(image.len().div_ceil(4096) * 4096, 0);
-    let mut content = vec![0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
+    bundle.resize((image.len() + 4095) / 4096 * 4096, 0);
+    let mut content = vec![
+        0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02,
+    ];
     content.extend_from_slice(&[0x5A; 300]);
     let length = u16::try_from(content.len()).expect("short signature");
     let mut signature = vec![0x30, 0x82];

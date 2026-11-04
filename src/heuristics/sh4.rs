@@ -1,13 +1,13 @@
 //! SH-4 instructions that SH-1, SH-2 and SH-3 code does not hold, for
-//! telling SH-4 code from other SuperH code: the SH-4 runs the SH-3
+//! telling SH-4 code from other SH code: the SH-4 runs the SH-3
 //! instruction set and adds operand-cache operations, FPU register-bank and
 //! transfer-size switches, and vector instructions ("SH-4 Software Manual",
 //! Renesas REJ09B0318, instruction set tables).
 //!
 //! These instructions are rare in compiled code: 30 of 50 Debian `sh4`
-//! sections hold none, each of 3,117 GCC SuperH samples at most 2 (a word
+//! sections hold none, each of 3,117 GCC SH samples at most 2 (a word
 //! of a literal pool can match), and the Aristocrat MK6 game ROMs (SH7750)
-//! hold 0.03 to 0.09 per 1,000 instructions in their SuperH code windows,
+//! hold 0.03 to 0.09 per 1,000 instructions in their SH code windows,
 //! as many as SH-2 ROMs (at most 0.10: words of data inside code windows).
 //! Sega NAOMI BIOS
 //! ROMs (SH7091), which switch FPU modes and use the vector instructions,

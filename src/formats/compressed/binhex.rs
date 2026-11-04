@@ -1,5 +1,5 @@
-//! BinHex 4.0 (`.hqx`): a Macintosh file encoded as 7-bit text (RFC 1741,
-//! "MIME Content Type for BinHex Encoded Files", Appendix "BinHex 4.0
+//! `BinHex` 4.0 (`.hqx`): a Macintosh file encoded as 7-bit text (RFC 1741,
+//! "MIME Content Type for `BinHex` Encoded Files", Appendix "`BinHex` 4.0
 //! Definition", Peter N. Lewis).
 //!
 //! The line `(This file must be converted with BinHex 4.0)` is followed by
@@ -19,7 +19,7 @@
 use super::{error, Decoded};
 use crate::error::Result;
 
-/// The line a BinHex 4.0 file starts with (after optional white space).
+/// The line a `BinHex` 4.0 file starts with (after optional white space).
 pub(super) const BANNER: &[u8] = b"(This file must be converted with BinHex 4.0)";
 
 /// The 64 characters of the encoding, in value order.
@@ -36,7 +36,7 @@ const COLON: u8 = b':';
 const HEADER_AFTER_NAME: usize = 1 + 4 + 4 + 2 + 4 + 4;
 const CRC_SIZE: usize = 2;
 
-/// Whether `data` starts with the BinHex 4.0 banner, after optional white
+/// Whether `data` starts with the `BinHex` 4.0 banner, after optional white
 /// space.
 pub(super) fn has_banner(data: &[u8]) -> bool {
     data[leading_whitespace(data)..].starts_with(BANNER)
@@ -91,7 +91,9 @@ fn six_bit_decode(data: &[u8]) -> Result<(Vec<u8>, usize)> {
             continue;
         }
         let v = value(character).ok_or_else(|| {
-            error(format!("Invalid BinHex character 0x{character:02X} at 0x{at:X}"))
+            error(format!(
+                "Invalid BinHex character 0x{character:02X} at 0x{at:X}"
+            ))
         })?;
         bits = ((bits << 6) | u32::from(v)) & 0xFFFF;
         count += 6;
@@ -109,10 +111,7 @@ fn expand_runs(packed: &[u8], limit: usize) -> Result<Vec<u8>> {
     let mut previous = None;
     let mut bytes = packed.iter().copied();
     while let Some(byte) = bytes.next() {
-        if byte != RUN_MARKER {
-            out.push(byte);
-            previous = Some(byte);
-        } else {
+        if byte == RUN_MARKER {
             let count = bytes
                 .next()
                 .ok_or_else(|| error("Truncated BinHex run at the end of the data"))?;
@@ -120,9 +119,13 @@ fn expand_runs(packed: &[u8], limit: usize) -> Result<Vec<u8>> {
                 out.push(RUN_MARKER);
                 previous = Some(RUN_MARKER);
             } else {
-                let repeated = previous.ok_or_else(|| error("Invalid BinHex run before any byte"))?;
+                let repeated =
+                    previous.ok_or_else(|| error("Invalid BinHex run before any byte"))?;
                 out.extend(std::iter::repeat(repeated).take(usize::from(count) - 1));
             }
+        } else {
+            out.push(byte);
+            previous = Some(byte);
         }
         if out.len() > limit {
             return Err(error(format!("BinHex data expands beyond {limit} B")));
@@ -153,7 +156,7 @@ fn checked<'a>(stream: &'a [u8], at: usize, length: usize, what: &str) -> Result
     Ok(part)
 }
 
-/// The data fork of a BinHex 4.0 file, with every CRC verified.
+/// The data fork of a `BinHex` 4.0 file, with every CRC verified.
 pub(super) fn decode(data: &[u8], limit: usize) -> Result<Decoded> {
     if !has_banner(data) {
         return Err(error("Missing BinHex 4.0 banner"));
@@ -177,10 +180,16 @@ pub(super) fn decode(data: &[u8], limit: usize) -> Result<Decoded> {
     let resource_at = data_at + data_length + CRC_SIZE;
     checked(&stream, resource_at, resource_length, "resource fork")?;
     if fork.len() > limit {
-        return Err(error(format!("BinHex data fork of {} B beyond {limit} B", fork.len())));
+        return Err(error(format!(
+            "BinHex data fork of {} B beyond {limit} B",
+            fork.len()
+        )));
     }
     // White space after the closing colon is part of the text file.
-    let trailing = data[end..].iter().take_while(|b| b.is_ascii_whitespace()).count();
+    let trailing = data[end..]
+        .iter()
+        .take_while(|b| b.is_ascii_whitespace())
+        .count();
     Ok(Decoded {
         data: fork.to_vec(),
         consumed: Some(end + trailing),
@@ -192,7 +201,7 @@ pub(super) fn decode(data: &[u8], limit: usize) -> Result<Decoded> {
 mod tests {
     use super::*;
 
-    /// Encode `stream` (already run-length encoded) as BinHex text.
+    /// Encode `stream` (already run-length encoded) as `BinHex` text.
     fn encode(stream: &[u8]) -> Vec<u8> {
         let mut text = BANNER.to_vec();
         text.extend_from_slice(b"\r\r:");
@@ -221,7 +230,11 @@ mod tests {
         header.extend_from_slice(b"BINAzrax"); // type, creator
         header.extend_from_slice(&[0, 0]); // Finder flags
         header.extend_from_slice(&u32::try_from(data_fork.len()).expect("small").to_be_bytes());
-        header.extend_from_slice(&u32::try_from(resource_fork.len()).expect("small").to_be_bytes());
+        header.extend_from_slice(
+            &u32::try_from(resource_fork.len())
+                .expect("small")
+                .to_be_bytes(),
+        );
         let mut out = header.clone();
         out.extend_from_slice(&crc16(&header).to_be_bytes());
         out.extend_from_slice(data_fork);
@@ -238,7 +251,11 @@ mod tests {
         let mut i = 0;
         while i < stream.len() {
             let byte = stream[i];
-            let run = stream[i..].iter().take_while(|&&b| b == byte).count().min(255);
+            let run = stream[i..]
+                .iter()
+                .take_while(|&&b| b == byte)
+                .count()
+                .min(255);
             if byte == RUN_MARKER {
                 out.extend_from_slice(&[RUN_MARKER, 0]);
                 i += 1;
@@ -273,12 +290,21 @@ mod tests {
         for end in 0..text.len() - 1 {
             assert!(decode(&text[..end], 1 << 20).is_err(), "truncated at {end}");
         }
-        let close = text.iter().rposition(|&b| b == COLON).expect("closing colon");
+        let close = text
+            .iter()
+            .rposition(|&b| b == COLON)
+            .expect("closing colon");
         let mut bad = text.clone();
         bad[close - 3] = if bad[close - 3] == b'!' { b'"' } else { b'!' };
-        assert!(decode(&bad, 1 << 20).is_err(), "a changed character breaks a CRC");
+        assert!(
+            decode(&bad, 1 << 20).is_err(),
+            "a changed character breaks a CRC"
+        );
         let mut invalid = text;
         invalid[close - 2] = b'7';
-        assert!(decode(&invalid, 1 << 20).is_err(), "7 is not in the alphabet");
+        assert!(
+            decode(&invalid, 1 << 20).is_err(),
+            "7 is not in the alphabet"
+        );
     }
 }

@@ -367,7 +367,7 @@ classified. Parser results and notes retain those distinctions.
 [Format coverage gaps](docs/format-gaps.md) lists known kernel-image defects
 and unsupported codecs, containers and dump transforms.
 
-The shipped `ISAM` version-1 model contains **102 classes**: 96 code variants and
+The shipped `ISAM` version-1 model contains **104 classes**: 98 code variants and
 six non-code classes (`neg_lanes`, `neg_media`, `neg_pixels`, `neg_rodata`,
 `neg_table`, `neg_text`). Code
 variants include mainstream x86/ARM/MIPS/PowerPC/RISC-V, legacy architectures,

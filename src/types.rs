@@ -844,7 +844,7 @@ pub enum FileFormat {
     Bzip2,
     /// lzop file
     Lzop,
-    /// BinHex 4.0 text-encoded Macintosh file (`.hqx`)
+    /// `BinHex` 4.0 text-encoded Macintosh file (`.hqx`)
     BinHex,
     /// Apple LZFSE/LZVN block stream
     Lzfse,

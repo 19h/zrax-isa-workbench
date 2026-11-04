@@ -216,7 +216,7 @@ pub enum Codec {
     /// LZMS, as WIM chunks store it; no magic. [`decode_limited`] decodes
     /// exactly `limit` bytes, the chunk size its resource states.
     Lzms,
-    /// BinHex 4.0 text (`.hqx`): the data fork of an encoded Macintosh file.
+    /// `BinHex` 4.0 text (`.hqx`): the data fork of an encoded Macintosh file.
     BinHex,
 }
 

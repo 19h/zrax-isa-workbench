@@ -175,10 +175,9 @@ fn stm8_vector_table_names_an_stm8_core() {
     assert!(classify(&body).is_none(), "the body alone is inconclusive");
     let p = classify(&stm8_image(0x8200, &body)).expect("the vector table decides");
     assert_eq!(p.primary.isa, Isa::Stm8);
-    assert!(p
-        .notes
-        .iter()
-        .any(|n| n.message.contains("STM8 interrupt vector table at offset 0")));
+    assert!(p.notes.iter().any(|n| n
+        .message
+        .contains("STM8 interrupt vector table at offset 0")));
 }
 
 #[test]

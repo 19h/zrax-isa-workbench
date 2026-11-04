@@ -339,10 +339,9 @@ fn binhex_text_reports_its_format_and_the_data_fork_isa() {
     let payload = detect_payload(&text, &ClassifierOptions::new()).expect("BinHex decodes");
     assert_eq!(payload.format.format, FileFormat::BinHex);
     assert_eq!(payload.primary.isa, Isa::X86_64);
-    assert!(payload
-        .notes
-        .iter()
-        .any(|n| n.message.contains("BinHex CRC-16 of header and forks verified")));
+    assert!(payload.notes.iter().any(|n| n
+        .message
+        .contains("BinHex CRC-16 of header and forks verified")));
     // One changed data character breaks a CRC: an error, not a raw guess.
     let mut corrupt = text.clone();
     let middle = corrupt.len() / 2;

@@ -26,7 +26,7 @@ const SQUASHFS_MAGIC_STREAMED_SWAPPED: u32 = 0x4853_5153;
 /// Size of the 4.0 superblock, and of the streamed placeholder header.
 const SUPERBLOCK_SIZE: usize = 96;
 
-/// A RAUC update bundle is a SquashFS image followed by its CMS signature
+/// A RAUC update bundle is a Squashfs image followed by its CMS signature
 /// and, as its last 8 bytes, the signature's size as a big-endian 64-bit
 /// integer (rauc `src/bundle.c`, `append_signature_to_bundle` and
 /// `open_local_bundle`). Erased or zero bytes may sit between image and
@@ -47,7 +47,7 @@ const CMS_SIGNED_DATA_OID: [u8; 11] = [
 /// them; they are accepted and named, not interpreted.
 const BUNDLE_END_MARKER: &[u8] = b"FEOF";
 
-/// The CMS signature of a RAUC bundle after a SquashFS image.
+/// The CMS signature of a RAUC bundle after a Squashfs image.
 struct RaucSignature {
     /// File offset of the DER signature.
     offset: usize,
@@ -57,7 +57,7 @@ struct RaucSignature {
     marker: bool,
 }
 
-/// The RAUC signature after a SquashFS image that ends at `image_end`, if
+/// The RAUC signature after a Squashfs image that ends at `image_end`, if
 /// the rest of `data` is one: padding, a CMS signed-data `ContentInfo` whose
 /// DER length is the size field, and the size field (optionally followed by
 /// [`BUNDLE_END_MARKER`]).

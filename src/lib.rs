@@ -372,8 +372,8 @@ fn has_stm8_vector_table(data: &[u8]) -> bool {
         return false;
     };
     let image_end = u64::from(STM8_FLASH_START) + data.len() as u64;
-    let reset_in_image = reset as usize >= STM8_FLASH_START as usize + table
-        && u64::from(reset) < image_end;
+    let reset_in_image =
+        reset as usize >= STM8_FLASH_START as usize + table && u64::from(reset) < image_end;
     reset_in_image && handlers.all(|handler| handler.is_some())
 }
 
@@ -390,8 +390,12 @@ fn stm8_vector_table_core(
     if !has_stm8_vector_table(data) || answer.as_ref().is_ok_and(|r| r.isa == Isa::Stm8) {
         return None;
     }
-    let mut result =
-        ClassificationResult::from_heuristics(Isa::Stm8, 8, Endianness::Big, STM8_VECTOR_TABLE_CONFIDENCE);
+    let mut result = ClassificationResult::from_heuristics(
+        Isa::Stm8,
+        8,
+        Endianness::Big,
+        STM8_VECTOR_TABLE_CONFIDENCE,
+    );
     result.source = ClassificationSource::Heuristic;
     result.format = FileFormat::Raw;
     let other = match answer {

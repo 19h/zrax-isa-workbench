@@ -388,10 +388,10 @@ impl<'m> Scan<'m> {
     }
 
     /// The class to report for `decision`: the SH-4 when the decision is
-    /// SuperH and its code windows hold SH-4-only instructions, at least
+    /// SH and its code windows hold SH-4-only instructions, at least
     /// [`MIN_SH4_ONLY_INSTRUCTIONS`] and [`MIN_SH4_ONLY_PER_MILLE`], in the
     /// decision's byte order. SH-4
-    /// code reads as SuperH code, which the SH-4 runs; without those
+    /// code reads as SH code, which the SH-4 runs; without those
     /// instructions the bytes do not tell it from SH-2 or SH-3 code.
     fn checked_sh_variant(&self, data: &[u8], decision: &Decision) -> &'static ClassInfo {
         let (le, sh4) = match decision.info.name {
@@ -409,7 +409,7 @@ impl<'m> Scan<'m> {
     }
 
     /// The class to report for `decision`, after the variant checks the
-    /// byte model cannot make: 65816 over 6502, SH-4 over SuperH.
+    /// byte model cannot make: 65816 over 6502, SH-4 over other SH code.
     fn reported_class(&self, data: &[u8], decision: &Decision) -> &'static ClassInfo {
         match decision.info.family {
             "6502" => self.checked_6502_variant(data, decision),
@@ -463,12 +463,12 @@ const MIN_PREFIX_GROUP_SHARE_FOR_Z80: f64 = 0.002;
 const MIN_NATIVE_MODE_INSTRUCTIONS: u32 = 8;
 const MIN_NATIVE_MODE_PER_MILLE: f64 = 1.0;
 
-/// Least SH-4-only instructions (see `sh4.rs`) in the SuperH family's code
+/// Least SH-4-only instructions (see `sh4.rs`) in the SH family's code
 /// windows, and least of them per thousand instructions, for an SH-4
 /// answer. In MAME-identified fw1 ROMs (2026-11-04), SH-2 code windows
 /// (SH7604, SH7032, SH7043A) hold 0 to 2 (at most 0.10 per thousand) and
 /// Sega NAOMI BIOS ROMs 121 to 1,260 (3.6 to 5.6 per thousand); each GCC
-/// SuperH training sample holds at most 2, which in a small program's code
+/// SH training sample holds at most 2, which in a small program's code
 /// windows can pass 1 per thousand.
 const MIN_SH4_ONLY_INSTRUCTIONS: u32 = 8;
 const MIN_SH4_ONLY_PER_MILLE: f64 = 1.0;

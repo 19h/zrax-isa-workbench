@@ -178,6 +178,19 @@ Three rules bound what the evidence may claim:
   to 3 (at most 0.36 per thousand); the two W65C816 ROMs of MAME's `we816`,
   the CMD SuperCPU ROM, three SNES copier BIOS ROMs and an Apple II SCSI card
   ROM that enters native mode hold 42 to 168 (2.7 to 35.7 per thousand).
+* **SH-4 needs SH-4-only instructions.** The model has no SH-4 class: SH-4
+  code reads as SH code, which the SH-4 runs. An SH answer becomes SH-4 when
+  the family's code windows, read as 16-bit words in the answer's byte
+  order (`heuristics/sh4.rs`), hold at least 8 SH-4-only instructions
+  (`OCBI`, `OCBP`, `OCBWB`, `MOVCA.L`, `FSCHG`, `FRCHG`, `FIPR`, `FTRV`;
+  `PREF` is SH-3 as well) and at least one per thousand. In MAME-identified
+  fw1 ROMs (2026-11-04), SH-2 code windows hold 0 to 2 of them and Sega NAOMI
+  BIOS ROMs 121 to 1,260 (3.6 to 5.6 per thousand); compiled SH-4 code
+  (Debian `sh4`, the Aristocrat MK6 games) holds too few to be told from
+  SH-2 or SH-3 code and stays SH. The minimum count matters: one GCC program
+  reached 1 per thousand in the code windows of its SH-2 builds with a
+  single literal-pool word. 48 fw1 NAOMI, Chihiro and Hikaru BIOS ROMs read
+  as SH-4, no SH-2 ROM does.
 
 A transformed reading (byte swap, lane interleave, NAND spare removal) must
 also reach 0.8 confidence and explain at least 14% of the input as code; a
@@ -250,6 +263,9 @@ of the code bytes is reported.
 | Intel 8080/8085 code (`corpus_extra/raw-ext/i8085`) | 107 public GitHub repositories of 8080/8085 assembly (monitors, CP/M BIOSes, Kermit, Altair and course programs) at pinned commits, assembled with AS 1.42 in 8085 mode, instruction lines only (`scripts/asl_asm_corpus.py --profile 8085`) | `i8085` by assembly |
 | Motorola 68HC11 code (`corpus_extra/raw-ext/hc11`) | 12 public GitHub repositories of 68HC11 assembly (the Buffalo monitor, Flex11, Holden VY ECU patches, course programs) at pinned commits, assembled with AS 1.42 as `6811` after rewriting full-line `*` comments, instruction lines only (`--profile 68hc11`); 27 KB, with the 23 KB IDA-test ECU dump 50 KB | `hc11` by assembly |
 | Motorola 68000 code (`corpus_extra/raw-asm/m68k`, corpus `corpus-m68kx`) | 77 of 938 public GitHub repositories of 68000 assembly (Atari ST and Amiga programs, Mega Drive games and disassemblies of commercial games, monitors, course programs) at pinned commits, assembled with AS 1.42 for the 68000 after renaming asm68k/Devpac local labels, 68000 instruction lines only (`CPU Z80` stretches dropped; `--profile 68000`); 359 KB after run and text-block removal, under its own corpus source (`asl-68000`) so it does not share the 1 MB cap of `raw`. The other 68000 samples are compiled (Debian, GCC); before this the hand-written Neo-Geo system ROM read at 0.5 to 0.8 bits/byte margins | `m68k` by assembly |
+| Z8 and Z8 Encore! programs (`corpus_extra/raw-z8`, corpus `corpus-z8x`) | the user-submitted Zilog archive (2026-11-04): 33 classic Z8 programs and ROMs (Apple ProFile, HD20 and Widget disk firmware, Arcom BASIC and monitor, NASCOM BASIC, the Z8671 BASIC/Debug ROMs, unimon, Zilog application notes) as `z8`, 48 Z8 Encore! application notes and reference designs built with ZDS II as `ez8` (a separate class: compiler output is another byte distribution); grouped by project with `build_corpus.py --raw-group` | `z8`, `ez8` by provenance |
+| MCS-251 code (`corpus_extra/mcs251-objects`, corpus `corpus-mcs251x`) | the armgen programs (186 that compile) and 556 library modules built with the SDCC MCS-251 downstream port (`gevico/sdcc-c251` at a pinned commit, `scripts/sdcc_matrix/variants-mcs251.txt`; Source-mode code), 3.1 MB | `mcs251` by target config |
+| FR firmware (`fw1-realos` in `scripts/fw1/fw1_corpus.py`) | fw1 raw images that link Fujitsu's REALOS/FR (its banner): 7 camera firmware images, the 4 KiB blocks holding an FR `RET`; FR30's other samples are GCC output | `fr30` by the RTOS banner |
 | µ'nSP code (`fw1-mame-unsp` in `scripts/fw1/fw1_corpus.py`) | the instruction words of 8 fw1 ROMs that MAME maps flat into a µ'nSP SoC's program space (V.Smile and V.Smile Baby system ROMs, SPG2xx and GPL162xx game ROMs; 5 ROM families), found by recursive descent from the interrupt vectors, through `call` targets, and from untraced `push` words (`scripts/fw1/unsp_trace.py`, decoding after MAME's µ'nSP disassembler). A ROM is traced only if the words at the vectors form a vector table (the handler vectors within 0x400 words; 0x14-0x194 in these ROMs): MAME's `pokermor` ROM has 16-bit pixel data there, and its trace through pixel data was labelled code until 2026-11-04. Traced functions of 64 words or more that are mostly one repeated word are fill, not code; 64 KiB blocks of the same ROMs without one traced instruction as `neg_media` (as `neg_rodata` they shifted that class: an ARM relocation table read as PIC24) | MAME's CPU for the ROM region; the trace |
 | byte lanes (`scripts/fw1/lane_negatives.py`) | the 2 and 4 byte lanes of 68000 code samples, 2.3 MB: one file per lane of a wide bus holds no whole instruction | `neg_lanes` by construction |
 | synthetic 8-bit PCM (`synthetic-pcm8`) | signed 8-bit decaying tone bursts at six amplitudes, near-silent to full scale, separated by silence, as haptic and ringtone files store them | `neg_media` by construction |
@@ -334,11 +350,11 @@ non-code, for whole samples and for 128 B / 512 B / 2 KB snippets.
 
 ### Results (held-out test split, model trained on the train split)
 
-Measured on 2026-11-04 (macOS AArch64) with `ship21-train`, the shipped recipe
-trained on the train split only: 97 classes (91 ISA variants of 61 families,
-plus 6 data classes); the shipped all-splits model `ship21-all` has 102 (96
-variants of 64 families), since five small classes reach the 48 KiB minimum
-only with their test samples.
+Measured on 2026-11-04 (macOS AArch64) with `ship22-train`, the shipped recipe
+trained on the train split only: 99 classes (93 code classes plus 6 data
+classes); the shipped all-splits model `ship22-all` has 104 (98 code
+classes), since five small classes reach the 48 KiB minimum only with their
+test samples.
 
 Base corpus (`corpus-base7`: the compiled and raw corpora, the Hexagon
 collection, MN10300, hand-written PIC14, 8080/8085 and the synthetic
@@ -352,9 +368,10 @@ negatives): 14,526 held-out code samples, 464 non-code samples.
 | 128 B snippet | 93.8% | 0.0% | 6.2% | 0.0% |
 
 Macro average over classes (whole samples): 97.2%. Exact variant (bitwidth and
-endianness right as well): 99.0% (98.9% with `ship19-train` on `corpus-base6`;
+endianness right as well): 98.9% (98.9% with `ship19-train` on `corpus-base6`;
 the corrected ARM labels make big-endian Arm and Thumb exact on all 179 and
-106 held-out samples). Several 8/16-bit classes have only one to
+106 held-out samples, and one SuperH sample of 300 now reads as SH-4, which
+counts as not exact). Several 8/16-bit classes have only one to
 three held-out samples (pieces of a single image), which keeps the macro
 average below the overall rate. The one false accept is a synthetic
 uncompressed image (1 of 25 held-out `neg_pixels` samples, read as IA-64).
@@ -366,16 +383,18 @@ the class's hand-written training samples).
 
 | held-out set | code samples | correct | exact | wrong | rejected | non-code | false accept |
 |---|---|---|---|---|---|---|---|
-| fw1 golden set, test split (`corpus-fw1v20`) | 975 | 99.0% | 98.9% | 0.0% | 1.0% | 536 | 0.9% |
+| fw1 golden set, test split (`corpus-fw1v22`) | 983 | 99.2% | 99.1% | 0.0% | 0.8% | 536 | 0.9% |
+| MCS-251 (`corpus-mcs251x`, SDCC MCS-251 port) | 114 | 100.0% | 100.0% | 0.0% | 0.0% | 0 | - |
+| Z8 and eZ8 (`corpus-z8x`, the submitted Z8 archive) | 13 | 100.0% | 100.0% | 0.0% | 0.0% | 0 | - |
 | ISAdetect files 400-549 (`corpus-ds2h`) | 3,438 | 100.0% | 100.0% | 0.0% | 0.0% | 0 | - |
 
 The fw1 false accepts are 5 of 300 held-out `.rodata`/`.data` samples (3
-little-endian and 1 big-endian ARM, 1 CR16; iteration 12: 4). The two fw1 µ'nSP test samples (the
-2.8 KiB traced from the asset ROM `29dl640e.u3`, in both word orders) are
-rejected.
+little-endian and 1 big-endian ARM, 1 CR16; iteration 12: 4). The fw1 µ'nSP
+test samples (4 in each word order) are right; the traced bytes of
+`29dl640e.u3`, pixel data, are no longer labelled code.
 
-Through the CLI, file by file, on the 935 fw1 golden test files: 934 correct,
-0 wrong, 1 rejected (`29dl640e.u3`). With `ship21-all`, on 1,150 ISAdetect files
+Through the CLI, file by file, on the 940 fw1 golden test files: 940 correct,
+0 wrong, 0 rejected (`ship22-train`). With `ship21-all`, on 1,150 ISAdetect files
 no corpus uses (files 550-599 of each of the 23 architectures), the largest executable
 section alone, as raw bytes, gives 1,149 right answers, 0 wrong and 1
 rejection (a 556-byte section; `scripts/fw1/elf_check.py`); with the ARM
@@ -470,13 +489,17 @@ Known confusions:
 - The MN10300 class is trained on GCC output only (`-mam33`, `-mam33-2`,
   `-mam34`); the two decrypted Panasonic GH2 firmware images (14.9 MiB, not
   in training) read as MN10300 at 0.99.
-- µ'nSP code that is a small part of an asset ROM is inconclusive: MAME's
-  `pokermor` dump holds 2.8 KiB of traced code in 8 MiB of 16-bit sprites
-  and audio.
-- SH-4 code is reported as SuperH (`sh`); the model has no SH-4 class.
-- MCS-96 ECU code from a Bosch M5.2.2 (`POSBOX.ORI`) is inconclusive: the
-  class holds 106 KB, and the open 80C196 assembly found is in Intel ASM96
-  syntax, which AS does not assemble.
+- MAME's `pokermor` µ'nSP ROM holds pixel data where the vectors would be,
+  so its code cannot be traced; it gives no ISA.
+- SH-4 code is reported as SuperH (`sh`) unless it holds SH-4-only
+  instructions (see the decision rules); the model has no SH-4 class.
+- MCS-251 code unlike SDCC's output is inconclusive: the Edgeport 80251
+  firmware `down2.fw` costs about 8 bits/byte under every class.
+- MCS-96 has no source of open code beyond IDA's samples and fw1 ECU dumps:
+  the open 80C196 assembly found is in Intel ASM96 syntax, which AS does not
+  assemble. The ECU96 label (fw1 ECU dumps with dense 80C196 register loads)
+  gives the class its ECU code; `POSBOX.ORI` (Bosch M5.2.2) reads as MCS-96
+  at 0.99, from its own training samples.
 - A code-share floor alone does not separate data from code: real code in fw1
   (NAOMI SH-4 BIOS images, an 8051 update image, firmware updates with a
   small uncompressed part) explains 6% or less of some inputs. The sparse-code

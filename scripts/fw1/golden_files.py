@@ -26,7 +26,7 @@ CLASS_ISA = {
 
 # Golden labels whose expected answer is not their class's: the NAOMI BIOS
 # runs on an SH-4 (training class `sh`), reported as SH-4 or as SuperH.
-LABEL_ISA = {"naomi-bios": "sh4|sh"}
+LABEL_ISA = {"rom-naomi-bios": "sh4|sh"}
 
 
 def load_fw1_corpus():

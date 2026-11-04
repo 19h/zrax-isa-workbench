@@ -97,7 +97,12 @@ fn sh4_routine(i: u8) -> Vec<u8> {
         .iter()
         .flat_map(|w| w.to_le_bytes())
         .collect();
-    [&body[..body.len() - 4], &sh4_only[..], &body[body.len() - 4..]].concat()
+    [
+        &body[..body.len() - 4],
+        &sh4_only[..],
+        &body[body.len() - 4..],
+    ]
+    .concat()
 }
 
 /// A model whose only SuperH class is `sh`, trained on both forms, and one
