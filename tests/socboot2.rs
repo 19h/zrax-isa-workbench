@@ -1,7 +1,8 @@
 //! SoC boot ROM images: Allwinner eGON.BT0 (A32 and RISC-V jump words,
 //! stamp checksum) and TOC0, Rockchip RKFW/RKAF/RKBOOT and idbloaders (RC4
 //! descrambling, RKCRC, v2 hashes), MediaTek preloaders (device header,
-//! BRLYT, GFH, `GFH_BROM_CFG` AArch64 hand-off) and Qualcomm MBN headers
+//! BRLYT, GFH, `GFH_BROM_CFG` AArch64 hand-off), MediaTek partition images
+//! (`mtk_hdr` chains, trailing data) and Qualcomm MBN headers
 //! (80-byte SBL with `booting_image_config`, NAND preamble, magic-less
 //! 40-byte version 3, SBL ELF images after a NAND preamble with virtual
 //! block cookies), with corruption, truncation and mutation sweeps.
@@ -1304,4 +1305,85 @@ fn json_ids_are_stable() {
     for (format, id) in ids {
         assert_eq!(serde_json::to_string(&format).expect("serializes"), id);
     }
+}
+
+/// `mtk_hdr` magic (little-endian) and the extension magic `MediaTek`'s
+/// image tool writes at 0x30.
+const MTK_MAGIC: u32 = 0x5888_1688;
+const MTK_EXT_MAGIC: u32 = 0x5889_1689;
+
+/// One `MediaTek` partition image: a 512-byte header (magic, payload size,
+/// 32-byte name; with `align`, the extension magic at 0x30, header size 512
+/// at 0x34 and the alignment at 0x44, other padding 0xFF), the payload, and
+/// padding up to `align`.
+fn mtk_image(name: &str, payload: &[u8], align: Option<usize>) -> Vec<u8> {
+    let mut v = vec![0u8; 0x28];
+    put_u32(&mut v, 0, MTK_MAGIC);
+    put_u32(&mut v, 4, payload.len() as u32);
+    v[8..8 + name.len()].copy_from_slice(name.as_bytes());
+    v.resize(512, 0xff);
+    if let Some(align) = align {
+        put_u32(&mut v, 0x30, MTK_EXT_MAGIC);
+        put_u32(&mut v, 0x34, 512);
+        put_u32(&mut v, 0x44, align as u32);
+    }
+    v.extend_from_slice(payload);
+    if let Some(align) = align {
+        pad_to(&mut v, align);
+    }
+    v
+}
+
+#[test]
+fn mediatek_partition_payloads_are_components_classified_from_their_bytes() {
+    let code = arm_code();
+    let mut v = mtk_image("md1rom", &code[..1001], Some(16));
+    let second = v.len();
+    v.extend(mtk_image("md1dsp", &aarch64_code(), Some(16)));
+    let p = classify(&v);
+    assert_eq!(p.format.format, FileFormat::MediatekImage);
+    let images: Vec<(String, u64, Isa)> = p
+        .slices
+        .iter()
+        .map(|s| (s.label.clone().unwrap(), s.offset, s.isa))
+        .collect();
+    assert_eq!(
+        images,
+        [
+            ("md1rom".to_string(), 512, Isa::Arm),
+            ("md1dsp".to_string(), second as u64 + 512, Isa::AArch64),
+        ]
+    );
+    assert!(has_note(&p, "the header names no processor"));
+}
+
+#[test]
+fn mediatek_partition_without_extension_and_with_trailing_data() {
+    let mut v = mtk_image("LK", &arm_code(), None);
+    v.extend([0u8; 64]);
+    v.extend(b"leftover partition bytes");
+    let p = classify(&v);
+    assert_eq!(p.format.format, FileFormat::MediatekImage);
+    assert_eq!(
+        p.slices.last().unwrap().label.as_deref(),
+        Some("Trailing data")
+    );
+    assert!(has_note(&p, "are not part of an image"));
+}
+
+#[test]
+fn mediatek_partition_truncation_and_bad_fields_are_parse_errors() {
+    let v = mtk_image("md3rom", &arm_code()[..256], Some(16));
+    for end in 4..512 + 256 {
+        assert!(
+            error_text(&v[..end]).contains("MediaTek partition"),
+            "{end}"
+        );
+    }
+    let mut zero = v.clone();
+    put_u32(&mut zero, 4, 0);
+    assert!(error_text(&zero).contains("Invalid MediaTek partition payload size 0"));
+    let mut align = v.clone();
+    put_u32(&mut align, 0x44, 3);
+    assert!(error_text(&align).contains("Invalid MediaTek partition header"));
 }

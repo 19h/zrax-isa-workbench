@@ -90,6 +90,101 @@ fn separately_dumped_lanes_are_interleaved_by_the_api() {
     assert!(detect_interleaved(&[&even, &odd[1..]], &ClassifierOptions::new()).is_err());
 }
 
+/// 16-byte rows of evenly spaced values whose base moves from row to row,
+/// the shape of an engine calibration map.
+fn table_rows(len: usize) -> Vec<u8> {
+    (0..len / 16)
+        .flat_map(|row| {
+            let base = (row * 7 % 160) as u8;
+            (0..16u8).map(move |i| base + 5 * i)
+        })
+        .collect()
+}
+
+#[test]
+fn a_transformed_reading_must_explain_most_of_the_input() {
+    // 2 KiB of byte-swapped code inside 64 KiB of table rows: the swap
+    // reading decodes the island at high confidence, but explains about 3%
+    // of the input, so it is not a reading of the whole dump.
+    let code = fixture("aarch64.text.bin");
+    let island = Transform::Swap16.apply(&code[..2048]).unwrap();
+    let table = table_rows(64 * 1024);
+    let data = [&table[..32 * 1024], &island, &table[32 * 1024..]].concat();
+    let quiet = ClassifierOptions {
+        detect_extensions: false,
+        ..ClassifierOptions::new()
+    };
+    let swapped = heuristics::analyze_reading(&Transform::Swap16.apply(&data).unwrap(), &quiet, 11);
+    assert_eq!(swapped.result.unwrap().isa, Isa::AArch64);
+    assert!(swapped.code_share < 0.1);
+    assert!(matches!(
+        detect_payload(&data, &ClassifierOptions::new()),
+        Err(ClassifierError::HeuristicInconclusive { .. })
+    ));
+}
+
+#[test]
+fn a_program_rom_with_tables_beside_its_code_is_recovered() {
+    // 6 KiB of byte-swapped code beside 24 KiB of table rows, as a program
+    // ROM with voice or calibration tables holds them: the swap reading
+    // explains about a fifth of the input as code, above the 14% bar.
+    let code = fixture("aarch64.text.bin");
+    let program = Transform::Swap16.apply(&code[..6 * 1024]).unwrap();
+    let data = [&program[..], &table_rows(24 * 1024)].concat();
+    let quiet = ClassifierOptions {
+        detect_extensions: false,
+        ..ClassifierOptions::new()
+    };
+    let swapped = heuristics::analyze_reading(&Transform::Swap16.apply(&data).unwrap(), &quiet, 11);
+    assert!(
+        (0.14..0.25).contains(&swapped.code_share),
+        "{}",
+        swapped.code_share
+    );
+    let p = detect_payload(&data, &ClassifierOptions::new()).unwrap();
+    assert_eq!(p.primary.isa, Isa::AArch64);
+    assert_eq!(transform_name(&p).as_deref(), Some("16-bit byte swap"));
+}
+
+#[test]
+fn one_code_window_does_not_classify_a_large_input() {
+    // 64 KiB of table rows with 1 KiB of AArch64 code: one window of
+    // evidence in 65 is not an image of that ISA. Four KiB of code is.
+    let code = fixture("aarch64.text.bin");
+    let table = table_rows(64 * 1024);
+    let island = |len: usize| [&table[..32 * 1024], &code[..len], &table[32 * 1024..]].concat();
+    assert!(matches!(
+        detect_payload(&island(1024), &ClassifierOptions::new()),
+        Err(ClassifierError::HeuristicSparseCode {
+            code_windows: 1,
+            ..
+        })
+    ));
+    let p = detect_payload(&island(4096), &ClassifierOptions::new()).unwrap();
+    assert_eq!(p.primary.isa, Isa::AArch64);
+}
+
+#[test]
+fn sparse_code_with_strong_evidence_classifies_a_large_image() {
+    // 2 KiB of AArch64 code in 512 KiB of table rows: fewer than one code
+    // window per 128 informative windows, but decided well above the 0.9
+    // the sparse-code rule asks for.
+    let code = fixture("aarch64.text.bin");
+    let table = table_rows(512 * 1024);
+    let image = [&table[..256 * 1024], &code[..2048], &table[256 * 1024..]].concat();
+    let p = detect_payload(&image, &ClassifierOptions::new()).unwrap();
+    assert_eq!(p.primary.isa, Isa::AArch64);
+    assert!(p.primary.confidence >= 0.9);
+}
+
+#[test]
+fn recovered_code_is_code_throughout() {
+    let code = fixture("riscv64.text.bin");
+    let reading = heuristics::analyze_reading(&code, &ClassifierOptions::new(), 11);
+    assert_eq!(reading.result.unwrap().isa, Isa::RiscV64);
+    assert!(reading.code_share > 0.9);
+}
+
 #[test]
 fn fast_mode_and_nested_inputs_do_not_search_transforms() {
     let swapped = Transform::Swap16

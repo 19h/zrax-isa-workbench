@@ -435,6 +435,19 @@ pub fn detect_strong(data: &[u8]) -> Option<Variant> {
     Some(variant)
 }
 
+/// Least load blocks a magic-less, checksum-less boot table needs before it
+/// is recognized automatically. The hex conversion utilities emit one block
+/// per initialized section. With a single block the whole structure is a
+/// length, an address and a zero word, which ELF `.dynamic` sections,
+/// Qualcomm data segments and vendor images reproduce (fw1 audit, 2026-11-03).
+const MIN_AUTO_BLOCKS: usize = 2;
+
+/// On-chip RAM where OMAP and Sitara boot ROMs load standalone GP images.
+/// Own reading of the U-Boot SPL text bases, not a TI table: OMAP3
+/// `0x4020_0800`, `AM335x` `0x402F_0400`, `AM437x` `0x402F_4000`, OMAP4/5 and
+/// DRA7 `0x4030_0000`.
+const GP_LOAD_WINDOW: std::ops::Range<u64> = 0x4020_0000..0x4040_0000;
+
 /// Weak signatures require a complete structure and a loaded entry point.
 pub fn detect_weak(data: &[u8]) -> Option<Variant> {
     if data.len() < 4 {
@@ -456,7 +469,39 @@ pub fn detect_weak(data: &[u8]) -> Option<Variant> {
         Variant::GpImage,
     ]
     .into_iter()
-    .find(|kind| parse_container(data, *kind).is_ok())
+    .find(|kind| parse_container(data, *kind).is_ok_and(|c| has_detection_evidence(*kind, &c)))
+}
+
+/// Whether a parsed magic-less layout carries enough structure to be
+/// recognized without the caller naming the layout. Keyed layouts (C28x,
+/// C54x) always do.
+fn has_detection_evidence(kind: Variant, c: &Container) -> bool {
+    match kind {
+        // Only external-memory tables (memory width word) identify C3x/C4x;
+        // headerless peripheral streams are a list of blocks and nothing else.
+        Variant::C31Boot | Variant::C32Boot | Variant::C4xBoot => {
+            c.isa == Isa::TiC3x && c.sections.len() >= MIN_AUTO_BLOCKS
+        }
+        // Addresses and sizes are bytes, so blocks bound for the same memory
+        // would overwrite each other; a real table never does.
+        Variant::C55xLegacy | Variant::C6000Boot => {
+            c.sections.len() >= MIN_AUTO_BLOCKS && sections_are_disjoint(&c.sections)
+        }
+        // A size word and an address: any file that starts with its own
+        // length matches unless the address is where a boot ROM loads GP images.
+        Variant::GpImage => c.entry.is_some_and(|entry| GP_LOAD_WINDOW.contains(&entry)),
+        _ => true,
+    }
+}
+
+/// True if no two sections share a destination byte (addresses in bytes).
+fn sections_are_disjoint(sections: &[Section]) -> bool {
+    let mut ranges: Vec<(u64, u64)> = sections
+        .iter()
+        .map(|s| (s.address, s.address + s.data.len() as u64))
+        .collect();
+    ranges.sort_unstable();
+    ranges.windows(2).all(|w| w[0].1 <= w[1].0)
 }
 
 /// Parse `data` as the given layout.

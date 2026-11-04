@@ -412,14 +412,21 @@ fn header_is_plausible(data: &[u8], machine: u16) -> bool {
         return false;
     }
     let size_unit = TiHeader::read(data, machine).map_or(1, TiHeader::address_unit);
+    // The string table follows the symbol table and starts with its own
+    // 4-byte size, so a name offset is at least 4 and needs a symbol table.
+    let string_table = (ptr_symbol_table != 0).then(|| ptr_symbol_table + num_symbols * 18);
     (0..num_sections).all(|i| {
         let sh = table + i * section_size;
         let name = &data[sh..sh + 8];
         let name_len = name.iter().position(|&b| b == 0).unwrap_or(8);
         // TI COFF2 and long-name COFF store a string-table offset (first
-        // four bytes zero) instead of an inline name.
+        // four bytes zero) instead of an inline name. An all-zero name is
+        // neither (zero-filled data after a 2-byte machine word).
         let named = name_len > 0 && name[..name_len].iter().all(u8::is_ascii_graphic);
-        let offset_name = name[..4] == [0, 0, 0, 0];
+        let name_offset = u64::from(u32_at(sh + 4));
+        let offset_name = name[..4] == [0, 0, 0, 0]
+            && name_offset >= 4
+            && string_table.is_some_and(|start| start + name_offset < file_len);
         let raw_size = u64::from(u32_at(sh + 16)) * size_unit;
         let raw_ptr = u64::from(u32_at(sh + 20));
         (named || offset_name) && (raw_ptr == 0 || raw_ptr + raw_size <= file_len)
@@ -768,6 +775,30 @@ mod tests {
         assert_eq!(&data[..2], &[0x00, 0x80]);
         assert_eq!(detect(&data), Some(machine::Z8_LEGACY));
         assert_eq!(parse(&data).unwrap().isa, Isa::Z8);
+    }
+
+    #[test]
+    fn zero_filled_section_header_is_not_coff() {
+        // Zilog machine word, one section, then nothing but zeros: a
+        // Qualcomm data segment in fw1 (`hdcp2p2.b05`) reads this way.
+        let mut data = vec![0u8; 400];
+        data[..4].copy_from_slice(&[0x00, 0x80, 0x01, 0x00]);
+        assert_eq!(detect(&data), None);
+    }
+
+    #[test]
+    fn string_table_section_name_needs_a_string_table() {
+        let mut data = make_coff_header(machine::AMD64, 1);
+        let sh = COFF_HEADER_SIZE;
+        data[sh..sh + 8].fill(0);
+        // Name offset 4 into the string table after the 10 symbols
+        data[sh + 4..sh + 8].copy_from_slice(&4u32.to_le_bytes());
+        let string_table = COFF_HEADER_SIZE + SECTION_HEADER_SIZE + 10 * 18;
+        data.resize(string_table + 16, 0);
+        assert_eq!(detect(&data), Some(machine::AMD64));
+        // Without a symbol table there is no string table to point into
+        data[8..12].fill(0);
+        assert_eq!(detect(&data), None);
     }
 
     #[test]

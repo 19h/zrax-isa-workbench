@@ -40,6 +40,18 @@ pub enum ClassifierError {
         /// What is wrong with the certificate.
         message: String,
     },
+    /// Error parsing a data file (binary property list, QCA board data).
+    #[error("Data file parse error: {message}")]
+    DataFileParseError {
+        /// What is wrong with the data file.
+        message: String,
+    },
+    /// Error parsing an OLE compound file.
+    #[error("Compound file parse error: {message}")]
+    CfbParseError {
+        /// What is wrong with the compound file.
+        message: String,
+    },
 
     /// Unsupported or unknown file format.
     #[error("Unknown file format: magic bytes {magic:02X?}")]
@@ -651,6 +663,18 @@ pub enum ClassifierError {
     /// Heuristic analysis failed to determine architecture.
     #[error("Heuristic analysis inconclusive: confidence {confidence:.2}% below threshold {threshold:.2}%")]
     HeuristicInconclusive { confidence: f64, threshold: f64 },
+
+    /// Heuristic analysis found the decided ISA's code in too few of the
+    /// input's informative windows to classify the input as a whole.
+    #[error(
+        "Heuristic analysis inconclusive: code in {code_windows} of {informative_windows} informative windows"
+    )]
+    HeuristicSparseCode {
+        /// Windows won by the decided ISA's family.
+        code_windows: usize,
+        /// Windows that are not padding.
+        informative_windows: usize,
+    },
 
     /// Multiple architectures detected (e.g., fat binary).
     #[error("Multiple architectures detected: {architectures:?}")]

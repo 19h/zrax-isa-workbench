@@ -31,7 +31,8 @@ const ISA_NAMES = {
   i860: 'i860', i960: 'i960', vax: 'VAX', pdp11: 'PDP-11',
   z80: 'Z80', mcs6502: '6502',
   wasm: 'WebAssembly', jvm: 'JVM', dalvik: 'Dalvik',
-  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU',
+  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU', mn10300: 'MN10300', i8085: 'Intel 8080/8085',
+  unsp: 'unSP', w65816: '65816',
 };
 
 function isaName(tag) {
@@ -86,7 +87,7 @@ const FORMAT_NAMES = {
   zxtape: 'ZX Spectrum Tape',
   xilinxbit: 'Xilinx bitstream', latticebitstream: 'Lattice bitstream', intelfpga: 'Intel FPGA configuration',
   uf2: 'UF2', dfuse: 'STM32 DfuSe', gbl: 'Silicon Labs GBL', cyacd: 'Cypress CYACD',
-  allwinneregon: 'Allwinner eGON', rockchipimage: 'Rockchip image', mediatekpreloader: 'MediaTek preloader', qualcommmbn: 'Qualcomm MBN',
+  allwinneregon: 'Allwinner eGON', rockchipimage: 'Rockchip image', mediatekpreloader: 'MediaTek preloader', mediatekimage: 'MediaTek partition image', qualcommmbn: 'Qualcomm MBN',
   genesisrom: 'Mega Drive ROM', psxexe: 'PS-X EXE', dreamcastip: 'Dreamcast IP.BIN', wiiurpx: 'Wii U RPX/RPL', n3dsncch: '3DS NCCH', n3ds3dsx: '3DSX', psppbp: 'PSP PBP',
   uarp: 'UARP super binary', ftab: 'Apple FTAB', img4: 'Apple IMG4', im4p: 'Apple IM4P', dyldcache: 'dyld shared cache',
   androidboot: 'Android boot image', androidvendorboot: 'Android vendor_boot image', androidsparse: 'Android sparse image', androidota: 'Android OTA payload', androidbootloader: 'Android bootloader pack',
@@ -141,6 +142,9 @@ const FORMAT_NAMES = {
   wim: 'WIM image',
   udf: 'UDF volume',
   x509: 'X.509 Certificate',
+  bplist: 'Binary Property List',
+  qcaboard: 'QCA Board Data',
+  cfb: 'Compound File',
 };
 
 function fmtFormatName(f) { return FORMAT_NAMES[f] || String(f).toUpperCase(); }

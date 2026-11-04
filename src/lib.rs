@@ -28,7 +28,8 @@
 //! ground-truth code for ~90 ISA variants, competing against models of
 //! non-code data. Results carry a calibrated confidence and are rejected
 //! (`HeuristicInconclusive`) when the data does not look like code of any
-//! known ISA. See `scripts/build_corpus.py` and `examples/train_model.rs` for
+//! known ISA, or (`HeuristicSparseCode`) when code of one ISA explains too
+//! little of a large input. See `scripts/build_corpus.py` and `examples/train_model.rs` for
 //! how the model is built, and `examples/eval.rs` for how it is measured.
 
 #![warn(missing_docs)]
@@ -215,6 +216,130 @@ fn ranked(scores: Vec<heuristics::ArchitectureScore>) -> Vec<IsaCandidate> {
         .collect()
 }
 
+/// Cortex-M vector table fields ("ARMv7-M Architecture Reference Manual",
+/// DDI 0403E, B1.5.3, and ARMv6-M, DDI 0419, B1.5.3): word 0 holds the
+/// initial main stack pointer, word 1 the reset handler, words 2-6, 11, 12,
+/// 14 and 15 the NMI, fault, `SVCall`, `DebugMonitor`, `PendSV` and `SysTick`
+/// handlers; words 7-10 and 13 are reserved (some vendors store a checksum
+/// there). Handler addresses carry the Thumb bit.
+const VECTOR_TABLE_WORDS: usize = 16;
+const EXCEPTION_VECTORS: [usize; 9] = [2, 3, 4, 5, 6, 11, 12, 14, 15];
+/// The stack pointer lies in the code (TCM) or SRAM region of the ARMv7-M
+/// memory map (B3.1), `0x1000_0000` to `0x3FFF_FFFF`.
+const VECTOR_STACK_RANGE: std::ops::Range<u32> = 0x1000_0000..0x4000_0000;
+/// Least set exception vectors besides the reset handler, and the span in
+/// which all handlers of one image lie.
+const MIN_SET_VECTORS: usize = 3;
+const MAX_HANDLER_SPAN: u32 = 16 << 20;
+
+/// Whether a raw image starts with a Cortex-M vector table.
+fn has_cortex_m_vector_table(data: &[u8]) -> bool {
+    let words: Vec<u32> = (0..VECTOR_TABLE_WORDS)
+        .filter_map(|i| formats::read_u32(data, i * 4, true).ok())
+        .collect();
+    if words.len() < VECTOR_TABLE_WORDS {
+        return false;
+    }
+    let (stack, reset) = (words[0], words[1]);
+    if !VECTOR_STACK_RANGE.contains(&stack) || stack % 4 != 0 || reset & 1 == 0 {
+        return false;
+    }
+    let set: Vec<u32> = EXCEPTION_VECTORS
+        .iter()
+        .map(|&i| words[i])
+        .filter(|&v| v != 0)
+        .collect();
+    set.len() >= MIN_SET_VECTORS
+        && set
+            .iter()
+            .all(|&v| v & 1 == 1 && v.abs_diff(reset) < MAX_HANDLER_SPAN)
+}
+
+/// x86 reset vector: execution starts 16 bytes below the top of the 1 MiB
+/// real-mode address space (physical `0xFFFF0`), where a BIOS flash image
+/// mapped at the top of memory holds a far jump (`EA offset segment`) into
+/// segment `0xF000`. Images are power-of-two sized flash dumps of at least
+/// 64 KiB.
+const X86_RESET_VECTOR_FROM_END: usize = 16;
+const X86_FAR_JUMP: u8 = 0xEA;
+const X86_BIOS_SEGMENT: u16 = 0xF000;
+const MIN_BIOS_IMAGE: usize = 64 * 1024;
+
+/// Whether a raw image ends with an x86 BIOS reset vector.
+fn has_x86_reset_vector(data: &[u8]) -> bool {
+    let len = data.len();
+    if len < MIN_BIOS_IMAGE || !len.is_power_of_two() {
+        return false;
+    }
+    let at = len - X86_RESET_VECTOR_FROM_END;
+    data[at] == X86_FAR_JUMP && formats::read_u16(data, at + 3, true).ok() == Some(X86_BIOS_SEGMENT)
+}
+
+/// A structure the architecture defines for the core that starts an image,
+/// and the ISA it names.
+struct BootMarker {
+    isa: Isa,
+    present: fn(&[u8]) -> bool,
+    description: &'static str,
+}
+
+const BOOT_MARKERS: [BootMarker; 2] = [
+    BootMarker {
+        isa: Isa::Arm,
+        present: has_cortex_m_vector_table,
+        description: "Cortex-M vector table at offset 0 names an Arm Thumb boot core",
+    },
+    BootMarker {
+        isa: Isa::X86,
+        present: has_x86_reset_vector,
+        description:
+            "x86 reset vector (far jump into segment F000 at the image end) names an x86 boot core",
+    },
+];
+
+/// The boot core of a raw image that carries a boot marker and holds code
+/// of the marker's ISA, when the code model answered otherwise: the marker
+/// is the architecture's own description of the core that runs the image (a
+/// role marker, which outranks the code model), and the code windows of that
+/// ISA's family are the code it names. Images that also hold other cores'
+/// code (RISC-V and Thumb in the fw1 `faceauth` images, 8051 embedded
+/// controller firmware in laptop BIOS images) keep that reading in the note.
+/// `None` when there is no marker, no code of its ISA, or the model agrees.
+fn boot_core(
+    data: &[u8],
+    answer: &Result<ClassificationResult>,
+    options: &ClassifierOptions,
+) -> Option<(ClassificationResult, Note)> {
+    let marker = BOOT_MARKERS.iter().find(|m| (m.present)(data))?;
+    let family = heuristics::family_of(marker.isa);
+    if answer
+        .as_ref()
+        .is_ok_and(|r| heuristics::family_of(r.isa) == family)
+    {
+        return None;
+    }
+    let code: Vec<u8> = heuristics::code_regions(data, marker.isa, options.max_scan_bytes)
+        .into_iter()
+        .flat_map(|(offset, size)| data[offset..offset + size].iter().copied())
+        .collect();
+    let (Ok(boot), _) = heuristic(&code, options) else {
+        return None;
+    };
+    if heuristics::family_of(boot.isa) != family {
+        return None;
+    }
+    let other = match answer {
+        Ok(r) => format!("the code model reads the whole image as {}", r.isa.name()),
+        Err(_) => "the whole image is inconclusive".to_string(),
+    };
+    let note = Note::info(format!(
+        "{} ({} B of its code); {other}",
+        marker.description,
+        code.len()
+    ));
+    Some((boot, note))
+}
+
 /// A raw input classified after one of the [`transform::CANDIDATES`].
 struct Transformed {
     transform: transform::Transform,
@@ -226,10 +351,68 @@ struct Transformed {
 
 /// Least confidence a transformed reading needs. Nothing in the bytes
 /// declares a transform, so the reading must be decisive: genuinely
-/// mis-ordered code decides at the 0.99 cap, while the readings that won on
-/// IDA's test corpus without it were structured non-code or unmodelled
-/// code at 0.6-0.8.
-const MIN_TRANSFORM_CONFIDENCE: f64 = 0.9;
+/// mis-ordered code decides at 0.8 or above (99.4% of fw1 golden code
+/// files scored with the trial penalty, 2026-11-03), while readings of
+/// IDA's test corpus that won without a bar were structured non-code or
+/// unmodelled code at 0.6.
+const MIN_TRANSFORM_CONFIDENCE: f64 = 0.8;
+
+/// Least share of the input (non-padding bytes scanned) that a transformed
+/// reading must explain as code of its family. Mis-ordered code is code
+/// throughout once reordered (the 1st percentile of fw1 golden code files
+/// is 0.44), while rearranged calibration maps, board data and data
+/// segments reach the confidence bar on a few strong windows at a share of
+/// 0.01-0.12 (fw1 audit, 2026-11-03). Program ROMs that carry tables beside
+/// their code explain less: the byte-swapped Yamaha MU100 and VL70-m ROMs
+/// (H8 code with voice tables) read as H8/300 at 0.99 and 0.97 with shares
+/// of 0.21 and 0.15, and no other fw1 file whose stored reading is
+/// inconclusive has a transformed reading at the confidence bar with a
+/// share from 0.12 to 0.25 (2026-11-04).
+const MIN_TRANSFORM_CODE_SHARE: f64 = 0.14;
+
+/// CPUs that fetch instructions from byte-wide memory over an 8-bit bus. A
+/// byte swap or lane interleave undoes how a 16- or 32-bit memory bus stores
+/// words, so neither can restore their code (ECU calibration maps read as
+/// Z80 or 8080 code after a 2-lane interleave without this rule; fw1,
+/// 2026-11-04). NAND spare removal applies to any ISA.
+const BYTE_BUS_ISAS: [Isa; 16] = [
+    Isa::Z80,
+    Isa::I8085,
+    Isa::I8051,
+    Isa::Mcs6502,
+    Isa::W65816,
+    Isa::M6800,
+    Isa::M6809,
+    Isa::Hc05,
+    Isa::Hc08,
+    Isa::Hc11,
+    Isa::M740,
+    Isa::C39,
+    Isa::Z8,
+    Isa::St7,
+    Isa::Stm8,
+    Isa::Spc700,
+];
+
+/// CPUs that fetch instructions only from on-chip program memory (PIC
+/// baseline, mid-range, PIC18 and PIC24; AVR). No ROM of theirs is one byte
+/// lane of a wider bus, so a lane interleave cannot restore their code (an
+/// 8-bit PCM ROM, `mprgp060b_16_mar_92.u222`, read as PIC14 at 0.99 after a
+/// 2-lane interleave; fw1, 2026-11-04).
+const ON_CHIP_PROGRAM_ISAS: [Isa; 2] = [Isa::Pic, Isa::Avr];
+
+/// Whether a transformed reading can hold code of `isa`.
+fn transform_fits_isa(transform: transform::Transform, isa: Isa) -> bool {
+    match transform {
+        transform::Transform::NandSpare { .. } => true,
+        transform::Transform::Interleave { .. } => {
+            !BYTE_BUS_ISAS.contains(&isa) && !ON_CHIP_PROGRAM_ISAS.contains(&isa)
+        }
+        transform::Transform::Swap16 | transform::Transform::Swap32 => {
+            !BYTE_BUS_ISAS.contains(&isa)
+        }
+    }
+}
 
 /// Can code of this ISA sit in a byte-swapped, lane-split or NAND dump?
 /// Transforms undo how memory chips are wired and read; bytecode for a
@@ -245,7 +428,8 @@ fn is_dumpable_isa(isa: Isa) -> bool {
 /// Try every applicable transform on an inconclusive raw input and keep the
 /// most confident code-model result. Every attempt pays the union-bound
 /// penalty for the number of readings tried, the original one included,
-/// and must be decisive and name an ISA that dumps hold.
+/// must be decisive, must explain a substantial share of the input as code,
+/// and must name an ISA that dumps hold.
 fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transformed> {
     let applicable: Vec<transform::Transform> = transform::CANDIDATES
         .iter()
@@ -259,15 +443,21 @@ fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transfo
     };
     let mut best: Option<Transformed> = None;
     for t in applicable {
+        if !t.lanes_agree(data) {
+            continue;
+        }
         let Some(transformed) = t.apply(data) else {
             continue;
         };
-        let (result, scores) =
-            heuristics::analyze_detailed_with_trials(&transformed, &quiet, trials);
-        let Ok(result) = result else {
+        let reading = heuristics::analyze_reading(&transformed, &quiet, trials);
+        let Ok(result) = reading.result else {
             continue;
         };
-        if result.confidence < MIN_TRANSFORM_CONFIDENCE || !is_dumpable_isa(result.isa) {
+        if result.confidence < MIN_TRANSFORM_CONFIDENCE
+            || reading.code_share < MIN_TRANSFORM_CODE_SHARE
+            || !is_dumpable_isa(result.isa)
+            || !transform_fits_isa(t, result.isa)
+        {
             continue;
         }
         if best
@@ -281,7 +471,7 @@ fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transfo
             trials,
             data: transformed,
             result,
-            candidates: ranked(scores),
+            candidates: ranked(reading.scores),
         });
     }
     best
@@ -1029,10 +1219,18 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
             | formats::DetectedFormat::Pe { .. }
             | formats::DetectedFormat::MachO { .. }
     );
+    let is_elf = matches!(detected, formats::DetectedFormat::Elf { .. });
 
     let result = match detected {
         formats::DetectedFormat::Raw => {
             let (r, c) = heuristic(data, options);
+            let r = match boot_core(data, &r, options) {
+                Some((boot, note)) => {
+                    notes.push(note);
+                    Ok(boot)
+                }
+                None => r,
+            };
             match r {
                 Ok(r) => {
                     candidates = c;
@@ -1093,7 +1291,13 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
         formats::DetectedFormat::MachO { bits, big_endian } => {
             match formats::macho::parse(data, bits, big_endian) {
                 Ok(header) => {
-                    let mut r = named_or_code_model(data, header, options, &mut candidates);
+                    let mut r = named_or_code_model(
+                        data,
+                        header,
+                        options,
+                        &mut candidates,
+                        HeaderByteOrder::Declared,
+                    );
                     let commands = read_macho_commands(data, &mut r, options);
                     notes.extend(commands.notes);
                     metadata = commands.metadata;
@@ -1372,12 +1576,29 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                         }
                     }
                 }
-                Err(e) => fallback_to_heuristics(data, options, &format, e, &mut candidates, &mut notes)?,
+                Err(e) => {
+                fallback_to_heuristics(data, options, &format, e, &mut candidates, &mut notes)?
+            }
             }
         }
         other => match formats::parse_detected(data, &other) {
-            Ok(r) => named_or_code_model(data, r, options, &mut candidates),
-            Err(e) => fallback_to_heuristics(data, options, &format, e, &mut candidates, &mut notes)?,
+            Ok(r) => {
+                let is_elf_header = matches!(other, formats::DetectedFormat::Elf { .. });
+                let byte_order = if is_elf_header {
+                    HeaderByteOrder::Declared
+                } else {
+                    HeaderByteOrder::NotDeclared
+                };
+                let r = named_or_code_model(data, r, options, &mut candidates, byte_order);
+                if is_elf_header {
+                    checked_against_code(data, r, options)
+                } else {
+                    r
+                }
+            }
+            Err(e) => {
+                fallback_to_heuristics(data, options, &format, e, &mut candidates, &mut notes)?
+            }
         },
     };
 
@@ -1390,6 +1611,38 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
             metadata.extend(bundle.outcome.metadata);
             if code_payload.is_none() {
                 code_payload = Some(std::borrow::Cow::Borrowed(&data[..bundle.start]));
+            }
+        }
+    }
+
+    // ELF images stored after this one are listed as components, each
+    // classified from its own header; this image keeps its own result.
+    if is_elf && depth < MAX_NESTING {
+        let appended = formats::elf::appended_images(data);
+        if !appended.is_empty() {
+            notes.push(Note::info(format!(
+                "{} more ELF images follow this one; each is listed as a component",
+                appended.len()
+            )));
+        }
+        for (offset, size) in appended {
+            let image = &data[offset..offset + size];
+            let label = format!("ELF image at 0x{offset:X}");
+            match classify_depth(image, options, depth + 1) {
+                Ok(inner) => {
+                    slices.push(component_slice(
+                        label,
+                        &inner.result,
+                        offset,
+                        size,
+                        inner.extensions,
+                    ));
+                }
+                Err(e) => {
+                    notes.push(Note::warning(format!("{label}: ISA unknown ({e})")));
+                    let unknown = unknown_component(FileFormat::Elf).result;
+                    slices.push(component_slice(label, &unknown, offset, size, Vec::new()));
+                }
             }
         }
     }
@@ -1508,25 +1761,121 @@ fn fallback_to_heuristics(
     }
 }
 
+/// Whether a header format states the byte order of its contents (ELF
+/// `EI_DATA`, the Mach-O magic), so a code-model answer must agree with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeaderByteOrder {
+    Declared,
+    NotDeclared,
+}
+
+/// True if a code-model answer has a fixed byte order other than the header's.
+fn contradicts(answer: &ClassificationResult, header: &ClassificationResult) -> bool {
+    answer.endianness != Endianness::BiEndian && answer.endianness != header.endianness
+}
+
 /// A header result that names its ISA, or the code model's answer when the
 /// header does not name one (or names one the classifier cannot map).
+/// When the header declares a byte order, an answer in the other byte order
+/// contradicts the file and leaves the ISA unknown.
 fn named_or_code_model(
     data: &[u8],
-    result: ClassificationResult,
+    mut result: ClassificationResult,
     options: &ClassifierOptions,
     candidates: &mut Vec<IsaCandidate>,
+    byte_order: HeaderByteOrder,
 ) -> ClassificationResult {
     if !is_unknown(result.isa) {
         return result;
     }
     let (h, c) = heuristic(data, options);
     match h {
+        Ok(h) if byte_order == HeaderByteOrder::Declared && contradicts(&h, &result) => {
+            result.metadata.notes.push(format!(
+                "Code model answer {} ({} byte order) contradicts the header's {} byte order; ISA not identified",
+                h.isa.name(),
+                h.endianness,
+                result.endianness
+            ));
+            result
+        }
         Ok(h) => {
             *candidates = c;
             adopt_heuristic(&result, h)
         }
         Err(_) => result,
     }
+}
+
+/// Least confidence of a code-model reading of an ELF's executable segments
+/// that contradicts `e_machine`, and least share of those bytes it must
+/// explain as code. On 1,380 `ISAdetect` Debian ELFs (60 per architecture) no
+/// reading of another family reached 0.9 (2026-11-04); in the fw1 set, eight
+/// Qualcomm Cortex-M images declare `EM_386` and eight modem images declare
+/// `EM_ARM` around Hexagon code, read at 0.99 with 81-91% of the bytes as
+/// code.
+const HEADER_CONTRADICTION_CONFIDENCE: f64 = 0.9;
+const HEADER_CONTRADICTION_SHARE: f64 = 0.5;
+
+/// An ELF whose executable segments the code model reads, decisively, as an
+/// ISA family other than the one `e_machine` names: header and code
+/// disagree, so the ISA is not identified, as for a layout with two valid
+/// readings. Only ISAs the model recognises are checked (it could have
+/// agreed with the header), and only the instructions are read (executable
+/// sections, else executable segments): a library may carry another core's
+/// firmware as data. An image that marks nothing executable is read through
+/// its loadable segments.
+fn checked_against_code(
+    data: &[u8],
+    mut result: ClassificationResult,
+    options: &ClassifierOptions,
+) -> ClassificationResult {
+    let Some(header_family) = heuristics::family_of(result.isa) else {
+        return result;
+    };
+    if !heuristics::supported_isas().contains(&result.isa) {
+        return result;
+    }
+    // An image that marks nothing executable (firmware shipped as data for
+    // another processor to run) is described by its loadable segments.
+    let mut ranges = formats::elf::executable_code(data);
+    if ranges.is_empty() {
+        ranges = formats::elf::loadable_segments(data);
+    }
+    let code: Vec<u8> = ranges
+        .into_iter()
+        .flat_map(|(offset, size)| data[offset..offset + size].iter().copied())
+        .collect();
+    if code.is_empty() {
+        return result;
+    }
+    let quiet = ClassifierOptions {
+        detect_extensions: false,
+        ..options.clone()
+    };
+    let reading = heuristics::analyze_reading(&code, &quiet, 1);
+    let Ok(answer) = reading.result else {
+        return result;
+    };
+    if heuristics::family_of(answer.isa) == Some(header_family)
+        || answer.confidence < HEADER_CONTRADICTION_CONFIDENCE
+        || reading.code_share < HEADER_CONTRADICTION_SHARE
+    {
+        return result;
+    }
+    result.metadata.notes.push(format!(
+        "e_machine names {}, but the code model reads the loaded code as {} \
+         (confidence {:.2}, {:.0}% of the bytes as code); ISA not identified",
+        result.isa.name(),
+        answer.isa.name(),
+        answer.confidence,
+        reading.code_share * 100.0
+    ));
+    result.isa = Isa::Unknown(result.metadata.raw_machine.unwrap_or(0));
+    result.confidence = 0.0;
+    result.variant = Variant::default();
+    result.extensions.clear();
+    result
 }
 
 /// What Mach-O load commands add to a header classification.
@@ -2028,6 +2377,32 @@ mod tests {
     }
 
     #[test]
+    fn swaps_and_interleaves_never_name_a_byte_bus_cpu() {
+        let interleave = transform::Transform::Interleave {
+            lanes: 2,
+            reversed: true,
+        };
+        let nand = transform::Transform::NandSpare {
+            page: 2048,
+            spare: 64,
+        };
+        let swap16 = transform::Transform::Swap16;
+        let swap32 = transform::Transform::Swap32;
+        assert!(!transform_fits_isa(interleave, Isa::Z80));
+        assert!(!transform_fits_isa(swap16, Isa::I8085));
+        assert!(!transform_fits_isa(swap32, Isa::I8051));
+        assert!(transform_fits_isa(interleave, Isa::M68k));
+        assert!(transform_fits_isa(swap16, Isa::AArch64));
+        // On-chip program memory is never split into byte lanes; its words
+        // may still be stored in either byte order.
+        assert!(!transform_fits_isa(interleave, Isa::Pic));
+        assert!(!transform_fits_isa(interleave, Isa::Avr));
+        assert!(transform_fits_isa(swap16, Isa::Pic));
+        // Spare-area removal is how a NAND chip is read, whatever the CPU.
+        assert!(transform_fits_isa(nand, Isa::Z80));
+    }
+
+    #[test]
     fn test_options() {
         let default = ClassifierOptions::new();
         let thorough = ClassifierOptions::thorough();
@@ -2035,6 +2410,11 @@ mod tests {
         assert!(thorough.deep_scan);
         assert!(!fast.deep_scan);
         assert!(fast.min_confidence > default.min_confidence);
+        // `Default` is the documented default, not a zero scan budget.
+        let derived = ClassifierOptions::default();
+        assert_eq!(derived.max_scan_bytes, default.max_scan_bytes);
+        assert_eq!(derived.min_confidence, default.min_confidence);
+        assert_eq!(derived.try_transforms, default.try_transforms);
     }
 
     #[test]

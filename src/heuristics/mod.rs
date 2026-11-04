@@ -21,6 +21,8 @@
 //! `scripts/build_corpus.py` + `examples/train_model.rs`.
 
 pub mod model;
+mod w65816;
+mod z80;
 
 use std::collections::HashMap;
 
@@ -71,8 +73,54 @@ fn window_weight(margin: f64, len: usize) -> f64 {
     size / (1.0 + (-(margin - WEIGHT_MIDPOINT) / WEIGHT_WIDTH).exp())
 }
 
+/// Least code windows of the decided family in an input of at least
+/// [`LARGE_INPUT_WINDOWS`] informative windows. One strong 1 KiB window
+/// reaches 0.86 confidence on its own. In the fw1 corpus (2026-11-04), 66
+/// raw files were decided by a single window in an input this large; 34 of
+/// them are ECU calibration maps, and most of the rest GPU microcode,
+/// vendor update blobs and ECU dumps whose answers the ISA does not fit.
+/// One window is therefore not evidence for a whole image; smaller inputs,
+/// where one window is most of the input, are unaffected. The bound is 8
+/// informative windows: fw1 golden code files decided by one window have at
+/// most 6, while Qualcomm data segments accepted on one pointer-table
+/// window have 8 to 11 (2026-11-04).
+const MIN_CODE_WINDOWS: usize = 2;
+const LARGE_INPUT_WINDOWS: usize = 8;
+
+/// Sparse code: fewer than one code window per [`SPARSE_CODE_RATIO`]
+/// informative windows. Chance strong windows grow with the input, and one
+/// window just over the strong margin gives 0.86, so sparse evidence must be
+/// clearly stronger than that ([`SPARSE_MIN_CONFIDENCE`]). In the fw1 set
+/// (2026-11-04), 40 answered raw files were this sparse: the wrong ones
+/// (camera, toy and Qualcomm images read as MN10300, PIC, C-SKY or FR30)
+/// were at 0.84-0.86, while firmware updates with a small uncompressed code
+/// part (SH, Alpha, x86-64, MIPS) were at 0.98-0.99. The ratio was 128
+/// until a byte lane of Namco System 21 DSP data (`sv1-data-l.bin`) read as
+/// µ'nSP at 0.86 from 2 of 240 windows; at 64 the other stored readings it
+/// affects are five byte-swapped 68000 ECU dumps (68000 at 0.85 from 2 or 3
+/// windows, recovered by the byte-swap reading) and two `faceauth`
+/// segments whose answer comes from their boot marker (fw1, 2026-11-04).
+const SPARSE_CODE_RATIO: usize = 64;
+const SPARSE_MIN_CONFIDENCE: f64 = 0.9;
+
 /// A window whose most common byte covers this fraction is padding.
 const PADDING_FRACTION: f64 = 0.90;
+/// A window whose most common aligned 16- or 32-bit word covers this
+/// fraction of its words is padding too: erased 14-bit PIC program words
+/// (`0x3FFF`), tables of one repeated pointer, and 16-bit bitmaps that are
+/// mostly background colour are fill with sparse content, not evidence. Such
+/// sprite windows of an `SPG2xx` game ROM (`29dl640e.u3`) measure 0.77-0.83 and
+/// were read as x86 at 0.99; 4 of 44,472 code windows of the shipped corpus
+/// (30 samples per class) reach 0.7 (fw1 audit, 2026-11-04).
+const WORD_FILL_FRACTION: f64 = 0.70;
+/// Word widths, in bytes, of the word-fill test.
+const FILL_WORD_WIDTHS: [usize; 2] = [2, 4];
+/// A window with fewer distinct adjacent byte pairs than this is fill too: a
+/// few short values repeated (flat image areas, unrolled stores) match some
+/// class's handful of cheap pairs by chance. 0.08% of the corpus's code
+/// windows have fewer (827,023 non-fill windows, 2026-11-04); the median
+/// uncompressed-image window has 6.
+const MIN_DISTINCT_PAIRS: usize = 16;
 /// A window this printable is text. The 99th percentile of real code
 /// windows is below 0.8 for every ISA in the corpus.
 const TEXT_FRACTION: f64 = 0.90;
@@ -175,29 +223,87 @@ impl<'m> Scan<'m> {
 
     /// Per family: code bytes won and net evidence (see [`window_weight`]), strongest first.
     pub fn family_votes(&self) -> Vec<(&'static str, usize, f64)> {
-        // (bytes, strong weight, weak weight)
-        let mut votes: HashMap<&'static str, (usize, f64, f64)> = HashMap::new();
-        for (w, class, margin, _) in self.code_windows() {
-            let e = votes.entry(self.model.class(class).family).or_default();
-            e.0 += w.len;
-            if margin >= STRONG_MARGIN {
-                e.1 += window_weight(margin, w.len);
-            } else {
-                e.2 += window_weight(margin, w.len);
-            }
-        }
-        let allowance = FALSE_ALARM_PER_WINDOW * self.trials * self.informative_windows() as f64;
-        let mut v: Vec<_> = votes
+        let allowance = self.false_alarm_allowance();
+        let mut v: Vec<_> = self
+            .family_weights()
             .into_iter()
-            .map(|(f, (b, strong, weak))| (f, b, strong + (weak - allowance).max(0.0)))
+            .map(|f| (f.family, f.bytes, f.strong + (f.weak - allowance).max(0.0)))
             .collect();
         v.sort_by(|a, b| b.2.total_cmp(&a.2).then(b.1.cmp(&a.1)).then(a.0.cmp(b.0)));
         v
     }
 
+    /// Code bytes and window weights won by each family, in no order.
+    fn family_weights(&self) -> Vec<FamilyWeight> {
+        let mut weights: HashMap<&'static str, FamilyWeight> = HashMap::new();
+        for (w, class, margin, _) in self.code_windows() {
+            let family = self.model.class(class).family;
+            let e = weights.entry(family).or_insert(FamilyWeight {
+                family,
+                bytes: 0,
+                strong: 0.0,
+                weak: 0.0,
+            });
+            e.bytes += w.len;
+            if margin >= STRONG_MARGIN {
+                e.strong += window_weight(margin, w.len);
+            } else {
+                e.weak += window_weight(margin, w.len);
+            }
+        }
+        weights.into_values().collect()
+    }
+
+    /// Summed weight of weak windows that chance hits in data can reach.
+    fn false_alarm_allowance(&self) -> f64 {
+        FALSE_ALARM_PER_WINDOW * self.trials * self.informative_windows() as f64
+    }
+
+    /// The family with the most evidence before the false-alarm allowance.
+    /// The allowance is the same for every family, so it decides whether a
+    /// family's evidence is above chance (the confidence), not which family's
+    /// evidence is largest: ranking after it, where it clamps weak evidence
+    /// to zero, let one strong window of another family outrank many weak
+    /// windows of one family (fw1, 2026-11-04: Sega SH-4 boot ROMs read as
+    /// ARM, Thumb firmware as PowerPC, an interleaved 68000 program as MIPS).
+    fn most_supported_family(&self) -> Option<&'static str> {
+        most_supported(self.family_weights())
+    }
+
     /// Number of windows that were not padding.
     fn informative_windows(&self) -> usize {
         self.windows.iter().filter(|w| w.kind != WindowKind::Padding).count()
+    }
+
+    /// Code windows won by `family`.
+    fn family_windows(&self, family: &str) -> usize {
+        self.code_windows()
+            .filter(|&(_, class, _, _)| self.model.class(class).family == family)
+            .count()
+    }
+
+    /// Bytes in code windows won by `family`, as a share of the scanned
+    /// bytes that were not padding.
+    // Both counts are bounded by the input size; a share needs no more than
+    // f64's 52-bit mantissa.
+    #[allow(clippy::cast_precision_loss)]
+    fn informative_share(&self, family: &str) -> f64 {
+        let informative: usize = self
+            .windows
+            .iter()
+            .filter(|w| w.kind != WindowKind::Padding)
+            .map(|w| w.len)
+            .sum();
+        let won: usize = self
+            .code_windows()
+            .filter(|&(_, class, _, _)| self.model.class(class).family == family)
+            .map(|(w, ..)| w.len)
+            .sum();
+        if informative == 0 {
+            0.0
+        } else {
+            won as f64 / informative as f64
+        }
     }
 
     /// Evidence (bits better than data) of every class, summed over the code
@@ -218,13 +324,15 @@ impl<'m> Scan<'m> {
     /// The decision: best class, confidence, and supporting numbers.
     pub fn decide(&self) -> Option<Decision> {
         let votes = self.family_votes();
-        let &(family, _, family_weight) = votes.first()?;
+        let family = self.most_supported_family()?;
+        let &(_, _, family_weight) = votes.iter().find(|v| v.0 == family)?;
         let code_bytes: usize = votes.iter().map(|v| v.1).sum();
         let total_weight: f64 = votes.iter().map(|v| v.2).sum();
         let evidence = self.class_evidence(Some(family));
-        let class = (0..self.model.len())
+        let best = (0..self.model.len())
             .filter(|&i| self.model.class(i).family == family)
             .max_by(|&a, &b| evidence[a].total_cmp(&evidence[b]))?;
+        let class = supported_variant(self.model, best, &evidence);
         let share = if total_weight > 0.0 { family_weight / total_weight } else { 0.0 };
         let strength = 1.0 - (-family_weight / EVIDENCE_SCALE).exp();
         Some(Decision {
@@ -236,6 +344,140 @@ impl<'m> Scan<'m> {
             scanned_bytes: self.scanned_bytes(),
         })
     }
+
+    /// `decision`, or the Z80 variant when the decision is 8080/8085 but a
+    /// linear Z80 decode of the family's code windows finds more Z80
+    /// prefix-group instructions than 8080/8085 code holds
+    /// ([`MIN_PREFIX_GROUP_SHARE_FOR_Z80`]).
+    fn checked_z80_variant(&self, data: &[u8], decision: Decision) -> Decision {
+        if decision.info.name != "i8085" {
+            return decision;
+        }
+        let code = self.family_code(data, decision.info.family);
+        let z80 = (0..self.model.len()).find(|&i| self.model.class(i).name == "z80");
+        match z80 {
+            Some(class) if z80::prefix_group_share(&code) > MIN_PREFIX_GROUP_SHARE_FOR_Z80 => {
+                Decision {
+                    class,
+                    info: self.model.class(class),
+                    ..decision
+                }
+            }
+            _ => decision,
+        }
+    }
+
+    /// The class to report for `decision`: the 65816 when the decision is
+    /// the 6502 but its code windows switch to the 65816's native mode
+    /// ([`MIN_NATIVE_MODE_INSTRUCTIONS`], [`MIN_NATIVE_MODE_PER_MILLE`]).
+    /// The 65816 has no model data: 65816 code reads as 6502 code, which its
+    /// emulation mode runs.
+    fn checked_6502_variant(&self, data: &[u8], decision: &Decision) -> &'static ClassInfo {
+        if decision.info.name != "mos6502" {
+            return decision.info;
+        }
+        let count = w65816::native_mode_count(&self.family_code(data, decision.info.family));
+        let per_mille = 1000.0 * f64::from(count.native) / f64::from(count.instructions.max(1));
+        let is_native =
+            count.native >= MIN_NATIVE_MODE_INSTRUCTIONS && per_mille >= MIN_NATIVE_MODE_PER_MILLE;
+        match class_info("w65816") {
+            Some(info) if is_native => info,
+            _ => decision.info,
+        }
+    }
+
+    /// The bytes of the code windows won by classes of `family`, in order.
+    fn family_code(&self, data: &[u8], family: &str) -> Vec<u8> {
+        self.code_windows()
+            .filter(|&(_, class, _, _)| self.model.class(class).family == family)
+            .flat_map(|(w, ..)| data[w.offset..w.offset + w.len].iter().copied())
+            .collect()
+    }
+}
+
+/// Variants whose instruction set extends another's, as (superset, base)
+/// model classes, forming the chain eZ80 > Z80 > 8080/8085. Z80 code is also
+/// valid eZ80 code, and 8080 code valid Z80 code, so an image of the base
+/// fits both classes; the base is the claim the bytes support unless the
+/// superset's encodings make its class clearly better. A Z80 answer reduced
+/// to 8080/8085 returns to Z80 on prefix-group evidence
+/// ([`Scan::checked_z80_variant`]).
+const SUPERSET_VARIANTS: &[(&str, &str)] = &[("ez80", "z80"), ("z80", "i8085")];
+/// Least ratio of superset to base evidence for the superset variant.
+/// TI-84 CE eZ80 code measures 2.0-2.6, Z80 ROMs that chose eZ80 1.0-1.5
+/// (fw1 corpus, 2026-11-04). Z80 to 8080/8085 evidence on the fw1 program
+/// ROMs whose MAME driver names the CPU: 0.41-1.0 for the 21 8080/8085 ROMs,
+/// 0.75-8.8 for the Z80 ROMs, most of which below the ratio hold prefix-group
+/// instructions.
+const SUPERSET_EVIDENCE_RATIO: f64 = 1.75;
+
+/// Most Z80 prefix-group instructions, as a share of a linear decode of the
+/// Z80 family's code windows, that an 8080/8085 answer may contain; above it
+/// the answer is Z80 (8080 code is Z80 code; the Z80 adds instructions).
+/// Relative jumps are not counted: the 8085 executes instructions at those
+/// opcodes (see `z80.rs`). On the fw1 program ROMs whose MAME driver names
+/// the CPU (whole files, 2026-11-04), the 21 8080/8085 ROMs measure
+/// 0-0.06%, and the Z80 ROMs the model read as 8080/8085 0.4-30%.
+const MIN_PREFIX_GROUP_SHARE_FOR_Z80: f64 = 0.002;
+
+/// Least 65816 native-mode instructions (`REP`/`SEP` of the register-width
+/// flags, `XCE` after `CLC`/`SEC`; see `w65816.rs`) in the 6502 family's code
+/// windows, and least of them per thousand instructions, for a 65816 answer.
+/// On the fw1 set (whole files, 2026-11-04), the 6502 ROMs whose MAME driver
+/// names the CPU and the 6502 training samples hold 0-3 (at most 0.36 per
+/// thousand); `W65C816` ROMs (MAME `we816`), the CMD `SuperCPU` ROM, SNES copier
+/// BIOS ROMs and an Apple II SCSI card ROM that enters native mode hold
+/// 42-168 (2.7-35.7 per thousand).
+const MIN_NATIVE_MODE_INSTRUCTIONS: u32 = 8;
+const MIN_NATIVE_MODE_PER_MILLE: f64 = 1.0;
+
+/// `class`, or the base variant it extends when the evidence does not
+/// clearly favor the superset.
+fn supported_variant(model: &Model, class: usize, evidence: &[f64]) -> usize {
+    let mut supported = class;
+    // One step per pair at most: the pairs form chains without cycles.
+    for _ in 0..SUPERSET_VARIANTS.len() {
+        match base_variant(model, supported) {
+            Some(base) if evidence[supported] < SUPERSET_EVIDENCE_RATIO * evidence[base] => {
+                supported = base;
+            }
+            _ => break,
+        }
+    }
+    supported
+}
+
+/// The model class of the base variant that `class` extends, if any.
+fn base_variant(model: &Model, class: usize) -> Option<usize> {
+    let name = model.class(class).name;
+    let &(_, base_name) = SUPERSET_VARIANTS
+        .iter()
+        .find(|(superset, _)| *superset == name)?;
+    (0..model.len()).find(|&i| model.class(i).name == base_name)
+}
+
+/// Code bytes and window weights one family won in a scan.
+struct FamilyWeight {
+    family: &'static str,
+    bytes: usize,
+    /// Summed weight of windows at or above [`STRONG_MARGIN`].
+    strong: f64,
+    /// Summed weight of the other code windows.
+    weak: f64,
+}
+
+/// The family of `weights` with the most window weight, then the most
+/// bytes, then the first name: see [`Scan::most_supported_family`].
+fn most_supported(weights: Vec<FamilyWeight>) -> Option<&'static str> {
+    weights
+        .into_iter()
+        .max_by(|a, b| {
+            (a.strong + a.weak)
+                .total_cmp(&(b.strong + b.weak))
+                .then(a.bytes.cmp(&b.bytes))
+                .then(b.family.cmp(a.family))
+        })
+        .map(|f| f.family)
 }
 
 /// Outcome of [`Scan::decide`].
@@ -288,6 +530,58 @@ fn is_padding(w: &[u8]) -> bool {
     }
     let max = hist.iter().copied().max().unwrap_or(0);
     max as f64 >= PADDING_FRACTION * w.len() as f64
+        || FILL_WORD_WIDTHS.iter().any(|&width| is_word_fill(w, width))
+        || has_few_distinct_pairs(w)
+}
+
+/// Whether the window has fewer than [`MIN_DISTINCT_PAIRS`] distinct
+/// adjacent byte pairs. Windows of one or two bytes have none and are left
+/// to the other tests.
+fn has_few_distinct_pairs(w: &[u8]) -> bool {
+    if w.len() < 2 {
+        return false;
+    }
+    let mut seen = [0u64; 1024];
+    let mut distinct = 0usize;
+    for pair in w.windows(2) {
+        let index = usize::from(pair[0]) << 8 | usize::from(pair[1]);
+        let bit = 1u64 << (index % 64);
+        if seen[index / 64] & bit == 0 {
+            seen[index / 64] |= bit;
+            distinct += 1;
+            if distinct >= MIN_DISTINCT_PAIRS {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether one aligned `width`-byte value covers [`WORD_FILL_FRACTION`] of
+/// the window's words. A value above half the words is the majority, so a
+/// majority vote finds the only candidate.
+fn is_word_fill(w: &[u8], width: usize) -> bool {
+    let mut candidate: &[u8] = &[];
+    let mut lead = 0usize;
+    for word in w.chunks_exact(width) {
+        if lead == 0 {
+            candidate = word;
+            lead = 1;
+        } else if word == candidate {
+            lead += 1;
+        } else {
+            lead -= 1;
+        }
+    }
+    let words = w.chunks_exact(width).count();
+    let matching = w
+        .chunks_exact(width)
+        .filter(|&word| word == candidate)
+        .count();
+    // Window lengths are bounded by the window size, far below u32::MAX.
+    let words = f64::from(u32::try_from(words).unwrap_or(u32::MAX));
+    let matching = f64::from(u32::try_from(matching).unwrap_or(u32::MAX));
+    words > 0.0 && matching >= WORD_FILL_FRACTION * words
 }
 
 fn is_text(w: &[u8]) -> bool {
@@ -482,11 +776,52 @@ fn analyze_detailed_with_model_trials(
     model: &Model,
     trials: usize,
 ) -> (Result<ClassificationResult>, Vec<ArchitectureScore>) {
+    let reading = analyze_reading_with_model(data, options, model, trials);
+    (reading.result, reading.scores)
+}
+
+/// One reading of an input: its classification, the candidate scores, and
+/// how much of the input the decided ISA family explains.
+#[derive(Debug)]
+pub struct Reading {
+    /// The classification, or why there is none.
+    pub result: Result<ClassificationResult>,
+    /// Candidate scores, as [`analyze_detailed_with_trials`] returns them.
+    pub scores: Vec<ArchitectureScore>,
+    /// Bytes in code windows won by the decided family, as a share (0-1) of
+    /// the informative (non-padding) bytes scanned; 0 without a decision.
+    pub code_share: f64,
+    /// Code windows won by the decided family, and informative windows
+    /// scanned.
+    pub code_windows: usize,
+    /// Windows scanned that were not padding.
+    pub informative_windows: usize,
+}
+
+/// Classify `data` like [`analyze_detailed_with_trials`] and also report how
+/// much of it the decided family explains. A reading that only a handful of
+/// strong windows support has a small `code_share` even at high confidence.
+pub fn analyze_reading(data: &[u8], options: &ClassifierOptions, trials: usize) -> Reading {
+    analyze_reading_with_model(data, options, Model::embedded(), trials)
+}
+
+fn analyze_reading_with_model(
+    data: &[u8],
+    options: &ClassifierOptions,
+    model: &Model,
+    trials: usize,
+) -> Reading {
     if data.len() < MIN_WINDOW {
-        return (
-            Err(ClassifierError::FileTooSmall { expected: MIN_WINDOW, actual: data.len() }),
-            Vec::new(),
-        );
+        return Reading {
+            result: Err(ClassifierError::FileTooSmall {
+                expected: MIN_WINDOW,
+                actual: data.len(),
+            }),
+            scores: Vec::new(),
+            code_share: 0.0,
+            code_windows: 0,
+            informative_windows: 0,
+        };
     }
     let budget = scan_budget(data.len(), options);
     let scan = scan_with_trials(data, model, DEFAULT_WINDOW, budget, trials);
@@ -495,17 +830,42 @@ fn analyze_detailed_with_model_trials(
         confidence: confidence * 100.0,
         threshold: options.min_confidence * 100.0,
     };
-    let result = match scan.decide() {
+    let decision = scan.decide().map(|d| scan.checked_z80_variant(data, d));
+    let code_share = decision.map_or(0.0, |d| scan.informative_share(d.info.family));
+    let code_windows = decision.map_or(0, |d| scan.family_windows(d.info.family));
+    let informative_windows = scan.informative_windows();
+    let sparse = ClassifierError::HeuristicSparseCode {
+        code_windows,
+        informative_windows,
+    };
+    let result = match decision {
         None => Err(inconclusive(0.0)),
         Some(d) if d.confidence < options.min_confidence => Err(inconclusive(d.confidence)),
-        Some(d) => result_for(d.info, d.confidence).ok_or_else(|| inconclusive(0.0)).map(|mut r| {
-            if options.detect_extensions {
-                r.extensions = crate::extensions::detect_from_code(data, r.isa, r.endianness);
-            }
-            r
-        }),
+        Some(_) if code_windows < MIN_CODE_WINDOWS && informative_windows >= LARGE_INPUT_WINDOWS => {
+            Err(sparse)
+        }
+        Some(d)
+            if code_windows * SPARSE_CODE_RATIO < informative_windows
+                && d.confidence < SPARSE_MIN_CONFIDENCE =>
+        {
+            Err(sparse)
+        }
+        Some(d) => result_for(scan.checked_6502_variant(data, &d), d.confidence)
+            .ok_or_else(|| inconclusive(0.0))
+            .map(|mut r| {
+                if options.detect_extensions {
+                    r.extensions = crate::extensions::detect_from_code(data, r.isa, r.endianness);
+                }
+                r
+            }),
     };
-    (result, candidates)
+    Reading {
+        result,
+        scores: candidates,
+        code_share,
+        code_windows,
+        informative_windows,
+    }
 }
 
 /// Per-class scores for the input, best first.
@@ -682,13 +1042,16 @@ mod tests {
     use super::*;
 
     /// A toy model: "x86" loves 0x90 0x90, "arm" loves 0xE1 0xA0, data loves zeros.
+    /// Toy code (`toy_x86`, `toy_arm`) cycles the last byte through the values
+    /// the model saw: one repeated word, or fewer than 16 distinct byte pairs,
+    /// is fill (`is_padding`).
     fn toy_model() -> Vec<u8> {
         let mut x86 = ModelBuilder::new();
         let mut arm = ModelBuilder::new();
         let mut rodata = ModelBuilder::new();
         for i in 0..20_000u32 {
             x86.add(&[0x90, 0x90, 0xC3, (i % 7) as u8]);
-            arm.add(&[0xE1, 0xA0, 0x00, 0x01 + (i % 5) as u8]);
+            arm.add(&[0xE1, 0xA0, 0x00, 0x01 + (i % 9) as u8]);
             rodata.add(&[0x00, 0x00, (i % 3) as u8, 0x00]);
         }
         Model::serialize(
@@ -701,8 +1064,135 @@ mod tests {
         )
     }
 
+    #[test]
+    fn windows_filled_by_one_word_are_padding() {
+        // Erased 14-bit PIC program memory: 0x3FFF stored little-endian.
+        let erased: Vec<u8> = [0xff, 0x3f].repeat(512);
+        assert!(is_padding(&erased));
+        // A table of one handler pointer, with a few other entries.
+        let mut table: Vec<u8> = 0xF010_6ECC_u32.to_le_bytes().repeat(256);
+        table[0..4].copy_from_slice(&0xF010_6DFC_u32.to_le_bytes());
+        assert!(is_padding(&table));
+        // Words that differ are not fill, even when two bytes alternate
+        // with other values.
+        let varied: Vec<u8> = (0..1024u32)
+            .flat_map(|i| [0x90, u8::try_from(i % 13).expect("below 13")])
+            .collect();
+        assert!(!is_padding(&varied));
+        assert!(!is_word_fill(&[], 4));
+    }
+
+    #[test]
+    fn mostly_background_bitmaps_are_padding() {
+        // A 16-bit sprite window: background colour 0x8914 in three of four
+        // pixels, varied pixels in the rest.
+        let sprite: Vec<u8> = (0..512u16)
+            .flat_map(|i| {
+                let pixel = if i % 4 == 3 {
+                    0x5500 | (i * 37 % 251)
+                } else {
+                    0x8914
+                };
+                pixel.to_le_bytes()
+            })
+            .collect();
+        assert!(is_word_fill(&sprite, 2));
+        // Two pixels in three on background is not enough.
+        let busy: Vec<u8> = (0..512u16)
+            .flat_map(|i| {
+                let pixel = if i % 3 == 2 {
+                    0x5500 | (i * 37 % 251)
+                } else {
+                    0x8914
+                };
+                pixel.to_le_bytes()
+            })
+            .collect();
+        assert!(!is_word_fill(&busy, 2));
+    }
+
+    #[test]
+    fn windows_of_a_few_repeated_values_are_padding() {
+        // Two RGB565 colors in alternating runs: three distinct byte pairs.
+        let flat: Vec<u8> = [[0x59, 0xce].repeat(40), [0xba, 0xd6].repeat(24)]
+            .concat()
+            .repeat(8);
+        assert!(has_few_distinct_pairs(&flat));
+        assert!(is_padding(&flat));
+        let varied: Vec<u8> = (0..=255u8).collect();
+        assert!(!has_few_distinct_pairs(&varied));
+        assert!(!has_few_distinct_pairs(&[0x00]));
+    }
+
+    /// A model with the Z80 family's plain, eZ80 and 8080/8085 classes.
+    fn z80_model() -> Vec<u8> {
+        let mut z80 = ModelBuilder::new();
+        let mut ez80 = ModelBuilder::new();
+        let mut i8085 = ModelBuilder::new();
+        z80.add(&[0x3e, 0x01, 0xc9]);
+        ez80.add(&[0x5b, 0x21, 0x00]);
+        i8085.add(&[0x20, 0x30, 0xc9]);
+        Model::serialize(
+            &[
+                ("z80".into(), z80.build(16.0, model::COST_SCALE)),
+                ("ez80".into(), ez80.build(16.0, model::COST_SCALE)),
+                ("i8085".into(), i8085.build(16.0, model::COST_SCALE)),
+            ],
+            model::COST_SCALE,
+        )
+    }
+
+    #[test]
+    fn superset_variant_needs_clearly_more_evidence_than_its_base() {
+        let bytes = z80_model();
+        let model = Model::parse(&bytes).unwrap();
+        let (z80, ez80, i8085) = (0, 1, 2);
+        assert_eq!(model.class(z80).name, "z80");
+        assert_eq!(model.class(i8085).name, "i8085");
+        // eZ80 ahead, but not by the ratio: the Z80 claim is the one supported.
+        assert_eq!(
+            supported_variant(&model, ez80, &[1000.0, 1500.0, 100.0]),
+            z80
+        );
+        // eZ80 encodings dominate.
+        assert_eq!(
+            supported_variant(&model, ez80, &[1000.0, 2000.0, 100.0]),
+            ez80
+        );
+        // Plain Z80 is never promoted.
+        assert_eq!(supported_variant(&model, z80, &[1000.0, 100.0, 100.0]), z80);
+        // Z80 not clearly ahead of 8080/8085: the 8080 claim is supported,
+        // also at the end of the chain from eZ80.
+        assert_eq!(
+            supported_variant(&model, z80, &[1000.0, 100.0, 800.0]),
+            i8085
+        );
+        assert_eq!(
+            supported_variant(&model, ez80, &[1000.0, 1500.0, 900.0]),
+            i8085
+        );
+        assert_eq!(
+            supported_variant(&model, i8085, &[1000.0, 1500.0, 900.0]),
+            i8085
+        );
+    }
+
     fn repeat(pattern: &[u8], n: usize) -> Vec<u8> {
         pattern.iter().copied().cycle().take(n).collect()
+    }
+
+    /// `n` bytes of toy code: `head` followed by each of `last` in turn.
+    fn toy_code(head: [u8; 3], last: std::ops::Range<u8>, n: usize) -> Vec<u8> {
+        let pattern: Vec<u8> = last.flat_map(|b| [head[0], head[1], head[2], b]).collect();
+        repeat(&pattern, n)
+    }
+
+    fn toy_x86(n: usize) -> Vec<u8> {
+        toy_code([0x90, 0x90, 0xC3], 0..7, n)
+    }
+
+    fn toy_arm(n: usize) -> Vec<u8> {
+        toy_code([0xE1, 0xA0, 0x00], 1..10, n)
     }
 
     #[test]
@@ -710,9 +1200,9 @@ mod tests {
         let bytes = toy_model();
         let model = Model::parse(&bytes).unwrap();
         let opts = ClassifierOptions::new();
-        let r = analyze_with_model(&repeat(&[0x90, 0x90, 0xC3, 0x03], 4096), &opts, &model).unwrap();
+        let r = analyze_with_model(&toy_x86(4096), &opts, &model).unwrap();
         assert_eq!(r.isa, Isa::X86);
-        let r = analyze_with_model(&repeat(&[0xE1, 0xA0, 0x00, 0x02], 4096), &opts, &model).unwrap();
+        let r = analyze_with_model(&toy_arm(4096), &opts, &model).unwrap();
         assert_eq!(r.isa, Isa::Arm);
         assert_eq!(r.variant.name, "a32");
     }
@@ -745,7 +1235,7 @@ mod tests {
         let bytes = toy_model();
         let model = Model::parse(&bytes).unwrap();
         let mut data = vec![0xFF; 256 * 1024];
-        let code = repeat(&[0xE1, 0xA0, 0x00, 0x04], 8192);
+        let code = toy_arm(8192);
         data[100_000..100_000 + code.len()].copy_from_slice(&code);
         let r = analyze_with_model(&data, &ClassifierOptions::new(), &model).unwrap();
         assert_eq!(r.isa, Isa::Arm);
@@ -772,7 +1262,7 @@ mod tests {
         let model = Model::parse(&bytes).unwrap();
         // 8 MB of erased flash with 8 KB of code near the start.
         let mut data = vec![0xFF; 8 << 20];
-        let code = repeat(&[0xE1, 0xA0, 0x00, 0x04], 8192);
+        let code = toy_arm(8192);
         data[4096..4096 + code.len()].copy_from_slice(&code);
         let opts = ClassifierOptions { max_scan_bytes: 64 * 1024, ..ClassifierOptions::new() };
         let r = analyze_with_model(&data, &opts, &model).unwrap();
@@ -780,11 +1270,34 @@ mod tests {
     }
 
     #[test]
+    fn many_weak_windows_outrank_one_strong_window_of_another_family() {
+        let weight = |family, bytes, strong, weak| FamilyWeight {
+            family,
+            bytes,
+            strong,
+            weak,
+        };
+        // 61 weak 68000 windows against one strong MIPS window: the
+        // allowance would zero the 68000 evidence, but it is the larger.
+        let weights = vec![
+            weight("mips", 10 * 1024, 0.96, 3.6),
+            weight("m68k", 61 * 1024, 0.0, 25.06),
+        ];
+        assert_eq!(most_supported(weights), Some("m68k"));
+        // Equal weight: more bytes, then the first name.
+        let tie = vec![weight("b", 2048, 1.0, 0.0), weight("a", 1024, 1.0, 0.0)];
+        assert_eq!(most_supported(tie), Some("b"));
+        let tie = vec![weight("b", 1024, 1.0, 0.0), weight("a", 1024, 1.0, 0.0)];
+        assert_eq!(most_supported(tie), Some("a"));
+        assert_eq!(most_supported(Vec::new()), None);
+    }
+
+    #[test]
     fn multi_isa_reports_both_regions() {
         let bytes = toy_model();
         let model = Model::parse(&bytes).unwrap();
-        let mut data = repeat(&[0x90, 0x90, 0xC3, 0x01], 16 * 1024);
-        data.extend(repeat(&[0xE1, 0xA0, 0x00, 0x03], 16 * 1024));
+        let mut data = toy_x86(16 * 1024);
+        data.extend(toy_arm(16 * 1024));
         let s = scan(&data, &model, 1024, data.len());
         let fams: Vec<_> = s.family_votes().into_iter().map(|v| v.0).collect();
         assert_eq!(fams.len(), 2);

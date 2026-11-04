@@ -197,18 +197,57 @@ fn ti_vendor_generated_multicore_and_signing_oracles() {
     }
 }
 
+/// Generic unkeyed table: entry, then (byte count, destination, data) records
+/// padded to 32 bits, then a zero count.
+fn unkeyed_table(sections: &[(u32, &[u8])], le: bool) -> Vec<u8> {
+    let mut v = u32s(&[sections[0].0], le);
+    for (address, bytes) in sections {
+        v.extend(u32s(&[bytes.len() as u32, *address], le));
+        v.extend(*bytes);
+        while v.len() % 4 != 0 {
+            v.push(0);
+        }
+    }
+    v.extend([0; 4]);
+    v
+}
+
+/// Production C5510 table: entry, one register record, (byte count,
+/// destination, data) records kept 16-bit aligned, then a zero count.
+fn c5510_table(sections: &[(u32, &[u8])]) -> Vec<u8> {
+    let mut v = u32s(&[sections[0].0, 1], false);
+    v.extend([0x1c, 0, 0x12, 0x34]);
+    for (address, bytes) in sections {
+        v.extend(u32s(&[bytes.len() as u32, *address], false));
+        v.extend(*bytes);
+    }
+    v.extend([0; 4]);
+    v
+}
+
 #[test]
 fn unkeyed_boot_tables_require_full_structure() {
-    let mut v = u32s(&[0x1000, 4, 0x1000], true);
-    v.extend([1, 2, 3, 4]);
-    v.extend([0; 4]);
-    assert_format(&v, FileFormat::TiBoot);
-    let mut c55 = u32s(&[0x1000, 1], false);
-    c55.extend([0x1c, 0, 0x12, 0x34]);
-    c55.extend(u32s(&[4, 0x1000], false));
-    c55.extend([1, 2, 3, 4]);
-    c55.extend([0; 4]);
-    assert_format(&c55, FileFormat::TiBoot);
+    let two = [(0x1000, &[1u8, 2, 3, 4][..]), (0x2000, &[5, 6, 7, 8][..])];
+    assert_format(&unkeyed_table(&two, true), FileFormat::TiBoot);
+    assert_format(&c5510_table(&two), FileFormat::TiBoot);
+    // One block is a length, an address and a zero word: parsed when the
+    // layout is named, never recognized on its own.
+    let one = [(0x1000, &[1u8, 2, 3, 4][..])];
+    for v in [unkeyed_table(&one, true), c5510_table(&one)] {
+        assert!(ti::detect_weak(&v).is_none());
+        assert!(matches!(
+            formats::detect_format(&v),
+            formats::DetectedFormat::Raw
+        ));
+    }
+    assert!(ti::parse_container(&unkeyed_table(&one, true), ti::Variant::C6000Boot).is_ok());
+    assert!(ti::parse_container(&c5510_table(&one), ti::Variant::C55xLegacy).is_ok());
+    // Two blocks loaded to the same bytes (a Qualcomm data segment, fw1
+    // `widevine.b04`, reads this way) are not a boot table.
+    let overlapping = [(0x1000, &[1u8, 2, 3, 4][..]), (0x1002, &[5, 6, 7, 8][..])];
+    let v = unkeyed_table(&overlapping, true);
+    assert!(ti::parse_container(&v, ti::Variant::C6000Boot).is_ok());
+    assert!(ti::detect_weak(&v).is_none());
     for len in 0..80 {
         assert!(matches!(
             formats::detect_format(&vec![0; len]),
@@ -402,11 +441,20 @@ fn multicore_and_archive_extensions_keep_per_component_evidence() {
 
 #[test]
 fn gp_image_no_architecture_from_address() {
-    let mut v = u32s(&[16, 0x80000000], true);
+    // AM335x boot ROM load address
+    let mut v = u32s(&[16, 0x402f_0400], true);
     v.extend([0x42; 16]);
     let c = ti::parse_container(&v, ti::Variant::GpImage).unwrap();
     assert!(matches!(c.classification().isa, Isa::Unknown(_)));
     assert_format(&v, FileFormat::TiImage);
+    // Files that start with their own length (Goodix touch firmware,
+    // MediaTek FSM images) load elsewhere: parsed on request, not detected.
+    for address in [0x8000_0000, 0xde90] {
+        let mut other = u32s(&[16, address], true);
+        other.extend([0x42; 16]);
+        assert!(ti::parse_container(&other, ti::Variant::GpImage).is_ok());
+        assert!(ti::detect_weak(&other).is_none());
+    }
 }
 
 #[test]
@@ -738,26 +786,80 @@ fn x509_combined_components_and_integrity_length() {
 #[test]
 fn c3x_c4x_tables_and_c32_data_widths() {
     for width in [8, 16, 32] {
-        let c31 = u32s(&[width, 0, 1, 0x1000, 0x12345678, 0], true);
+        // width, control, two (count, destination, words) blocks, zero count
+        let c31 = u32s(
+            &[width, 0, 1, 0x1000, 0x12345678, 1, 0x2000, 0x9abcdef0, 0],
+            true,
+        );
         let p = detect(&c31, &ClassifierOptions::default()).unwrap();
         assert_eq!(p.primary.isa, Isa::TiC3x);
+        // C4x adds a second control word and ends with IVTP, TVTP and IACK
         let c4 = u32s(
             &[
-                width, 0, 0, 1, 0x1000, 0x12345678, 0, 0x2000, 0x3000, 0x4000,
+                width, 0, 0, 1, 0x1000, 0x12345678, 1, 0x1800, 0x9abcdef0, 0, 0x2000, 0x3000,
+                0x4000,
             ],
             true,
         );
         assert!(ti::parse_container(&c4, ti::Variant::C4xBoot).is_ok());
         assert_format(&c4, FileFormat::TiBoot);
         for (type_bits, octets) in [(0, 1), (1, 2), (3, 4)] {
-            let mut c32 = u32s(&[width, 0, 0, 0, 2, 0x1000, (type_bits << 24) | 0x64], true);
+            let control = (type_bits << 24) | 0x64;
+            let mut c32 = u32s(&[width, 0, 0, 0, 2, 0x1000, control], true);
             c32.extend(vec![0x12; 2 * octets]);
+            c32.extend(u32s(&[2, 0x2000, control], true));
+            c32.extend(vec![0x34; 2 * octets]);
             c32.extend([0; 4]);
             let c = ti::parse_container(&c32, ti::Variant::C32Boot).unwrap();
             assert_eq!(c.sections[0].data.len(), 2 * octets);
             assert_format(&c32, FileFormat::TiBoot);
         }
     }
+}
+
+#[test]
+fn magic_less_tables_need_more_than_one_block_or_a_memory_header() {
+    // An ELF `.dynamic` section of a Qualcomm trusted app (fw1 `*.b05`):
+    // DT_SYMBOLIC (0x10) reads as a 16-bit memory width, DT_REL as one block.
+    let dynamic = u32s(
+        &[
+            0x10,
+            0,
+            0x11,
+            0x00ba_3000,
+            0x12,
+            0x1060,
+            0x13,
+            8,
+            0x16,
+            0,
+            0x6fff_fffa,
+            0x20c,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+        true,
+    );
+    assert!(ti::parse_container(&dynamic, ti::Variant::C31Boot).is_ok());
+    assert!(ti::detect_weak(&dynamic).is_none());
+    assert!(matches!(
+        formats::detect_format(&dynamic),
+        formats::DetectedFormat::Raw
+    ));
+    // A headerless peripheral stream with one block covering the file
+    let mut stream = u32s(&[4, 0x1000], true);
+    stream.extend([0x5a; 16]);
+    stream.extend([0; 4]);
+    assert!(ti::parse_container(&stream, ti::Variant::C31Boot).is_ok());
+    assert!(ti::detect_weak(&stream).is_none());
 }
 
 #[test]

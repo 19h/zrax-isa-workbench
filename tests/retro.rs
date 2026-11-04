@@ -281,9 +281,16 @@ fn genesis_32x_lists_the_sh2_program_as_its_own_slice() {
 
 #[test]
 fn genesis_teradrive_x86_rom_does_not_claim_the_68000() {
-    let p = classify(&genesis_rom("SEGA TERA286", 0x800));
+    // The ISA comes from the code, here AArch64 code where a Teradrive ROM
+    // holds x86 code: a NOP-filled body is fill, which names no ISA.
+    let code =
+        std::fs::read("tests/fixtures/transforms/aarch64.text.bin").expect("fixture is committed");
+    let mut rom = genesis_rom("SEGA TERA286", 0x2000);
+    rom[0x200..0x200 + 0x1800].copy_from_slice(&code[..0x1800]);
+    let p = classify(&rom);
     assert_eq!(p.format.format, FileFormat::GenesisRom);
     assert_ne!(p.primary.source, ClassificationSource::FileFormat);
+    assert_eq!(p.primary.isa, Isa::AArch64);
     assert!(has_note(&p, "Teradrive ROM that boots from the x86 side"));
 }
 

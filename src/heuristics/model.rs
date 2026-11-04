@@ -126,6 +126,8 @@ macro_rules! data {
 pub const CLASSES: &[ClassInfo] = &[
     code!("x86", "x86", X86, Little, 32),
     code!("x86_64", "x86", X86_64, Little, 64),
+    // Real-mode code: option ROMs, DOS programs, BIOS boot paths.
+    code!("x86_16", "x86", X86, Little, 16),
     code!("arm", "arm", Arm, Little, 32, "a32"),
     code!("thumb", "arm", Arm, Little, 32, "thumb"),
     code!("armeb", "arm", Arm, Big, 32, "a32"),
@@ -179,7 +181,11 @@ pub const CLASSES: &[ClassInfo] = &[
     code!("tic6000", "tic6000", TiC6000, Little, 32),
     code!("tic28x", "tic28x", TiC28x, Little, 32),
     code!("hcs12", "hcs12", Hcs12, Big, 16),
-    code!("hc11", "hc11", Hc11, Big, 8),
+    // The 68HC11 extends the 6801, a 6800 derivative: one family, so the two
+    // classes do not take each other's windows (as their own family, `hc11`
+    // left AMD GPU SMC and DMCU firmware read as 6800 code at 0.98-0.99 with
+    // ambiguous windows only; fw1, 2026-11-04).
+    code!("hc11", "m6800", Hc11, Big, 8),
     code!("s12z", "s12z", S12z, Big, 16),
     code!("fr30", "fr30", Fr30, Big, 32),
     code!("vax", "vax", Vax, Little, 32),
@@ -208,10 +214,22 @@ pub const CLASSES: &[ClassInfo] = &[
     code!("stm8", "stm8", Stm8, Big, 8),
     code!("z80", "z80", Z80, Little, 8),
     code!("ez80", "z80", Z80, Little, 24, "ez80"),
+    // Intel 8080/8085 code: a Z80 runs it, so it shares the Z80 family and
+    // the variant decides; Z80 code uses JR, DJNZ and the CB/DD/ED/FD
+    // prefixes, which the 8080 lacks.
+    code!("i8085", "z80", I8085, Little, 8),
     code!("sm83", "z80", Z80, Little, 8, "sm83"),
     code!("z8", "z8", Z8, Big, 8),
     code!("mos6502", "6502", Mcs6502, Little, 8),
+    // No model data: 6502-class answers become 65816 when the code switches
+    // to the 65816's native mode (`Scan::checked_6502_variant`).
+    code!("w65816", "6502", W65816, Little, 16),
     code!("pic14", "pic", Pic, Little, 8, "pic14"),
+    // Hand-written mid-range PIC assembly. Compiler output and hand-written
+    // code are two byte distributions one bigram model cannot hold: a
+    // PIC12C671 program costs 7.31 bits/byte under a model of both, 5.94
+    // under one of hand-written code alone (2026-11-04). Same ISA and variant.
+    code!("pic14asm", "pic", Pic, Little, 8, "pic14"),
     code!("pic18", "pic", Pic, Little, 8, "pic18"),
     code!("pic24", "pic", Pic, Little, 16, "pic24"),
     code!("pdp11", "pdp11", Pdp11, Little, 16),
@@ -221,9 +239,13 @@ pub const CLASSES: &[ClassInfo] = &[
     code!("xa", "xa", Xa, Big, 16),
     code!("tlcs900", "tlcs900", Tlcs900, Little, 16),
     code!("mn10200", "mn10200", Mn10200, Little, 16),
+    code!("mn10300", "mn10300", Mn10300, Little, 32),
     code!("f2mc16", "f2mc16", F2mc16, Little, 16),
     code!("h8500", "h8500", H8500, Big, 16),
     code!("unsp", "unsp", Unsp, Little, 16),
+    // Derived from the little-endian samples (`WORD_SWAPPED` in
+    // build_corpus.py): µ'nSP dumps come in either word byte order.
+    code!("unspeb", "unsp", Unsp, Big, 16),
     code!("kr1878", "kr1878", Kr1878, Little, 8),
     code!("r32c", "r32c", R32c, Little, 32),
     code!("st20", "st20", St20, Little, 32),
@@ -246,6 +268,14 @@ pub const CLASSES: &[ClassInfo] = &[
     data!("neg_text"),
     data!("neg_media"),
     data!("neg_table"),
+    // Uncompressed pixels and tile graphics (frame-buffer images, arcade
+    // graphics ROMs): as part of `neg_media` they were still read as code
+    // (6 of 11 held-out synthetic images at 0.95 or more, 2026-11-04).
+    data!("neg_pixels"),
+    // Byte lanes of 16- and 32-bit code (one file per lane of a wide bus):
+    // no whole instruction, but a 68000 lane was read as 68000 code
+    // (scripts/fw1/lane_negatives.py, 2026-11-04).
+    data!("neg_lanes"),
 ];
 
 /// Look up the static description of a class name.

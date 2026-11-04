@@ -709,6 +709,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::AllwinnerEgon => "Allwinner eGON",
         FileFormat::RockchipImage => "Rockchip image",
         FileFormat::MediatekPreloader => "MediaTek preloader",
+        FileFormat::MediatekImage => "MediaTek partition image",
         FileFormat::QualcommMbn => "Qualcomm MBN",
         FileFormat::GenesisRom => "Mega Drive ROM",
         FileFormat::PsxExe => "PS-X EXE",
@@ -858,6 +859,9 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Wim => "WIM image",
         FileFormat::Udf => "UDF volume",
         FileFormat::X509 => "X.509 Certificate",
+        FileFormat::Bplist => "Binary Property List",
+        FileFormat::QcaBoard => "QCA Board Data",
+        FileFormat::Cfb => "Compound File",
     }
 }
 

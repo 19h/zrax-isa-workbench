@@ -263,7 +263,9 @@ fn classify_file(
             result,
             Err(ref e) if !matches!(
                 e,
-                ClassifierError::HeuristicInconclusive { .. } | ClassifierError::FileTooSmall { .. }
+                ClassifierError::HeuristicInconclusive { .. }
+                    | ClassifierError::HeuristicSparseCode { .. }
+                    | ClassifierError::FileTooSmall { .. }
             )
         );
     if !truncated_by_us {
@@ -322,9 +324,14 @@ fn idaref_classification_suite() {
                     (Outcome::Wrong, p.primary.isa.to_string())
                 }
             }
-            (Is(_), Err(ClassifierError::HeuristicInconclusive { .. } | ClassifierError::FileTooSmall { .. })) => {
-                (Outcome::Inconclusive, "-".into())
-            }
+            (
+                Is(_),
+                Err(
+                    ClassifierError::HeuristicInconclusive { .. }
+                    | ClassifierError::HeuristicSparseCode { .. }
+                    | ClassifierError::FileTooSmall { .. },
+                ),
+            ) => (Outcome::Inconclusive, "-".into()),
             (Is(_), Err(e)) => (Outcome::Error, e.to_string()),
             (Unsupported, Ok(p)) if !matches!(p.primary.isa, Unknown(_)) => {
                 // A header that names some ISA we map is not a heuristic false

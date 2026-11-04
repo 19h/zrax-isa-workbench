@@ -21,6 +21,15 @@ for r in rows.values():
 heads = {r["sha"]: r for r in csv.DictReader(open("heads.tsv"), delimiter="\t")}
 pil = {r["name"]: r for r in csv.DictReader(open("pil_match.tsv"), delimiter="\t")}
 smooth = {r["sha"]: r for r in csv.DictReader(open("smooth.tsv"), delimiter="\t")}
+# mame_match.tsv (mame_regions.py, matched by SHA-1): MAME's ROM region per dump.
+mame = {}
+try:
+    with open("mame_match.tsv") as f:
+        for line in f:
+            fields = line.rstrip("\n").split("\t")
+            mame[fields[0]] = fields
+except FileNotFoundError:
+    pass
 out = []
 def add(cat, r, ev):
     out.append([cat, r["sha"], r["name"], r["format"], r["fvariant"], r["isa"], r["variant"], r["bits"], r["endian"], r["conf"][:5], ev])
@@ -51,8 +60,17 @@ for s, r in rows.items():
         add("x86-16bit", r, "XT-IDE legacy option ROM (8088 real mode)")
     if r["name"].startswith("faceauth") and r["isa"] != "arm" and r["format"] == "raw":
         add("cortexm-missed", r, "Cortex-M vector table + Thumb code at offset 0")
-    if r["name"] in ("mn10200_code1.bin", "mn10200_swapped.bin", "hop_leds_pic12c671.bin") or r["name"].startswith("MN10300_GH2"):
-        add("name-contradicts", r, "file name names the ISA; not independently verified")
+    if r["name"] in ("mn10200_code1.bin", "mn10200_swapped.bin"):
+        # The name says MN10200; the bytes are little-endian MIPS R3000 code
+        # (stored and 16-bit swapped), so the expected answer is MIPS.
+        add("name-contradicts", r, "MIPS R3000 reset code writing 0x1F801010 (name says MN10200)")
+    if r["name"] == "hop_leds_pic12c671.bin":
+        add("name-contradicts", r, "PIC14 GOTO/CALL/MOVLW/RETURN words; PIC12C671 is a 14-bit mid-range part")
+    if r["name"].startswith("MN10300_GH2"):
+        add("name-contradicts", r, "file name names MN10300 (decrypted Panasonic GH2 firmware); not otherwise verified")
+    m = mame.get(s)
+    if m and m[2] in ("graphics", "sound") and r["isa"]:
+        add("mame-data-as-code", r, f"MAME set {m[4]} loads this dump into region {m[3]} ({m[2]})")
     if r["name"] == "A3440_42_9B5042a_TMAP_16" or r["name"] == "SCH-V745_ZE29_0x2890000.FNT":
         add("data-as-code", r, "bplist00 header / valid zlib stream")
 for s, r in rows.items():

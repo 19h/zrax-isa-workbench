@@ -66,14 +66,13 @@ const HLT: u8 = 0xf4;
 const BOOT_CODE_TARGET: Target = Target::new(Isa::X86, 16, Endianness::Little);
 
 /// A dump may end before the volume its boot sector declares (a missing
-/// last track, an image rounded down to whole MiB). [FATGEN] calls such a
-/// volume malformed; weak detection of FAT12, FAT16 and FAT32 accepts at
-/// most 1 MiB and at most an eighth of the volume missing. The bounds are
-/// ours. A volume cut shorter (the first 64 MiB of a larger partition that
-/// a container decoded) is still parsed by [`parse_container`] as a
-/// truncated volume, and exFAT, which carries its name, is recognized at
-/// any length.
-const MAX_MISSING_SIZE: u64 = 1 << 20;
+/// last track, an image rounded down to whole MiB, a partition dump cut
+/// short: fw1 `system.img` lacks 14.6 MiB of a 222 MiB FAT16 volume). [FATGEN]
+/// calls such a volume malformed; weak detection of FAT12, FAT16 and FAT32
+/// accepts at most an eighth of the volume missing. The bound is ours. A
+/// volume cut shorter (the first 64 MiB of a larger partition that a
+/// container decoded) is still parsed by [`parse_container`] as a truncated
+/// volume, and exFAT, which carries its name, is recognized at any length.
 const MAX_MISSING_DIVISOR: u64 = 8;
 
 /// A FAT layout. FAT12, FAT16 and FAT32 are told apart by the count of
@@ -278,14 +277,12 @@ impl Coverage {
     }
 
     /// Whether weak detection accepts the volume: it may end before the
-    /// input does, and may extend beyond it by at most
-    /// [`MAX_MISSING_SIZE`] and an eighth of the volume.
+    /// input does, and may extend beyond it by at most an eighth of the
+    /// volume.
     fn is_tolerated(self, volume_size: u64) -> bool {
         match self {
             Self::Exact | Self::Trailing(_) => true,
-            Self::Truncated(missing) => {
-                missing <= MAX_MISSING_SIZE && missing <= volume_size / MAX_MISSING_DIVISOR
-            }
+            Self::Truncated(missing) => missing <= volume_size / MAX_MISSING_DIVISOR,
         }
     }
 }
@@ -468,11 +465,14 @@ mod tests {
         let short = Coverage::of(1 << 23, (1 << 23) - 4096);
         assert_eq!(short, Coverage::Truncated(4096));
         assert!(short.is_tolerated(1 << 23));
-        // More than an eighth of the volume, or more than 1 MiB, missing.
+        // A large volume may miss more than 1 MiB, but never more than an
+        // eighth of its size (the first 64 MiB of a 1 GiB partition).
         assert!(!Coverage::of(4096, 3000).is_tolerated(4096));
-        let cut = Coverage::of(1 << 30, (1 << 30) - (2 << 20));
-        assert_eq!(cut, Coverage::Truncated(2 << 20));
-        assert!(!cut.is_tolerated(1 << 30));
+        let short_tail = Coverage::of(1 << 30, (1 << 30) - (2 << 20));
+        assert_eq!(short_tail, Coverage::Truncated(2 << 20));
+        assert!(short_tail.is_tolerated(1 << 30));
+        let prefix = Coverage::of(1 << 30, 64 << 20);
+        assert!(!prefix.is_tolerated(1 << 30));
     }
 
     #[test]

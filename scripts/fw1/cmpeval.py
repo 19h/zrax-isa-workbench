@@ -1,20 +1,48 @@
 #!/usr/bin/env python3
-"""Compare two eval.rs outputs per class at one input size. Usage: cmpeval.py A B [size] [min_delta]"""
-import sys, re
-def load(p, size):
+"""Compare two `examples/eval.rs` reports per class at one input size.
+
+For code classes the exact share is compared, for `neg_*` classes the
+wrong (false accept) share. A class is printed when it changed by more than
+MIN_DELTA points, when code is below 90% exact, or when a negative class
+is above 2% wrong.
+
+Usage: cmpeval.py A.txt B.txt [--size file|128B|512B|2048B] [--min-delta N]
+"""
+import argparse
+
+
+def load(path, size):
+    """class -> (n, correct %, exact %, wrong %, confusions) at one input size."""
     out = {}
-    for line in open(p):
-        f = line.split()
-        if len(f) >= 7 and f[1] == size and f[3].endswith("%"):
-            out[f[0]] = (int(f[2]), float(f[3][:-1]), float(f[4][:-1]), float(f[5][:-1]), " ".join(f[7:])[:90])
+    with open(path) as f:
+        for line in f:
+            fields = line.split()
+            if len(fields) >= 7 and fields[1] == size and fields[3].endswith("%"):
+                n = int(fields[2])
+                correct, exact, wrong = (float(fields[i][:-1]) for i in (3, 4, 5))
+                out[fields[0]] = (n, correct, exact, wrong, " ".join(fields[7:])[:90])
     return out
-a, b = load(sys.argv[1], sys.argv[3] if len(sys.argv) > 3 else "file"), load(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "file")
-md = float(sys.argv[4]) if len(sys.argv) > 4 else 0.0
-for k in sorted(set(a) | set(b)):
-    x, y = a.get(k), b.get(k)
-    if not x or not y: continue
-    neg = k.startswith("neg_")
-    dx = (y[3] - x[3]) if neg else (y[2] - x[2])
-    if abs(dx) > md or (not neg and y[2] < 90) or (neg and y[3] > 2):
-        metric = "wrong" if neg else "exact"
-        print(f"{k:12} n={y[0]:5} {metric} {x[3] if neg else x[2]:6.1f} -> {y[3] if neg else y[2]:6.1f}   now: {y[4]}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("a")
+    parser.add_argument("b")
+    parser.add_argument("size", nargs="?", default="file")
+    parser.add_argument("min_delta", nargs="?", type=float, default=0.0)
+    args = parser.parse_args()
+    before, after = load(args.a, args.size), load(args.b, args.size)
+    for cls in sorted(set(before) | set(after)):
+        old, new = before.get(cls), after.get(cls)
+        if not old or not new:
+            continue
+        negative = cls.startswith("neg_")
+        metric = 3 if negative else 2
+        delta = new[metric] - old[metric]
+        if abs(delta) > args.min_delta or (not negative and new[2] < 90) or (negative and new[3] > 2):
+            label = "wrong" if negative else "exact"
+            print(f"{cls:12} n={new[0]:5} {label} {old[metric]:6.1f} -> {new[metric]:6.1f}   now: {new[4]}")
+
+
+if __name__ == "__main__":
+    main()

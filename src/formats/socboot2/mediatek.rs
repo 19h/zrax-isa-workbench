@@ -1,6 +1,9 @@
 //! `MediaTek` preloader images: the generic device header (`EMMC_BOOT`,
 //! `SF_BOOT`, `SDMMC_BOOT`, `UFS_BOOT`), the boot ROM layout (BRLYT) and
-//! the GFH record chain that starts with `GFH_FILE_INFO`.
+//! the GFH record chain that starts with `GFH_FILE_INFO`. Also `MediaTek`
+//! partition images (`lk`, `md1rom`, `md3rom`, `cam_vpu3`): one or more
+//! 512-byte `mtk_hdr` headers, each followed by its payload (Magisk
+//! `native/src/boot/bootimg.hpp`, `mtk_hdr`).
 //!
 //! Sources: U-Boot `tools/mtk_image.[ch]` (`union gen_boot_header`,
 //! `struct brom_layout_header`, `struct gfh_common_header`,
@@ -109,7 +112,32 @@ const JUMP_BL_ARM64: u8 = 0x64;
 /// Most GFH record types named in the notes.
 const MAX_NAMED_RECORDS: usize = 8;
 
+/// Partition image header (`mtk_hdr`): magic (0), payload size (4), name
+/// (8, 32 B NUL-padded), padding to 512 B. Android boot images use the same
+/// header in front of their kernel and ramdisk.
+pub(crate) const PARTITION_MAGIC: u32 = 0x5888_1688;
+pub(crate) const PARTITION_HEADER_SIZE: usize = 512;
+const PARTITION_SIZE: usize = 4;
+const PARTITION_NAME: usize = 8;
+const PARTITION_NAME_SIZE: usize = 32;
+/// `MediaTek`'s image tool writes more fields into the padding. Names from
+/// our reading of fw1 images, not a published layout: an extension magic
+/// (0x30), the header size (0x34, 512 in every image seen) and the payload
+/// alignment (0x44, 16 in every image seen; the next header or the end of
+/// the image follows the payload rounded up to it).
+const PARTITION_EXT_MAGIC_OFFSET: usize = 0x30;
+const PARTITION_EXT_MAGIC: u32 = 0x5889_1689;
+const PARTITION_EXT_HEADER_SIZE: usize = 0x34;
+const PARTITION_EXT_ALIGN: usize = 0x44;
+/// Most images followed in one partition (a bound on the walk).
+const MAX_PARTITION_IMAGES: usize = 16;
+/// Largest alignment accepted from the extension (a page).
+const MAX_PARTITION_ALIGN: usize = 4096;
+
 pub(super) fn detect(data: &[u8]) -> Option<Layout> {
+    if le_u32(data, 0).ok() == Some(PARTITION_MAGIC) {
+        return Some(Layout::MediatekPartition);
+    }
     for (name, layout, padded) in DEVICE_NAMES {
         let is_padded = !padded || data.get(name.len()) == Some(&0);
         if data.starts_with(name) && is_padded {
@@ -504,6 +532,117 @@ pub(super) fn parse_gfh_image(data: &[u8]) -> Result<Container<'_>> {
         "mediatek",
     );
     parse_gfh(data, 0, &mut c)?;
+    Ok(c)
+}
+
+/// One `mtk_hdr` image: where its payload lies and where the next header
+/// may start.
+struct PartitionImage<'a> {
+    name: String,
+    payload_offset: usize,
+    payload: &'a [u8],
+    next: usize,
+}
+
+fn partition_image(data: &[u8], at: usize) -> Result<PartitionImage<'_>> {
+    let header = range(data, at, PARTITION_HEADER_SIZE, "MediaTek partition header")?;
+    let size = le_size(header, PARTITION_SIZE)?;
+    if size == 0 {
+        return Err(error(format!(
+            "Invalid MediaTek partition payload size 0 at 0x{:X}",
+            at + PARTITION_SIZE
+        )));
+    }
+    let name = text_field(&header[PARTITION_NAME..PARTITION_NAME + PARTITION_NAME_SIZE]);
+    let extended = le_u32(header, PARTITION_EXT_MAGIC_OFFSET)? == PARTITION_EXT_MAGIC;
+    let (header_size, align) = if extended {
+        let header_size = le_size(header, PARTITION_EXT_HEADER_SIZE)?;
+        let align = le_size(header, PARTITION_EXT_ALIGN)?;
+        if header_size != PARTITION_HEADER_SIZE
+            || !(1..=MAX_PARTITION_ALIGN).contains(&align)
+            || !align.is_power_of_two()
+        {
+            return Err(error(format!(
+                "Invalid MediaTek partition header at 0x{at:X}: header size {header_size}, alignment {align}"
+            )));
+        }
+        (header_size, align)
+    } else {
+        (PARTITION_HEADER_SIZE, 1)
+    };
+    let payload_offset = at + header_size;
+    let payload = range(data, payload_offset, size, "MediaTek partition payload")?;
+    let end = payload_offset + size;
+    let next = end
+        .checked_add(align - 1)
+        .map(|e| e / align * align)
+        .ok_or_else(|| error(format!("Invalid MediaTek partition payload end 0x{end:X}")))?;
+    Ok(PartitionImage {
+        name,
+        payload_offset,
+        payload,
+        next,
+    })
+}
+
+/// Back-to-back `mtk_hdr` images. The payloads are listed as components and
+/// classified from their own bytes: the header names no processor. Bytes
+/// after the last image (the rest of a partition dump) are listed as opaque
+/// trailing data.
+pub(super) fn parse_partition(data: &[u8]) -> Result<Container<'_>> {
+    let mut c = Container::new(
+        FileFormat::MediatekImage,
+        Layout::MediatekPartition.label(),
+        "mediatek",
+    );
+    let mut pos = 0;
+    let mut names = Vec::new();
+    while c.children.len() < MAX_PARTITION_IMAGES {
+        let image = partition_image(data, pos)?;
+        let label = if image.name.is_empty() {
+            format!("image at 0x{pos:X}")
+        } else {
+            image.name.clone()
+        };
+        c.push_metadata(
+            format!("mediatek_image_{}", c.children.len()),
+            format!("Image {}", c.children.len()),
+            format!(
+                "{label}: payload at 0x{:X}, {} B",
+                image.payload_offset,
+                image.payload.len()
+            ),
+        );
+        c.children
+            .push(Child::stored(label, image.payload_offset, image.payload));
+        names.push(image.name);
+        pos = image.next.min(data.len());
+        if le_u32(data, pos).ok() != Some(PARTITION_MAGIC) {
+            break;
+        }
+    }
+    let padding = data[pos..]
+        .iter()
+        .take_while(|&&b| b == 0x00 || b == 0xff)
+        .count();
+    let trailing = pos + padding;
+    if trailing < data.len() {
+        c.children
+            .push(Child::opaque("Trailing data", trailing, &data[trailing..]));
+        c.notes.push(format!(
+            "{} B after the last image at 0x{trailing:X} are not part of an image",
+            data.len() - trailing
+        ));
+    }
+    c.consumed = data.len();
+    c.notes.insert(
+        0,
+        format!(
+            "MediaTek partition image with {} payload(s) ({}); the header names no processor",
+            names.len(),
+            names.join(", ")
+        ),
+    );
     Ok(c)
 }
 

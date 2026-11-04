@@ -69,8 +69,8 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // MIPS RS3000 LE
         0x0A => (Isa::Mips, 32),
 
-        // HP PA-RISC
-        0x0F => (Isa::Parisc, 32),
+        // HP PA-RISC; ELFCLASS64 objects are PA-RISC 2.0 wide (64-bit) code
+        0x0F => (Isa::Parisc, if is_64 { 64 } else { 32 }),
 
         // Fujitsu VPP500
         0x11 => (Isa::Unknown(0x11), 32),
@@ -259,7 +259,7 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         0x58 => (Isa::M32r, 32),
 
         // Matsushita MN10300
-        0x59 => (Isa::Unknown(0x59), 32),
+        0x59 => (Isa::Mn10300, 32),
 
         // Matsushita MN10200
         0x5A => (Isa::Mn10200, 16),
@@ -655,10 +655,10 @@ pub fn parse_e_flags(isa: Isa, e_flags: u32, data: &[u8]) -> (Variant, Vec<Exten
         Isa::AArch64 => parse_aarch64_flags(e_flags),
         Isa::RiscV32 | Isa::RiscV64 | Isa::RiscV128 => parse_riscv_flags(e_flags),
         Isa::Mips | Isa::Mips64 => parse_mips_flags(e_flags),
-        Isa::Ppc | Isa::Ppc64 | Isa::PpcVle => parse_ppc_flags(e_flags),
+        Isa::Ppc | Isa::Ppc64 | Isa::PpcVle => parse_ppc_flags(isa, e_flags),
         Isa::Sh | Isa::Sh4 => parse_sh_flags(e_flags),
         Isa::Hexagon => parse_hexagon_flags(e_flags),
-        Isa::LoongArch32 | Isa::LoongArch64 => parse_loongarch_flags(e_flags),
+        Isa::LoongArch32 | Isa::LoongArch64 => parse_loongarch_flags(isa, e_flags),
         Isa::Sparc | Isa::Sparc64 => parse_sparc_flags(e_flags),
         _ => (Variant::default(), Vec::new()),
     }
@@ -953,16 +953,24 @@ fn parse_mips_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
     (Variant::new(arch_name), extensions)
 }
 
-/// Parse PowerPC ELF flags.
-fn parse_ppc_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
-    let abi = e_flags & 0x3;
-    let abi_name = match abi {
-        1 => "ELFv1",
-        2 => "ELFv2",
-        _ => "",
-    };
+/// `EF_PPC64_ABI` (binutils `include/elf/ppc64.h`): the 64-bit PowerPC ABI
+/// version (1 = `ELFv1`, 2 = `ELFv2`, 0 = unspecified). 32-bit PowerPC defines
+/// no ABI field in these bits.
+const EF_PPC64_ABI: u32 = 0x3;
 
-    (Variant::with_abi("PowerPC", abi_name), Vec::new())
+/// Parse PowerPC ELF flags. Only a 64-bit object with a defined ABI version
+/// names an ABI.
+fn parse_ppc_flags(isa: Isa, e_flags: u32) -> (Variant, Vec<Extension>) {
+    let abi = match (isa, e_flags & EF_PPC64_ABI) {
+        (Isa::Ppc64, 1) => Some("ELFv1"),
+        (Isa::Ppc64, 2) => Some("ELFv2"),
+        _ => None,
+    };
+    let variant = match abi {
+        Some(abi) => Variant::with_abi("PowerPC", abi),
+        None => Variant::new("PowerPC"),
+    };
+    (variant, Vec::new())
 }
 
 /// Parse SuperH ELF flags.
@@ -978,24 +986,76 @@ fn parse_sh_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
     (Variant::new(name), Vec::new())
 }
 
-/// Parse Hexagon ELF flags.
-fn parse_hexagon_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
-    let version = e_flags & 0xFF;
-    let name = format!("V{}", version);
-    (Variant::new(name), Vec::new())
+/// `EF_HEXAGON_ISA` (LLVM `include/llvm/BinaryFormat/ELF.h`): the Hexagon
+/// machine version in `e_flags[9:0]`. V2 to V55 are 1 to 5; from V60 on, the
+/// value spells the version in hex digits (`0x65` is V65).
+const EF_HEXAGON_ISA: u32 = 0x03ff;
+
+/// `EF_HEXAGON_TINY_CORE`: the tiny-core form of a version (V67T, V71T).
+const EF_HEXAGON_TINY_CORE: u32 = 0x8000;
+
+/// Machine values of the versions before V60, which do not spell their
+/// version.
+const HEXAGON_EARLY_VERSIONS: [(u32, &str); 5] =
+    [(1, "V2"), (2, "V3"), (3, "V4"), (4, "V5"), (5, "V55")];
+
+/// First machine value that spells its version in hex digits (V60).
+const HEXAGON_SPELLED_VERSIONS_FROM: u32 = 0x60;
+
+/// The Hexagon version an `e_flags` machine value names, if it names one.
+fn hexagon_version(machine: u32) -> Option<String> {
+    if let Some((_, version)) = HEXAGON_EARLY_VERSIONS
+        .iter()
+        .find(|(value, _)| *value == machine)
+    {
+        return Some((*version).to_string());
+    }
+    let digits = format!("{machine:x}");
+    let spells_a_version = machine >= HEXAGON_SPELLED_VERSIONS_FROM
+        && digits.bytes().all(|digit| digit.is_ascii_digit());
+    spells_a_version.then(|| format!("V{digits}"))
 }
 
-/// Parse LoongArch ELF flags.
-fn parse_loongarch_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
-    let abi = e_flags & 0x7;
-    let abi_name = match abi {
-        0 => "LP64S",
-        1 => "LP64F",
-        2 => "LP64D",
-        _ => "",
+/// Parse Hexagon ELF flags: the machine version and the tiny-core flag. An
+/// unspecified or unknown machine value gives no variant.
+fn parse_hexagon_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
+    let Some(version) = hexagon_version(e_flags & EF_HEXAGON_ISA) else {
+        return (Variant::default(), Vec::new());
     };
+    let tiny_core = if e_flags & EF_HEXAGON_TINY_CORE == 0 {
+        ""
+    } else {
+        "T"
+    };
+    (Variant::new(format!("{version}{tiny_core}")), Vec::new())
+}
 
-    (Variant::with_abi("LoongArch", abi_name), Vec::new())
+/// `EF_LARCH_ABI_MODIFIER_MASK` (glibc `elf.h`): `e_flags[2:0]`, the base
+/// ABI modifier of a `LoongArch` object (1 = soft float, 2 = single, 3 = double;
+/// 0 and 4-7 reserved). The `LoongArch` ELF psABI: `EI_CLASS` and this field give
+/// the base ABI type. clang 23 writes 0x41, 0x42 and 0x43 for `lp64s`,
+/// `lp64f` and `lp64d` (checked 2026-11-04).
+const EF_LARCH_ABI_MODIFIER_MASK: u32 = 0x7;
+
+/// Parse `LoongArch` ELF flags. The base ABI follows the ELF class (LP64 or
+/// ILP32), the floating-point suffix the ABI modifier.
+fn parse_loongarch_flags(isa: Isa, e_flags: u32) -> (Variant, Vec<Extension>) {
+    let base = if isa == Isa::LoongArch64 {
+        "LP64"
+    } else {
+        "ILP32"
+    };
+    let float = match e_flags & EF_LARCH_ABI_MODIFIER_MASK {
+        1 => Some("S"),
+        2 => Some("F"),
+        3 => Some("D"),
+        _ => None,
+    };
+    let variant = match float {
+        Some(float) => Variant::with_abi("LoongArch", format!("{base}{float}")),
+        None => Variant::new("LoongArch"),
+    };
+    (variant, Vec::new())
 }
 
 /// Parse SPARC ELF flags.
@@ -1121,26 +1181,29 @@ const MAX_SECTION_NAME: usize = 256;
 struct SectionHeader {
     name: u32,
     kind: u32,
+    flags: u64,
     offset: u64,
     size: u64,
     link: u32,
 }
 
-/// The header at `at`. 32-bit: `sh_name` 0, `sh_type` 4, `sh_offset` 16,
-/// `sh_size` 20, `sh_link` 24. 64-bit: `sh_name` 0, `sh_type` 4,
-/// `sh_offset` 24, `sh_size` 32, `sh_link` 40.
+/// The header at `at`. 32-bit: `sh_name` 0, `sh_type` 4, `sh_flags` 8,
+/// `sh_offset` 16, `sh_size` 20, `sh_link` 24. 64-bit: `sh_name` 0,
+/// `sh_type` 4, `sh_flags` 8, `sh_offset` 24, `sh_size` 32, `sh_link` 40.
 fn section_header(data: &[u8], at: usize, is_64: bool, le: bool) -> Option<SectionHeader> {
     let field = |offset: usize| at.checked_add(offset);
     let name = read_u32(data, field(0)?, le).ok()?;
     let kind = read_u32(data, field(4)?, le).ok()?;
-    let (offset, size, link) = if is_64 {
+    let (flags, offset, size, link) = if is_64 {
         (
+            read_u64(data, field(8)?, le).ok()?,
             read_u64(data, field(24)?, le).ok()?,
             read_u64(data, field(32)?, le).ok()?,
             read_u32(data, field(40)?, le).ok()?,
         )
     } else {
         (
+            u64::from(read_u32(data, field(8)?, le).ok()?),
             u64::from(read_u32(data, field(16)?, le).ok()?),
             u64::from(read_u32(data, field(20)?, le).ok()?),
             read_u32(data, field(24)?, le).ok()?,
@@ -1149,6 +1212,7 @@ fn section_header(data: &[u8], at: usize, is_64: bool, le: bool) -> Option<Secti
     Some(SectionHeader {
         name,
         kind,
+        flags,
         offset,
         size,
         link,
@@ -1162,22 +1226,18 @@ fn section_name(strings: &[u8], offset: u32) -> String {
     field_name(&strings[start..end])
 }
 
-/// Sections with file bytes, named from the section-name string table and
-/// clipped to the input. ELF header: `e_shoff` at 0x20 (64-bit 0x28),
-/// `e_shentsize`, `e_shnum` and `e_shstrndx` at 0x2E, 0x30 and 0x32
-/// (64-bit 0x3A, 0x3C, 0x3E). `e_shnum` 0 takes the count from section 0's
-/// `sh_size`, and `SHN_XINDEX` the string-table index from its `sh_link`.
-/// The count is limited by the bytes available and by 4096.
-pub fn sections(data: &[u8]) -> Vec<NamedRange> {
+/// The section headers after index 0 and the section-name string table
+/// (empty when absent); see [`sections`] for the fields read and the limits.
+fn section_table(data: &[u8]) -> (Vec<SectionHeader>, &[u8]) {
     let is_64 = match data.get(4) {
         Some(&class::ELFCLASS32) => false,
         Some(&class::ELFCLASS64) => true,
-        _ => return Vec::new(),
+        _ => return (Vec::new(), &[]),
     };
     let le = match data.get(5) {
         Some(&data::ELFDATA2LSB) => true,
         Some(&data::ELFDATA2MSB) => false,
-        _ => return Vec::new(),
+        _ => return (Vec::new(), &[]),
     };
     let fields = if is_64 {
         read_u64(data, 0x28, le)
@@ -1199,18 +1259,18 @@ pub fn sections(data: &[u8]) -> Vec<NamedRange> {
             .zip(read_u16(data, 0x32, le).ok())
     };
     let (Some((table, entry_size)), Some((count, string_index))) = (fields, counts) else {
-        return Vec::new();
+        return (Vec::new(), &[]);
     };
     let header_size = if is_64 { 64 } else { 40 };
     let entry_size = usize::from(entry_size);
     let Ok(table) = usize::try_from(table) else {
-        return Vec::new();
+        return (Vec::new(), &[]);
     };
     if table == 0 || table >= data.len() || entry_size < header_size {
-        return Vec::new();
+        return (Vec::new(), &[]);
     }
     let Some(first) = section_header(data, table, is_64, le) else {
-        return Vec::new();
+        return (Vec::new(), &[]);
     };
     let count = if count == 0 {
         first.size
@@ -1234,8 +1294,22 @@ pub fn sections(data: &[u8]) -> Vec<NamedRange> {
             data.get(start..end.min(data.len()))
         })
         .unwrap_or_default();
-    (1..count)
+    let headers = (1..count)
         .filter_map(|index| section_header(data, header_at(index)?, is_64, le))
+        .collect();
+    (headers, strings)
+}
+
+/// Sections with file bytes, named from the section-name string table and
+/// clipped to the input. ELF header: `e_shoff` at 0x20 (64-bit 0x28),
+/// `e_shentsize`, `e_shnum` and `e_shstrndx` at 0x2E, 0x30 and 0x32
+/// (64-bit 0x3A, 0x3C, 0x3E). `e_shnum` 0 takes the count from section 0's
+/// `sh_size`, and `SHN_XINDEX` the string-table index from its `sh_link`.
+/// The count is limited by the bytes available and by 4096.
+pub fn sections(data: &[u8]) -> Vec<NamedRange> {
+    let (headers, strings) = section_table(data);
+    headers
+        .into_iter()
         .filter(|header| header.kind != SHT_NULL && header.kind != SHT_NOBITS)
         .filter_map(|header| {
             NamedRange::clipped(
@@ -1246,6 +1320,35 @@ pub fn sections(data: &[u8]) -> Vec<NamedRange> {
             )
         })
         .collect()
+}
+
+/// `sh_flags` bit of sections that hold machine instructions ("System V
+/// ABI", chapter 4, "Sections", Figure 4-11).
+const SHF_EXECINSTR: u64 = 0x4;
+
+/// File ranges `(offset, size)` that hold instructions: sections with
+/// `SHF_EXECINSTR` and file bytes, or, without such sections, the
+/// executable loadable segments. Sections are preferred: linkers place
+/// read-only data in executable segments, and a library may carry another
+/// core's firmware there.
+pub(crate) fn executable_code(data: &[u8]) -> Vec<(usize, usize)> {
+    let (headers, _) = section_table(data);
+    let sections: Vec<(usize, usize)> = headers
+        .iter()
+        .filter(|header| header.kind != SHT_NOBITS && header.flags & SHF_EXECINSTR != 0)
+        .filter_map(|header| {
+            let range = NamedRange::clipped(String::new(), header.offset, header.size, data.len())?;
+            Some((
+                usize::try_from(range.offset).ok()?,
+                usize::try_from(range.size).ok()?,
+            ))
+        })
+        .collect();
+    if sections.is_empty() {
+        executable_segments(data)
+    } else {
+        sections
+    }
 }
 
 /// `e_phnum` value meaning that the program header count is in section
@@ -1264,10 +1367,12 @@ struct Placement {
     /// follow it in 2-byte steps.
     phentsize: usize,
     /// Size of a program header (`Elf32_Phdr`, `Elf64_Phdr`), and the
-    /// offsets of `p_offset` and `p_filesz` in it.
+    /// offsets of `p_offset`, `p_filesz` and `p_flags` in it (`p_type` is
+    /// at 0 in both).
     phdr_size: usize,
     p_offset: usize,
     p_filesz: usize,
+    p_flags: usize,
     /// Offset of `sh_size` in a section header.
     sh_size: usize,
 }
@@ -1280,6 +1385,7 @@ const PLACEMENT_32: Placement = Placement {
     phdr_size: 32,
     p_offset: 0x04,
     p_filesz: 0x10,
+    p_flags: 0x18,
     sh_size: 0x14,
 };
 
@@ -1291,8 +1397,104 @@ const PLACEMENT_64: Placement = Placement {
     phdr_size: 56,
     p_offset: 0x08,
     p_filesz: 0x20,
+    p_flags: 0x04,
     sh_size: 0x20,
 };
+
+/// Loadable segment type and the execute permission flag ("System V ABI",
+/// chapter 5, "Program Header", Figures 5-2 and 5-3).
+const PT_LOAD: u32 = 1;
+const PF_X: u32 = 1;
+/// Most program headers read by [`executable_segments`].
+const MAX_PROGRAM_HEADERS: usize = 4096;
+
+/// File ranges `(offset, size)` of the executable loadable segments
+/// (`PT_LOAD` with `PF_X`); see [`load_segments`].
+pub(crate) fn executable_segments(data: &[u8]) -> Vec<(usize, usize)> {
+    load_segments(data, |flags| flags & PF_X != 0)
+}
+
+/// File ranges `(offset, size)` of every loadable segment (`PT_LOAD`); see
+/// [`load_segments`].
+pub(crate) fn loadable_segments(data: &[u8]) -> Vec<(usize, usize)> {
+    load_segments(data, |_| true)
+}
+
+/// File ranges `(offset, size)` of the `PT_LOAD` segments whose `p_flags`
+/// `keep` accepts, clipped to the input. Empty for an invalid class or byte
+/// order, no program header table, `PN_XNUM`, or entries smaller than
+/// `Elf32_Phdr`/`Elf64_Phdr`; at most [`MAX_PROGRAM_HEADERS`] entries are
+/// read, and reading stops at the first entry past the input.
+fn load_segments(data: &[u8], keep: impl Fn(u32) -> bool) -> Vec<(usize, usize)> {
+    let is_64 = match data.get(4) {
+        Some(&class::ELFCLASS32) => false,
+        Some(&class::ELFCLASS64) => true,
+        _ => return Vec::new(),
+    };
+    let le = match data.get(5) {
+        Some(&data::ELFDATA2LSB) => true,
+        Some(&data::ELFDATA2MSB) => false,
+        _ => return Vec::new(),
+    };
+    let place = if is_64 { &PLACEMENT_64 } else { &PLACEMENT_32 };
+    let word = |at: usize| {
+        if is_64 {
+            read_u64(data, at, le).ok()
+        } else {
+            read_u32(data, at, le).ok().map(u64::from)
+        }
+    };
+    let half = |at: usize| read_u16(data, at, le).ok();
+    let (Some(table), Some(entry_size), Some(count)) = (
+        word(place.phoff).and_then(|v| usize::try_from(v).ok()),
+        half(place.phentsize),
+        half(place.phentsize + 2),
+    ) else {
+        return Vec::new();
+    };
+    let entry_size = usize::from(entry_size);
+    // An entry starting past the input cannot be read; checking that first
+    // also keeps the field offsets added below far from overflow.
+    if table == 0 || table >= data.len() || count == PN_XNUM || entry_size < place.phdr_size {
+        return Vec::new();
+    }
+    let mut segments = Vec::new();
+    for index in 0..usize::from(count).min(MAX_PROGRAM_HEADERS) {
+        let Some(at) = index
+            .checked_mul(entry_size)
+            .and_then(|o| o.checked_add(table))
+            .filter(|&at| at < data.len())
+        else {
+            break;
+        };
+        let fields = (
+            read_u32(data, at, le).ok(),
+            at.checked_add(place.p_flags)
+                .and_then(|f| read_u32(data, f, le).ok()),
+            at.checked_add(place.p_offset).and_then(word),
+            at.checked_add(place.p_filesz).and_then(word),
+        );
+        let (Some(kind), Some(flags), Some(offset), Some(size)) = fields else {
+            break;
+        };
+        if kind != PT_LOAD || !keep(flags) {
+            continue;
+        }
+        let Ok(start) = usize::try_from(offset) else {
+            continue;
+        };
+        if start >= data.len() {
+            continue;
+        }
+        let end = usize::try_from(size)
+            .map_or(data.len(), |size| start.saturating_add(size))
+            .min(data.len());
+        if end > start {
+            segments.push((start, end - start));
+        }
+    }
+    segments
+}
 
 /// The bytes an ELF image occupies from its start: the furthest end of
 /// the ELF header, the program header table, the file range of every
@@ -1366,6 +1568,43 @@ pub(crate) fn file_extent(data: &[u8]) -> Option<u64> {
         extent = extent.max(table_end);
     }
     Some(extent)
+}
+
+/// Most ELF images followed after the first one (a bound on the walk).
+const MAX_APPENDED_IMAGES: usize = 64;
+
+/// ELF images stored back to back after the image at the start of `data`:
+/// each starts where the previous one's [`file_extent`] ends, after
+/// optional `0x00`/`0xFF` padding, and must fit in `data`. Returns
+/// `(offset, size)` pairs in file order; the walk stops at the first byte
+/// that is not padding or an ELF header (Qualcomm firehose bundles store an
+/// outer ELF, then TME and programmer images this way; fw1 audit,
+/// 2026-11-03).
+pub(crate) fn appended_images(data: &[u8]) -> Vec<(usize, usize)> {
+    let mut images = Vec::new();
+    let Some(mut end) = file_extent(data).and_then(|extent| usize::try_from(extent).ok()) else {
+        return images;
+    };
+    while end < data.len() && images.len() < MAX_APPENDED_IMAGES {
+        let padding = data[end..]
+            .iter()
+            .take_while(|&&b| b == 0x00 || b == 0xff)
+            .count();
+        let start = end + padding;
+        let rest = &data[start..];
+        if !rest.starts_with(&super::magic::ELF) {
+            break;
+        }
+        let Some(size) = file_extent(rest)
+            .and_then(|extent| usize::try_from(extent).ok())
+            .filter(|&size| size <= rest.len())
+        else {
+            break;
+        };
+        images.push((start, size));
+        end = start + size;
+    }
+    images
 }
 
 #[cfg(test)]
@@ -1459,6 +1698,37 @@ mod tests {
         assert_eq!(e_machine_to_isa(0x47, 1).0, Isa::Hc08);
         assert_eq!(e_machine_to_isa(0xA5, 1).0, Isa::I8051);
         assert_eq!(e_machine_to_isa(0xB1, 1).0, Isa::Cr16);
+    }
+
+    #[test]
+    fn abi_names_come_only_from_defined_e_flags_fields() {
+        let name = |isa: Isa, e_flags: u32| parse_e_flags(isa, e_flags, &[]).0.to_string();
+        // Debian powerpc and powerpcspe binaries carry e_flags 0.
+        assert_eq!(name(Isa::Ppc, 0), "PowerPC");
+        assert_eq!(name(Isa::Ppc, 1), "PowerPC");
+        assert_eq!(name(Isa::Ppc64, 0), "PowerPC");
+        assert_eq!(name(Isa::Ppc64, 1), "PowerPC [ELFv1]");
+        assert_eq!(name(Isa::Ppc64, 2), "PowerPC [ELFv2]");
+        // ABI version 1 (0x40) with the soft, single and double modifiers.
+        assert_eq!(name(Isa::LoongArch64, 0x43), "LoongArch [LP64D]");
+        assert_eq!(name(Isa::LoongArch64, 0x42), "LoongArch [LP64F]");
+        assert_eq!(name(Isa::LoongArch32, 0x41), "LoongArch [ILP32S]");
+        assert_eq!(name(Isa::LoongArch64, 0x40), "LoongArch");
+    }
+
+    #[test]
+    fn hexagon_versions_are_read_as_spelled_in_hex_digits() {
+        let name = |e_flags: u32| parse_e_flags(Isa::Hexagon, e_flags, &[]).0.to_string();
+        // Machine values of the qcm6490, sm8750 and kaanapali DSP libraries.
+        assert_eq!(name(0x66), "V66");
+        assert_eq!(name(0x79), "V79");
+        assert_eq!(name(0x81), "V81");
+        assert_eq!(name(0x60), "V60");
+        assert_eq!(name(0x05), "V55");
+        assert_eq!(name(0x8067), "V67T");
+        assert_eq!(name(0), "");
+        assert_eq!(name(0x6A), "");
+        assert_eq!(name(0x40), "");
     }
 
     /// Write `value` as `size` bytes at `at` in the given byte order.

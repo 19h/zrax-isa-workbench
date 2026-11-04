@@ -63,3 +63,7 @@ cr16 cr16-elf none releases/gcc-11.5.0
 cr16 cr16-elf -mcr16c releases/gcc-11.5.0
 cr16 cr16-elf -mdata-model=far releases/gcc-11.5.0
 cr16 cr16-elf -mint32 releases/gcc-11.5.0
+mn10300 mn10300-elf none
+mn10300 mn10300-elf -mam33
+mn10300 mn10300-elf -mam33-2
+mn10300 mn10300-elf -mam34

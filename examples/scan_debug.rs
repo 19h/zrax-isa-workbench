@@ -1,6 +1,9 @@
 //! Print the per-window verdicts and the best classes for a file.
 //!
-//! `cargo run --release --example scan_debug -- FILE [--model M] [--window N] [--top K]`
+//! `cargo run --release --example scan_debug -- FILE [--model M] [--window N] [--top K] [--budget BYTES]`
+//!
+//! `--budget` scans at most that many bytes, spread over the input as the
+//! classifier does (default: the whole input; the CLI's default is 1 MiB).
 
 use zrax::heuristics::{self, Model, WindowKind};
 
@@ -16,7 +19,10 @@ fn main() {
         Some(b) => Model::parse(b).expect("model"),
         None => Model::embedded().clone(),
     };
-    let scan = heuristics::scan(&data, &model, window, data.len());
+    let budget: usize = arg("--budget")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(data.len());
+    let scan = heuristics::scan(&data, &model, window, budget);
     for w in &scan.windows {
         let slice = &data[w.offset..w.offset + w.len];
         let pairs = (w.len.max(2) - 1) as f64;

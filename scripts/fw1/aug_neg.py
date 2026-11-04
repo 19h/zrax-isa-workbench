@@ -1,57 +1,77 @@
 #!/usr/bin/env python3
-"""Augment train-split negatives with the byte orders the classifier's transform search tries.
-
-zrax re-reads an inconclusive raw input byte-swapped and lane-interleaved
-(src/transform.rs CANDIDATES) and accepts a decisive code verdict on any of
-those readings, so non-code must be learned in those readings too.
+"""Augment the train-split negatives of corpora with the byte orders that
+the classifier's transform search tries (src/transform.rs CANDIDATES):
+16/32-bit swaps and 2/4-lane interleaves, each lane order.
 
 Output: build_corpus.py layout, one sample per (input sample, transform),
-source "aug-<transform>", same class/group, split "train".
+source `aug-<transform>`, same class and group, split `train`.
 
-Usage: aug_neg.py OUT CORPUS...
+Usage: aug_neg.py [--sources A,B] OUT CORPUS...   (--sources: only these corpus sources)
 """
-import hashlib, json, os, sys
+import argparse
+import hashlib
+import json
+import os
 
-def swap(data, n):
-    end = len(data) - len(data) % n
-    return b"".join(data[i:i + n][::-1] for i in range(0, end, n))
+MIN_SAMPLE = 1024
+
+
+def swap(data, width):
+    end = len(data) - len(data) % width
+    return b"".join(data[i:i + width][::-1] for i in range(0, end, width))
+
 
 def interleave(data, lanes, reversed_lanes):
     size = len(data) // lanes
     parts = [data[i * size:(i + 1) * size] for i in range(lanes)]
     if reversed_lanes:
         parts.reverse()
-    return bytes(b for i in range(size) for b in (p[i] for p in parts))
+    return bytes(b for i in range(size) for b in (part[i] for part in parts))
+
 
 TRANSFORMS = {
-    "swap16": lambda d: swap(d, 2),
-    "swap32": lambda d: swap(d, 4),
-    "il2": lambda d: interleave(d, 2, False),
-    "il2r": lambda d: interleave(d, 2, True),
-    "il4": lambda d: interleave(d, 4, False),
-    "il4r": lambda d: interleave(d, 4, True),
+    "swap16": lambda data: swap(data, 2),
+    "swap32": lambda data: swap(data, 4),
+    "il2": lambda data: interleave(data, 2, False),
+    "il2r": lambda data: interleave(data, 2, True),
+    "il4": lambda data: interleave(data, 4, False),
+    "il4r": lambda data: interleave(data, 4, True),
 }
 
-out, corpora = sys.argv[1], sys.argv[2:]
-os.makedirs(os.path.join(out, "samples"), exist_ok=True)
-n = 0
-with open(os.path.join(out, "manifest.jsonl"), "w") as manifest:
-    for corpus in corpora:
-        for line in open(os.path.join(corpus, "manifest.jsonl")):
-            r = json.loads(line)
-            if not r["class"].startswith("neg_") or r["split"] != "train":
-                continue
-            data = open(os.path.join(corpus, "samples", r["class"], r["id"] + ".bin"), "rb").read()
-            if len(data) < 1024:
-                continue
-            for name, fn in TRANSFORMS.items():
-                t = fn(data)
-                sid = hashlib.sha1(t).hexdigest()[:16]
-                d = os.path.join(out, "samples", r["class"])
-                os.makedirs(d, exist_ok=True)
-                with open(os.path.join(d, sid + ".bin"), "wb") as f:
-                    f.write(t)
-                row = dict(r, id=sid, source="aug-" + name, size=len(t))
-                manifest.write(json.dumps(row) + "\n")
-                n += 1
-print(n, "augmented samples")
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("out")
+    parser.add_argument("corpora", nargs="+")
+    parser.add_argument("--sources", default=None, help="comma-separated corpus sources to augment (default: all)")
+    args = parser.parse_args()
+    sources = set(args.sources.split(",")) if args.sources else None
+    os.makedirs(os.path.join(args.out, "samples"), exist_ok=True)
+    written = 0
+    with open(os.path.join(args.out, "manifest.jsonl"), "w") as manifest:
+        for corpus in args.corpora:
+            with open(os.path.join(corpus, "manifest.jsonl")) as f:
+                rows = [json.loads(line) for line in f]
+            for row in rows:
+                if not row["class"].startswith("neg_") or row["split"] != "train":
+                    continue
+                if sources is not None and row["source"] not in sources:
+                    continue
+                with open(os.path.join(corpus, "samples", row["class"], row["id"] + ".bin"), "rb") as f:
+                    data = f.read()
+                if len(data) < MIN_SAMPLE:
+                    continue
+                for name, transform in TRANSFORMS.items():
+                    transformed = transform(data)
+                    sample_id = hashlib.sha1(transformed).hexdigest()[:16]
+                    directory = os.path.join(args.out, "samples", row["class"])
+                    os.makedirs(directory, exist_ok=True)
+                    with open(os.path.join(directory, sample_id + ".bin"), "wb") as f:
+                        f.write(transformed)
+                    manifest.write(json.dumps(dict(row, id=sample_id, source="aug-" + name, size=len(transformed))) + "\n")
+                    written += 1
+    print(written, "augmented samples")
+
+
+if __name__ == "__main__":
+    main()

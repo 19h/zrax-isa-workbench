@@ -103,7 +103,8 @@ async function formatFixtures() {
     ['tirprc', rprc(0x1000)],
     ['timulticore', await fixture('vendor.appimage')],
     ['timcelf', await fixture('vendor.mcelf')],
-    ['tiimage', Buffer.concat([words([16, 0x80000000]), Buffer.alloc(16, 0x42)])],
+    // GP header (size, AM335x boot ROM load address) and 16 B image
+    ['tiimage', Buffer.concat([words([16, 0x402f0400]), Buffer.alloc(16, 0x42)])],
     ['tioad', oad()],
     ['tix509', await fixture('vendor.signed')],
     ['tiasciihex', asciiHex(bootTable)],

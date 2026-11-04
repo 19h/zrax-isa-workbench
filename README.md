@@ -315,7 +315,7 @@ enumeration additionally represents header-derived architectures.
 | Apple FTAB firmware tables | `rkosftab` and `RKOSFTAB`; bounded file table, independent firmware members, placeholder metadata, opaque manifest; nested containers and compression handled recursively ([FTAB](docs/ftab.md)) |
 | Apple images | IMG4 and IM4P (stored and compressed payloads, bounded headerless codec trials, CBC/CTR trials with encoded keybags and inline custom key/IV; unusable keybags remain opaque), IM4M manifests and IM4R restore info as metadata, dyld shared caches (architecture token, mappings, Mach-O images mapped into the file); legacy Img3 (DATA child, KBAG-encrypted payloads opaque) and 8900 containers (plaintext payload child, encrypted formats opaque) ([Apple images](docs/apple.md)) |
 | Android images | Boot images (`ANDROID!` header v0-v4: kernel/ramdisk decoded and classified, second stage, recovery DTBO, DTB, v4 signature, AVB footer, mkbootimg SHA-1 ID checked), vendor_boot v3/v4 (ramdisk table, DTB, bootconfig), sparse images (RAW/FILL/DONT_CARE/CRC32 expanded to one partition image, CRC32 verified, 64 MiB cap), OTA `payload.bin` (`CrAU` v1/v2, protobuf manifest, full operations reassembled per partition with SHA-256 checks; delta partitions opaque), bootloader packs (Qualcomm and ASUS `BOOTLDR!`, Qualcomm meta image, FBPK v1/v2), dynamic-partition `super` images (liblp v10.0-10.2, full and `super_empty`; SHA-256 checked; partitions listed by name, multi-extent partitions assembled), DTB/DTBO tables (v0/v1, zlib/gzip entries; device trees as members), AVB vbmeta images (descriptors summarized, hash recomputed, signature not verified). No header names a CPU; members are classified from their own bytes ([Android](docs/android.md)) |
-| SoC boot ROM images | Allwinner eGON.BT0 (checksum, A32/RISC-V jump word as entry ISA) and TOC0 (items opaque); Rockchip RKFW, RKAF, RKBOOT (RC4-descrambled entries) and idbloader v1/v2; MediaTek EMMC/SF/SDMMC/UFS_BOOT, BRLYT and GFH; Qualcomm 80-byte SBL, SBL ELF after a NAND preamble (virtual block cookies removed; the ELF classified by `e_machine`) and 40-byte v3 MBN ([SoC loaders](docs/socboot2.md)); Xilinx Zynq-7000/ZynqMP `BOOT.BIN` (boot header, image header table and partition checksums verified; partitions as slices with destination-CPU targets; bitstream and encrypted partitions opaque), NXP i.MX HAB IVT images and i.MX 8/9 AHAB containers (no ISA field; the code model classifies the application; DCD, CSF and signatures opaque), NXP SB2.0/2.1/3.1 secure binaries (metadata only; SB3.1 hash chain verified, signatures not verified) ([SoC boot images](docs/socboot.md)) |
+| SoC boot ROM images | Allwinner eGON.BT0 (checksum, A32/RISC-V jump word as entry ISA) and TOC0 (items opaque); Rockchip RKFW, RKAF, RKBOOT (RC4-descrambled entries) and idbloader v1/v2; MediaTek EMMC/SF/SDMMC/UFS_BOOT, BRLYT and GFH, and MediaTek partition images (`mtk_hdr` chains, payloads classified as members); Qualcomm 80-byte SBL, SBL ELF after a NAND preamble (virtual block cookies removed; the ELF classified by `e_machine`) and 40-byte v3 MBN ([SoC loaders](docs/socboot2.md)); Xilinx Zynq-7000/ZynqMP `BOOT.BIN` (boot header, image header table and partition checksums verified; partitions as slices with destination-CPU targets; bitstream and encrypted partitions opaque), NXP i.MX HAB IVT images and i.MX 8/9 AHAB containers (no ISA field; the code model classifies the application; DCD, CSF and signatures opaque), NXP SB2.0/2.1/3.1 secure binaries (metadata only; SB3.1 hash chain verified, signatures not verified) ([SoC boot images](docs/socboot.md)) |
 | Miscellaneous boot images | OP-TEE `OPTE` headers (v1 `tee.bin` with init/paged parts, v2 image table; the arch byte names AArch32/AArch64), Amlogic USB burning images (v1/v2 item tables, CRC-32 and VERIFY SHA-1 checked, items by role), Allwinner PhoenixSuit/LiveSuit `IMAGEWTY` (0x0300 and 0x0100 headers, the RC6-encrypted variant decrypted with published keys), barebox ARM/AArch64 heads (ISA from the head instruction) ([boot images](docs/bootmisc.md)) |
 | MCU update images | UF2 (family ID names the ISA for 78 listed families; blocks reassembled by address; multi-family files split per family), STM32 DfuSe (DFU suffix CRC-32 verified), Silicon Labs GBL v3 (program/LZ4/LZMA tags, end-tag CRC-32 verified; encrypted files opaque), Cypress `.cyacd`/`.cyacd2`, USB DFU 1.1 files (firmware plus DFU suffix; signature and CRC-32 verified; firmware classified on its own), Silicon Labs EBL (program tags as sections, end-tag CRC-32 verified, AAT platform `CortexM3` names Arm, encrypted files opaque), Nordic nRF5 DFU init packets (weak; metadata only, signatures not verified) ([MCU images](docs/mcu.md)) |
 | FPGA bitstreams | Xilinx `.bit` and headerless configuration data (both word orders), Lattice iCE40 and ECP5/MachXO/Nexus, Intel Cyclone V `.rbf` and `.pof`; recognized and excluded from ISA scoring ([FPGA bitstreams](docs/bitstream.md)) |
@@ -351,6 +351,8 @@ enumeration additionally represents header-derived architectures.
 | QNX images | QNX Neutrino bootable IFS (startup header in either byte order, optional boot prefix; ELF machine field names the target; startup and image checksums verified; gzip and LZO image filesystems decoded, UCL opaque) and bare image filesystems; recognized files listed by path, boot script summarized ([QNX](docs/qnx.md)) |
 | Windows CE ROM images | `B000FF` BIN files (records with verified checksums, assembled at their addresses) and raw `.nb0` images (recognized from a self-consistent ROMHDR); ROMHDR `usCPUType` gives the ISA; modules with `e32_rom` fields, module code sections as components, compressed sections opaque, ROM files listed when recognized ([Windows CE](docs/wince.md)) |
 | X.509 certificate files | One DER certificate (weak: the whole input must parse, `0x00`/`0xFF` padding allowed) or RFC 7468 `CERTIFICATE` blocks separated by whitespace (strong); opaque, ISA unknown; subject, issuer, validity, key and SHA-256 as metadata; PEM blocks listed as DER members; signatures not verified ([certificates](docs/certificates.md#certificate-files)) |
+| Data files | Apple binary property lists (`bplist00`; trailer, offset table and object offsets checked as `CFBinaryPList.c` reads them) and Qualcomm Atheros ath10k/ath11k/ath12k Wi-Fi board data (`QCA-ATH1xK-BOARD`; information elements must end at the file end, board names listed); opaque, ISA unknown; damaged files are parse errors |
+| OLE compound files | Windows Installer packages, legacy Office files and other structured storage (`D0 CF 11 E0`; DIFAT, FAT, mini FAT and directory chains followed and checked for loops; installer stream names unpacked); streams in a recognized format are members classified from their own bytes ([compound files](docs/cfb.md)) |
 
 [Compressed streams and the shared container model](docs/compressed-streams.md)
 describe the codecs, coordinates and bounds;
@@ -365,8 +367,9 @@ classified. Parser results and notes retain those distinctions.
 [Format coverage gaps](docs/format-gaps.md) lists known kernel-image defects
 and unsupported codecs, containers and dump transforms.
 
-The shipped `ISAM` version-1 model contains **94 classes**: 90 code variants and
-four non-code classes (`neg_media`, `neg_rodata`, `neg_table`, `neg_text`). Code
+The shipped `ISAM` version-1 model contains **102 classes**: 96 code variants and
+six non-code classes (`neg_lanes`, `neg_media`, `neg_pixels`, `neg_rodata`,
+`neg_table`, `neg_text`). Code
 variants include mainstream x86/ARM/MIPS/PowerPC/RISC-V, legacy architectures,
 microcontrollers, DSPs and virtual machines. Its exact names and interpretation
 are defined by [model.rs](src/heuristics/model.rs) and the embedded
@@ -398,7 +401,22 @@ recognize format
 Code evidence needs a margin of at least 0.4 bits per byte transition and
 16 bits total over competing families/data. When a top-level raw input is
 inconclusive, byte swaps, lane interleaves and NAND spare removal are tried
-with a union-bound penalty ([raw-dump transforms](docs/transforms.md)). Family evidence and its strength
+with a union-bound penalty ([raw-dump transforms](docs/transforms.md)); a transformed reading must
+reach 0.8 confidence and explain at least 14% of the input as code, and an interleave is
+tried only when its byte lanes hold content in the same places. Windows filled by one byte (90%),
+one 16- or 32-bit word (70% of the words), or fewer than 16 distinct byte pairs are padding. The
+family with the most window weight decides; the false-alarm allowance for weak windows only sets
+the confidence. In an input of 8 or more informative windows, one code window does not decide an
+ISA; with fewer than one code window per 64 informative windows, the decision needs 0.9
+confidence (both rejections are `HeuristicSparseCode`). A superset variant needs at least 1.75
+times its base variant's evidence (eZ80 over Z80, Z80 over 8080/8085); an 8080/8085 answer becomes
+Z80 when a Z80 decode of its code finds more than 0.2% prefix-group instructions, and a 6502 answer
+becomes 65816 when its code switches to native mode (`REP`/`SEP`, `XCE`). A transformed reading
+never names a CPU with a byte-wide program bus, and an interleave never names one that runs only
+from on-chip program memory (PIC, AVR). A raw image that starts with a Cortex-M vector table, or ends with an
+x86 reset vector, and holds that core's code reports that boot core; an ELF whose instructions the code
+model reads decisively as another ISA family than `e_machine` names is reported with no ISA and a
+note naming both ([raw-code model](docs/architecture/raw-code-model.md)). Family evidence and its strength
 determine the returned confidence. Candidate evidence shares are not posterior
 probabilities. Rejection is an explicit outcome when the input does not support
 a known code hypothesis. Header confidence and model confidence arise from

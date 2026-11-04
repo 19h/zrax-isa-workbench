@@ -1,38 +1,66 @@
 #!/usr/bin/env python3
-"""Diff two runall.sh outputs; tally ISA transitions and score them against findings.tsv.
+"""Diff two full CLI runs (runall.sh/runlist.sh JSONL): tally ISA
+transitions and how many files of each findings.tsv category changed.
 
-Usage: diffrun.py OLD.jsonl NEW.jsonl
+Usage (from the directory holding all.tsv and findings.tsv):
+    diffrun.py OLD.jsonl NEW.jsonl [--top N]
 """
-import csv, json, sys, collections
-def load(p):
+import argparse
+import collections
+import csv
+import json
+
+
+def load(path):
+    """file -> result of one run; unparsable lines are skipped."""
     out = {}
-    for line in open(p):
-        try:
-            d = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        out[d["file"]] = d
+    with open(path) as f:
+        for line in f:
+            try:
+                result = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            out[result["file"]] = result
     return out
-old, new = load(sys.argv[1]), load(sys.argv[2])
-names = {r["sha"]: r["name"] for r in csv.DictReader(open("all.tsv"), delimiter="\t")}
-flags = collections.defaultdict(set)
-for r in csv.DictReader(open("findings.tsv"), delimiter="\t"):
-    flags[r["sha"]].add(r["category"])
-def key(d):
-    return (d.get("format"), d.get("isa"), d.get("variant") or "", d.get("bitwidth"))
-changed = [s for s in old if s in new and key(old[s]) != key(new[s])]
-print("files", len(old), len(new), "changed", len(changed), "errors old/new", sum("error" in d for d in old.values()), sum("error" in d for d in new.values()))
-trans = collections.Counter()
-ex = collections.defaultdict(list)
-for s in changed:
-    o, n = old[s], new[s]
-    t = (f"{o.get('isa')}/{o.get('variant') or ''}", f"{n.get('isa')}/{n.get('variant') or ''}", ",".join(sorted(flags[s])) or "-")
-    trans[t] += 1
-    ex[t].append(names.get(s, s)[:38])
-for t, c in trans.most_common(70):
-    print(f"{c:5}  {t[0]:22} -> {t[1]:22} [{t[2]}]  e.g. {ex[t][:3]}")
-cat_total = collections.Counter(c for s in flags for c in flags[s])
-cat_changed = collections.Counter(c for s in changed for c in flags[s])
-print("\nflagged categories: changed/total")
-for c, n in cat_total.most_common():
-    print(f"  {c:26} {cat_changed[c]:5}/{n}")
+
+
+def key(result):
+    return (result.get("format"), result.get("isa"), result.get("variant") or "", result.get("bitwidth"))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("old")
+    parser.add_argument("new")
+    parser.add_argument("--top", type=int, default=70)
+    args = parser.parse_args()
+    old, new = load(args.old), load(args.new)
+    with open("all.tsv") as f:
+        names = {r["sha"]: r["name"] for r in csv.DictReader(f, delimiter="\t")}
+    categories = collections.defaultdict(set)
+    with open("findings.tsv") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            categories[row["sha"]].add(row["category"])
+    changed = [sha for sha in old if sha in new and key(old[sha]) != key(new[sha])]
+    print("files", len(old), len(new), "changed", len(changed))
+    transitions = collections.Counter()
+    examples = collections.defaultdict(list)
+    for sha in changed:
+        before, after = old[sha], new[sha]
+        transition = (f"{before.get('isa')}/{before.get('variant') or ''}",
+                      f"{after.get('isa')}/{after.get('variant') or ''}",
+                      ",".join(sorted(categories[sha])) or "-")
+        transitions[transition] += 1
+        examples[transition].append(names.get(sha, sha)[:38])
+    for transition, count in transitions.most_common(args.top):
+        before, after, category = transition
+        print(f"{count:5}  {before:22} -> {after:22} [{category}]  e.g. {examples[transition][:3]}")
+    total = collections.Counter(c for sha in categories for c in categories[sha])
+    moved = collections.Counter(c for sha in changed for c in categories[sha])
+    print("\nflagged categories: changed/total")
+    for category, count in total.most_common():
+        print(f"  {category:26} {moved[category]:5}/{count}")
+
+
+if __name__ == "__main__":
+    main()

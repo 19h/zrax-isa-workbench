@@ -4,7 +4,7 @@
 //! ```text
 //! cargo run --release --example train_model -- --corpus DIR
 //!     [--out src/heuristics/model.bin] [--split all|train] [--alpha 16]
-//!     [--min-bytes 49152] [--source-cap 1048576] [--exclude a,b,c (default: pru,trimedia)]
+//!     [--min-bytes 49152] [--source-cap 1048576] [--exclude a,b,c (default: pru,trimedia,clemency)]
 //! ```
 //!
 //! `--split train` leaves the corpus test split out, for honest evaluation
@@ -42,8 +42,12 @@ fn main() {
     // - trimedia: one program (the tmlinux kernel); it accepted a real .rodata
     //   file and had the largest false-alarm margin (0.87 bits/byte). TriMedia
     //   objects are identified from their TMObj header instead.
+    // - clemency: the DEF CON CTF architecture (9-bit bytes) has no real
+    //   firmware; its near-uniform model won data windows of 28 fw1 files
+    //   (Sega NAOMI SH-4 BIOS images, NIC and UEFI updates), all wrong
+    //   (2026-11-04). Without it they classify as SH-4 or stay inconclusive.
     let exclude: Vec<String> = arg("--exclude")
-        .unwrap_or_else(|| "pru,trimedia".into())
+        .unwrap_or_else(|| "pru,trimedia,clemency".into())
         .split(',')
         .filter(|s| !s.is_empty())
         .map(str::to_string)

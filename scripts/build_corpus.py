@@ -19,7 +19,8 @@ Output layout:
 
 Usage:
     scripts/build_corpus.py --out /path/to/corpus [--data /path/to/data] [--armgen /path/to/armgen]
-                            [--gen DIR ...] [--raw CLASS=GLOB ...]
+                            [--gen DIR ...] [--raw CLASS=GLOB ...] [--elf GLOB ...]
+                            [--isadetect-per-arch N] [--isadetect-skip N]
 """
 
 import argparse
@@ -45,6 +46,16 @@ MIN_SAMPLE_BYTES = 256
 # ---------------------------------------------------------------------------
 
 
+# MIPS ELF e_flags ASE bit (binutils include/elf/mips.h): the code is microMIPS.
+EF_MIPS_MICROMIPS = 0x0200_0000
+
+# ARM ELF e_flags bit (binutils include/elf/arm.h; "ELF for the Arm
+# Architecture", e_flags): a BE-8 executable, whose data are big-endian but
+# whose instructions are little-endian. Big-endian ARM objects without it
+# (relocatable objects, BE-32 executables) store big-endian instructions.
+EF_ARM_BE8 = 0x0080_0000
+
+
 def elf_class(machine, is_le, is_64, flags):
     """Map ELF e_machine (+ endianness/class) to a corpus class, or None."""
     m = machine
@@ -57,6 +68,8 @@ def elf_class(machine, is_le, is_64, flags):
     if m == 183:
         return "aarch64"
     if m in (8, 10):
+        if flags & EF_MIPS_MICROMIPS:
+            return "micromipsel" if is_le else "micromips"
         if is_64:
             return "mips64el" if is_le else "mips64"
         return "mipsel" if is_le else "mips"
@@ -135,6 +148,8 @@ def elf_class(machine, is_le, is_64, flags):
         return "hc11"
     if m == 84:
         return "fr30"
+    if m == 89:
+        return "mn10300"
     if m == 75:
         return "vax"
     if m == 19:
@@ -240,6 +255,9 @@ WORD_SWAPPED = {
     "dsp56k": ("dsp56keb", 3),
     "dsp56100": ("dsp56100eb", 2),
     "tic3x": ("tic3xeb", 4),
+    # µ'nSP program ROMs: MAME lists SPG2xx dumps of both word orders (the
+    # pokermor dump traces as big-endian words, the others little-endian).
+    "unsp": ("unspeb", 2),
 }
 
 # ISAdetect (Debian) architecture -> class
@@ -389,6 +407,28 @@ def pe_code(d):
         return machine, chunks
     except struct.error:
         return None
+
+
+# DOS MZ header fields (word offsets in the 28-byte header): bytes in the
+# last page (0x02), pages (0x04), header paragraphs (0x08), new-header offset
+# (0x3C, only meaningful for NE/LE/LX/PE executables).
+MZ_NEW_SIGNATURES = (b"PE\0\0", b"NE", b"LE", b"LX")
+
+
+def dos_code(d):
+    """The load module of a plain DOS MZ executable (16-bit real-mode code
+    and data), or None for NE/LE/LX/PE executables and broken headers."""
+    if len(d) < 0x40 or d[:2] != b"MZ":
+        return None
+    last, pages, _, paragraphs = struct.unpack_from("<HHHH", d, 2)
+    lfanew = struct.unpack_from("<I", d, 0x3C)[0]
+    if 0 < lfanew < len(d) - 2 and d[lfanew:lfanew + 4].startswith(MZ_NEW_SIGNATURES):
+        return None
+    start = paragraphs * 16
+    end = (pages - 1) * 512 + (last or 512) if pages else 0
+    if not 0x1C <= start < end <= len(d):
+        return None
+    return d[start:end]
 
 
 def leb128(d, i):
@@ -550,14 +590,28 @@ class Corpus:
                 f.write(json.dumps(r) + "\n")
 
 
-def arm_mode(chunks):
-    """Decide A32 vs T32 for an ARM ELF code blob by counting cond==AL words."""
+def arm_mode(chunks, instructions_le):
+    """Decide A32 vs T32 for an ARM ELF code blob by counting cond==AL words.
+    The condition is the top nibble of each word: in its last byte when the
+    instructions are little-endian, in its first when they are big-endian."""
     blob = b"".join(chunks)[:65536]
     n = len(blob) // 4
     if n < 16:
         return None
-    al = sum(1 for i in range(0, n * 4, 4) if blob[i + 3] & 0xF0 == 0xE0)
+    cond_byte = 3 if instructions_le else 0
+    al = sum(1 for i in range(0, n * 4, 4) if blob[i + cond_byte] & 0xF0 == 0xE0)
     return "arm" if al / n > 0.55 else "thumb"
+
+
+def arm_class(chunks, le, flags):
+    """Model class of the code of an ARM ELF (`arm`, `thumb`, `armeb`,
+    `thumbeb`), or None: big-endian only when the instructions are, which a
+    BE-8 image's are not."""
+    instructions_le = le or bool(flags & EF_ARM_BE8)
+    cls = arm_mode(chunks, instructions_le)
+    if cls and not instructions_le:
+        cls += "eb"
+    return cls
 
 
 def add_elf_file(corpus, path, group, source_tag):
@@ -578,9 +632,7 @@ def add_elf_file(corpus, path, group, source_tag):
     if not chunks:
         return
     if machine == 40:
-        cls = arm_mode(chunks)
-        if cls and not le:
-            cls += "eb"
+        cls = arm_class(chunks, le, flags)
     else:
         cls = elf_class(machine, le, is_64, flags)
     for c in chunks:
@@ -616,6 +668,171 @@ def elf_data(d):
         if ty == 1 and fl & 0x2 and not fl & 0x4 and 1024 <= size and off + size <= len(d):
             out.append(d[off : off + size])
     return out
+
+
+def pcm8(n, k, rng):
+    """Signed 8-bit PCM as haptic and ringtone files store it: decaying tone
+    bursts at amplitudes from near-silent (+-1, mostly 0x00/0xFF) to full
+    scale, separated by silence. Code models once read such files as
+    Dalvik, C166 or BPF (fw1 audit, 2026-11-03)."""
+    import math
+
+    amplitude = (1, 2, 4, 16, 60, 127)[k % 6]
+    out = bytearray()
+    while len(out) < n:
+        burst = rng.randrange(64, 2048)
+        freq = rng.uniform(0.01, 0.4)
+        decay = rng.uniform(0.0, 4.0) / burst
+        for i in range(burst):
+            v = round(amplitude * math.exp(-decay * i) * math.sin(i * freq))
+            out.append(v & 0xFF)
+        out.extend(bytes(rng.randrange(0, 256)))  # silence between bursts
+    return bytes(out[:n])
+
+
+TILE = 8
+TILE_CANVAS = 128
+
+
+def tile_canvas(rng, colors):
+    """A 128x128 canvas of palette indices, 0 transparent, drawn the way game
+    graphics are: sprites (filled and outlined shapes), font-like glyph
+    cells, or dithered background patterns."""
+    size = TILE_CANVAS
+    pixels = [[0] * size for _ in range(size)]
+    style = rng.randrange(3)
+    if style == 0:  # sprites on a transparent background
+        for _ in range(rng.randrange(4, 24)):
+            x0, y0 = rng.randrange(size), rng.randrange(size)
+            w, h = rng.randrange(2, 32), rng.randrange(2, 32)
+            color = rng.randrange(1, colors)
+            outline = rng.random() < 0.4
+            ellipse = rng.random() < 0.5
+            for y in range(y0, min(size, y0 + h)):
+                for x in range(x0, min(size, x0 + w)):
+                    dx, dy = (2 * (x - x0) + 1) / w - 1, (2 * (y - y0) + 1) / h - 1
+                    inside = dx * dx + dy * dy <= 1 if ellipse else True
+                    edge = x in (x0, x0 + w - 1) or y in (y0, y0 + h - 1)
+                    if inside and (edge or not outline):
+                        pixels[y][x] = color
+    elif style == 1:  # glyph cells: a 5x7 dot pattern in each 8x8 cell
+        color = rng.randrange(1, colors)
+        glyphs = [[[rng.random() < 0.35 for _ in range(5)] for _ in range(7)] for _ in range(48)]
+        for cy in range(0, size, TILE):
+            for cx in range(0, size, TILE):
+                if rng.random() < 0.2:
+                    continue
+                glyph = rng.choice(glyphs)
+                for gy in range(7):
+                    for gx in range(5):
+                        if glyph[gy][gx]:
+                            pixels[cy + gy][cx + 1 + gx] = color
+    else:  # background: bands, checks and ordered dither of a few colors
+        period = rng.choice((2, 4, 8, 16))
+        a, b = rng.randrange(colors), rng.randrange(colors)
+        for y in range(size):
+            for x in range(size):
+                band = (x // period + y // (period * 2)) % 2
+                dither = (x ^ y) & 1 if rng.random() < 0.1 else 0
+                pixels[y][x] = a if band ^ dither else b
+    return pixels
+
+
+def tile_rows(pixels):
+    """Rows of every 8x8 tile in tile order (left to right, top to bottom)."""
+    for ty in range(0, TILE_CANVAS, TILE):
+        for tx in range(0, TILE_CANVAS, TILE):
+            yield [pixels[ty + y][tx:tx + TILE] for y in range(TILE)]
+
+
+def plane_byte(row, plane):
+    """One tile row of one bit plane, leftmost pixel in the high bit."""
+    value = 0
+    for pixel in row:
+        value = (value << 1) | ((pixel >> plane) & 1)
+    return value
+
+
+def encode_tile(rows, layout, plane):
+    """One 8x8 tile in a common tile-ROM layout (MAME gfx layouts and
+    console formats: one bit plane per ROM, 2bpp NES, 4bpp SNES planar,
+    4bpp packed nibbles, 8bpp linear)."""
+    if layout == 0:  # one bit plane of a multi-ROM planar set
+        return bytes(plane_byte(r, plane) for r in rows)
+    if layout == 1:  # 2bpp, plane 0 rows then plane 1 rows
+        return bytes(plane_byte(r, 0) for r in rows) + bytes(plane_byte(r, 1) for r in rows)
+    if layout == 2:  # 4bpp, planes 0/1 interleaved per row, then planes 2/3
+        low = bytes(b for r in rows for b in (plane_byte(r, 0), plane_byte(r, 1)))
+        return low + bytes(b for r in rows for b in (plane_byte(r, 2), plane_byte(r, 3)))
+    if layout == 3:  # 4bpp packed, left pixel in the high nibble
+        return bytes((r[x] << 4) | r[x + 1] for r in rows for x in range(0, TILE, 2))
+    return bytes(p for r in rows for p in r)  # 8bpp linear
+
+
+TILE_LAYOUT_COLORS = (8, 4, 16, 16, 64)
+TILE_SEED = 5678
+
+
+def tiles(n, k, rng):
+    """Game tile graphics: canvases of sprites, glyphs or backgrounds cut
+    into 8x8 tiles and stored in one tile-ROM layout. Code models read
+    arcade graphics ROMs as R32C, 68HC08, SuperH or WebAssembly (fw1 audit
+    against MAME's ROM regions, 2026-11-04)."""
+    layout = k % len(TILE_LAYOUT_COLORS)
+    colors = TILE_LAYOUT_COLORS[layout]
+    plane = k % 3
+    out = bytearray()
+    while len(out) < n:
+        for rows in tile_rows(tile_canvas(rng, colors)):
+            out.extend(encode_tile(rows, layout, plane))
+    return bytes(out[:n])
+
+
+PIXEL_SEED = 3456
+PIXEL_FORMATS = ("<H", ">H", "<I")  # RGB565 little- and big-endian, ARGB8888
+
+
+def rgb565(red, green, blue):
+    return ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
+
+
+def pixels(n, k, rng):
+    """Uncompressed images as UI frame buffers and phone resource partitions
+    store them: RGB565 in either byte order or ARGB8888, rows of a canvas
+    of flat shapes, glyphs or patterns, or a vertical gradient. Code models
+    read a phone's 34 MiB image region as 6800 code (fw1 audit,
+    2026-11-04)."""
+    fmt = PIXEL_FORMATS[k % len(PIXEL_FORMATS)]
+    out = bytearray()
+    while len(out) < n:
+        palette = [(rng.randrange(256), rng.randrange(256), rng.randrange(256)) for _ in range(16)]
+        if rng.random() < 0.25:
+            top, bottom = palette[0], palette[1]
+            rows = [[tuple(t + (b - t) * y // TILE_CANVAS for t, b in zip(top, bottom))] * TILE_CANVAS
+                    for y in range(TILE_CANVAS)]
+        else:
+            rows = [[palette[i] for i in row] for row in tile_canvas(rng, len(palette))]
+        for row in rows:
+            for red, green, blue in row:
+                value = rgb565(red, green, blue) if fmt[1] == "H" else 0xFF000000 | red << 16 | green << 8 | blue
+                out.extend(struct.pack(fmt, value))
+    return bytes(out[:n])
+
+
+WEIGHT_SCALES = (0.01, 0.05, 0.2, 1.0)
+WEIGHT_SEED = 9012
+
+
+def weights(n, k, rng):
+    """Neural-network weight tables: normally distributed float32 or float16
+    values in either byte order. Fingerprint-matching trusted apps carry
+    megabytes of them, which code models read as RISC-V (fw1 audit,
+    2026-11-04)."""
+    scale = WEIGHT_SCALES[k % len(WEIGHT_SCALES)]
+    order = "<" if k % 2 == 0 else ">"
+    kind = "f" if (k // 2) % 2 == 0 else "e"
+    count = n // struct.calcsize(kind)
+    return struct.pack(f"{order}{count}{kind}", *(rng.gauss(0.0, scale) for _ in range(count)))
 
 
 def add_negatives(corpus, data_dir, per_arch):
@@ -658,6 +875,11 @@ def add_negatives(corpus, data_dir, per_arch):
         corpus.add("neg_table", f"f64:{k}", "synthetic", f64)
         pcm = b"".join(struct.pack("<h", int(math.sin(i * 0.05 * (1 + k % 7)) * 8000)) for i in range(n // 2))
         corpus.add("neg_table", f"pcm:{k}", "synthetic", pcm)
+        corpus.add("neg_media", f"pcm8:{k}", "synthetic-pcm8", pcm8(n, k, rng))
+        # Own generator, so the samples after it stay as they were.
+        corpus.add("neg_pixels", f"tiles:{k}", "synthetic-tiles", tiles(n, k, random.Random(TILE_SEED + k)))
+        corpus.add("neg_table", f"weights:{k}", "synthetic-weights", weights(n, k, random.Random(WEIGHT_SEED + k)))
+        corpus.add("neg_pixels", f"pixels:{k}", "synthetic-pixels", pixels(n, k, random.Random(PIXEL_SEED + k)))
         ints = b"".join(struct.pack("<I" if k % 2 else ">I", rng.randrange(1000)) for _ in range(n // 4))
         corpus.add("neg_table", f"u32:{k}", "synthetic", ints)
         base = rng.randrange(1 << 28) & ~0xFFFF
@@ -679,6 +901,8 @@ def main():
     ap.add_argument("--gen", action="append", default=[], help="extra dir of <class>/**/*.o compiler output")
     ap.add_argument("--raw", action="append", default=[], help="CLASS=GLOB of raw code dumps")
     ap.add_argument("--isadetect-per-arch", type=int, default=400)
+    ap.add_argument("--isadetect-skip", type=int, default=0, help="ISAdetect binaries per arch to skip first (for a held-out set)")
+    ap.add_argument("--elf", action="append", default=[], help="GLOB of ELF files labelled by e_machine (e.g. hexagon-dsp-binaries)")
     ap.add_argument("--test-mod", type=int, default=5, help="1/N of groups go to the test split")
     ap.add_argument("--negatives", type=int, default=40, help="ISAdetect binaries per arch to mine .rodata/.data from (0 = no negatives)")
     a = ap.parse_args()
@@ -738,7 +962,7 @@ def main():
     # 4. ISAdetect: real Debian binaries, a deterministic subset per arch.
     ds2 = os.path.join(a.data, "new_new_dataset", "ds2")
     for arch, cls in ISADETECT.items():
-        files = sorted(glob.glob(os.path.join(ds2, arch, "*")))[: a.isadetect_per_arch]
+        files = sorted(glob.glob(os.path.join(ds2, arch, "*")))[a.isadetect_skip : a.isadetect_skip + a.isadetect_per_arch]
         for p in files:
             add_elf_file(corpus, p, "deb:" + os.path.basename(p), "isadetect")
 
@@ -761,10 +985,13 @@ def main():
                     add_elf_file(corpus, p, group, os.path.basename(root))
                 elif head[:2] == b"MZ":
                     with open(p, "rb") as f:
-                        r = pe_code(f.read())
+                        d = f.read()
+                    r = pe_code(d)
                     if r and r[0] in PE_MACHINES:
                         for c in r[1]:
                             corpus.add(PE_MACHINES[r[0]], group, os.path.basename(root), c)
+                    elif (dos := dos_code(d)) is not None:
+                        corpus.add("x86_16", group, os.path.basename(root) + "-dos", dos)
                 elif root.endswith("idaref"):
                     for pre, cls in IDAREF_RAW:
                         if fn.startswith(pre) and fn.endswith((".bin", ".dmp", ".esp")):
@@ -779,7 +1006,18 @@ def main():
                     corpus.add(cls, "file:" + fn, "testbins-raw", f.read())
                 break
 
-    # 6. Explicit raw dumps.
+    # 6. Header-labelled ELF collections: code and data sections.
+    for pattern in a.elf:
+        for p in sorted(glob.glob(pattern, recursive=True)):
+            if not os.path.isfile(p):
+                continue
+            group = "elf:" + os.path.basename(p)
+            add_elf_file(corpus, p, group, "elf-glob")
+            with open(p, "rb") as f:
+                for chunk in elf_data(f.read()):
+                    corpus.add("neg_rodata", group, "elf-glob-data", chunk)
+
+    # 7. Explicit raw dumps.
     for spec in a.raw:
         cls, pattern = spec.split("=", 1)
         for p in sorted(glob.glob(pattern)):

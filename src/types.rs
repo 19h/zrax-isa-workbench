@@ -243,6 +243,10 @@ pub enum Isa {
     Tlcs900,
     /// Panasonic MN10200
     Mn10200,
+    /// Panasonic (Matsushita) MN10300 and its AM33/AM34 extensions
+    Mn10300,
+    /// Intel 8080 and 8085 (the 8085 adds RIM and SIM)
+    I8085,
     /// National Semiconductor/TI CompactRISC CR16
     Cr16,
     /// Fujitsu F2MC-16 (F2MC-16L/LX/F)
@@ -386,6 +390,8 @@ impl Isa {
             Isa::St20 => "STMicro ST20",
             Isa::Tlcs900 => "Toshiba TLCS-900",
             Isa::Mn10200 => "Panasonic MN10200",
+            Isa::Mn10300 => "Panasonic MN10300",
+            Isa::I8085 => "Intel 8080/8085",
             Isa::Cr16 => "National CompactRISC CR16",
             Isa::F2mc16 => "Fujitsu F2MC-16",
             Isa::R32c => "Renesas R32C",
@@ -486,6 +492,7 @@ impl Isa {
             Isa::M6809 => 8,
 
             Isa::I8051
+            | Isa::I8085
             | Isa::M6800
             | Isa::Hc05
             | Isa::Hc08
@@ -508,7 +515,7 @@ impl Isa {
             | Isa::Adsp21xx
             | Isa::OakDsp => 16,
             Isa::Dsp56k => 24,
-            Isa::St20 | Isa::R32c | Isa::TiC3x | Isa::Dsp96k | Isa::TriMedia => 32,
+            Isa::St20 | Isa::R32c | Isa::TiC3x | Isa::Dsp96k | Isa::TriMedia | Isa::Mn10300 => 32,
             // 27-bit words of 9-bit bytes
             Isa::Clemency => 27,
 
@@ -558,6 +565,7 @@ impl Isa {
                 | Isa::K78k0r
                 | Isa::Rh850
                 | Isa::I8051
+                | Isa::I8085
                 | Isa::Xa
                 | Isa::Mcs96
                 | Isa::M6800
@@ -572,6 +580,7 @@ impl Isa {
                 | Isa::St20
                 | Isa::Tlcs900
                 | Isa::Mn10200
+                | Isa::Mn10300
                 | Isa::Cr16
                 | Isa::F2mc16
                 | Isa::R32c
@@ -884,6 +893,8 @@ pub enum FileFormat {
     RockchipImage,
     /// `MediaTek` preloader (device header, BRLYT and GFH records)
     MediatekPreloader,
+    /// `MediaTek` partition image (`mtk_hdr` headers and payloads)
+    MediatekImage,
     /// Qualcomm MBN image with a legacy 40-byte or 80-byte SBL header
     QualcommMbn,
     // Retro console
@@ -1264,6 +1275,16 @@ pub enum FileFormat {
     /// Standalone X.509 certificate file: one DER certificate or PEM
     /// `CERTIFICATE` blocks
     X509,
+
+    // Data files
+    /// Apple binary property list (`bplist00`); data, never code
+    Bplist,
+    /// Qualcomm Atheros Wi-Fi board data (`board-2.bin`); calibration data,
+    /// never code
+    QcaBoard,
+    /// OLE compound file ([MS-CFB]): Windows Installer package, legacy
+    /// Office document or other structured storage
+    Cfb,
 }
 
 impl fmt::Display for FileFormat {
@@ -1403,6 +1424,7 @@ impl fmt::Display for FileFormat {
             FileFormat::AllwinnerEgon => write!(f, "Allwinner eGON"),
             FileFormat::RockchipImage => write!(f, "Rockchip image"),
             FileFormat::MediatekPreloader => write!(f, "MediaTek preloader"),
+            FileFormat::MediatekImage => write!(f, "MediaTek partition image"),
             FileFormat::QualcommMbn => write!(f, "Qualcomm MBN"),
             // Retro console
             FileFormat::GenesisRom => write!(f, "Mega Drive ROM"),
@@ -1607,6 +1629,9 @@ impl fmt::Display for FileFormat {
             FileFormat::Udf => write!(f, "UDF volume"),
             // Certificates
             FileFormat::X509 => write!(f, "X.509 Certificate"),
+            FileFormat::Bplist => write!(f, "Binary Property List"),
+            FileFormat::QcaBoard => write!(f, "QCA Board Data"),
+            FileFormat::Cfb => write!(f, "Compound File"),
         }
     }
 }
@@ -1899,7 +1924,7 @@ pub struct ClassificationMetadata {
 /// Options for classification behavior.
 // Each flag is an independent switch callers set by name.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ClassifierOptions {
     /// Minimum confidence threshold for heuristic analysis
     pub min_confidence: f64,
@@ -1914,6 +1939,15 @@ pub struct ClassifierOptions {
     /// When a top-level raw input is inconclusive, try byte swaps, lane
     /// interleaving and NAND spare removal ([`crate::transform`]).
     pub try_transforms: bool,
+}
+
+/// The settings of [`ClassifierOptions::new`]. A derived default would scan
+/// no bytes (`max_scan_bytes` 0 reads a single window) and accept any
+/// confidence.
+impl Default for ClassifierOptions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ClassifierOptions {

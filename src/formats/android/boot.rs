@@ -67,9 +67,9 @@ const IMAGE_ID_SIZE: usize = 32;
 const SHA1_SIZE: usize = 20;
 
 /// `MediaTek` payload header (Magisk `mtk_hdr`): magic `0x58881688`
-/// (little-endian), payload size, 32-byte name, padding to 512 bytes.
-const MTK_MAGIC: u32 = 0x5888_1688;
-const MTK_HEADER_SIZE: usize = 512;
+/// (little-endian), payload size, 32-byte name, padding to 512 bytes. The
+/// same header starts `MediaTek` partition images.
+use crate::formats::socboot2::{MTK_HEADER_SIZE, MTK_MAGIC};
 
 /// `vendor_ramdisk_table_entry_v4` size; larger strides are allowed.
 const VENDOR_RAMDISK_ENTRY_SIZE: u32 = 108;

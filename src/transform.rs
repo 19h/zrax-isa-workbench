@@ -24,12 +24,19 @@ const MIN_NAND_PAGES: usize = 4;
 /// Fewest bytes per lane for a lane interleave to be tried.
 const MIN_LANE_SIZE: usize = 256;
 
+/// Bytes of one lane compared at a time by [`Transform::lanes_agree`].
+const LANE_WINDOW: usize = 512;
+/// A lane window whose most common byte covers this many tenths is fill.
+const LANE_FILL_TENTHS: usize = 9;
+
 /// One way of rearranging stored bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transform {
-    /// Swap the two bytes of every 16-bit word.
+    /// Swap the two bytes of every 16-bit word. A trailing partial word (a
+    /// byte a dump tool appended) is kept as stored.
     Swap16,
-    /// Reverse the four bytes of every 32-bit word.
+    /// Reverse the four bytes of every 32-bit word, keeping a trailing
+    /// partial word as stored.
     Swap32,
     /// The file holds `lanes` equal byte lanes one after another (two 8-bit
     /// memories on a 16-bit bus, four on a 32-bit bus); interleave them.
@@ -127,13 +134,49 @@ impl Transform {
             return false;
         }
         match self {
-            Self::Swap16 => len >= 2 && len % 2 == 0,
-            Self::Swap32 => len >= 4 && len % 4 == 0,
+            Self::Swap16 => len >= 2,
+            Self::Swap32 => len >= 4,
             Self::Interleave { lanes, .. } => len % lanes == 0 && len / lanes >= MIN_LANE_SIZE,
             Self::NandSpare { page, spare } => {
                 len % (page + spare) == 0 && len / (page + spare) >= MIN_NAND_PAGES
             }
         }
+    }
+
+    /// Whether the stored bytes can be the lanes of one program. Every lane
+    /// of a split memory holds one byte of each bus word, so all lanes carry
+    /// content in the same places; a file whose first half is zero fill
+    /// and whose second half holds data is no 2-lane split (Qualcomm data
+    /// segments read as ARM after interleaving, fw1 audit 2026-11-04).
+    /// Content in a lane window means its most common byte covers less than
+    /// nine tenths of it; every lane must hold content in at least half of
+    /// the windows where any lane does. Transforms other than interleaves
+    /// always agree.
+    pub fn lanes_agree(self, data: &[u8]) -> bool {
+        let Self::Interleave { lanes, .. } = self else {
+            return true;
+        };
+        if !self.applies(data.len()) {
+            return false;
+        }
+        let lane_size = data.len() / lanes;
+        let lanes: Vec<&[u8]> = data.chunks_exact(lane_size).collect();
+        let mut any_content = 0usize;
+        let mut all_content = 0usize;
+        for start in (0..lane_size).step_by(LANE_WINDOW) {
+            let end = (start + LANE_WINDOW).min(lane_size);
+            let content = lanes
+                .iter()
+                .filter(|lane| !is_fill(&lane[start..end]))
+                .count();
+            if content > 0 {
+                any_content += 1;
+            }
+            if content == lanes.len() {
+                all_content += 1;
+            }
+        }
+        any_content > 0 && 2 * all_content >= any_content
     }
 
     /// The rearranged bytes, or `None` when the transform does not apply.
@@ -142,11 +185,8 @@ impl Transform {
             return None;
         }
         Some(match self {
-            Self::Swap16 => data.chunks_exact(2).flat_map(|w| [w[1], w[0]]).collect(),
-            Self::Swap32 => data
-                .chunks_exact(4)
-                .flat_map(|w| [w[3], w[2], w[1], w[0]])
-                .collect(),
+            Self::Swap16 => swap_words(data, 2),
+            Self::Swap32 => swap_words(data, 4),
             Self::Interleave { lanes, reversed } => {
                 let lane_size = data.len() / lanes;
                 let mut parts: Vec<&[u8]> = data.chunks_exact(lane_size).collect();
@@ -182,6 +222,26 @@ impl Transform {
             },
         }
     }
+}
+
+/// `data` with the bytes of every whole `width`-byte word reversed; a
+/// trailing partial word is kept as stored.
+fn swap_words(data: &[u8], width: usize) -> Vec<u8> {
+    let words = data.chunks_exact(width);
+    let tail = words.remainder();
+    let mut out: Vec<u8> = words.flat_map(|w| w.iter().rev().copied()).collect();
+    out.extend_from_slice(tail);
+    out
+}
+
+/// Whether one byte value covers [`LANE_FILL_TENTHS`] of the bytes.
+fn is_fill(bytes: &[u8]) -> bool {
+    let mut counts = [0usize; 256];
+    for &b in bytes {
+        counts[usize::from(b)] += 1;
+    }
+    let most = counts.iter().copied().max().unwrap_or(0);
+    most * 10 >= bytes.len() * LANE_FILL_TENTHS
 }
 
 /// Interleave equal-length lanes: byte `i` of lane `j` becomes byte
@@ -247,6 +307,25 @@ mod tests {
     }
 
     #[test]
+    fn lanes_agree_only_when_every_lane_holds_content_where_the_others_do() {
+        let transform = Transform::Interleave {
+            lanes: 2,
+            reversed: false,
+        };
+        let code: Vec<u8> = (0..4096u32)
+            .map(|i| u8::try_from((i * 37 + i / 7) % 251).expect("below 251"))
+            .collect();
+        assert!(transform.lanes_agree(&code));
+        // First half zero fill, second half data: no split program.
+        let mut split = vec![0u8; 2048];
+        split.extend_from_slice(&code[..2048]);
+        assert!(!transform.lanes_agree(&split));
+        // All fill: no lane holds content.
+        assert!(!transform.lanes_agree(&[0xff; 4096]));
+        assert!(Transform::Swap16.lanes_agree(&split));
+    }
+
+    #[test]
     fn interleave_transform_matches_separate_lanes() {
         let even: Vec<u8> = (0..=255).collect();
         let odd: Vec<u8> = (0..=255).rev().collect();
@@ -302,8 +381,23 @@ mod tests {
     }
 
     #[test]
+    fn byte_swaps_keep_a_trailing_partial_word() {
+        // A 68000 ROM dumped byte-swapped with one byte appended.
+        let dump = [0x75, 0x4E, 0x71, 0x4E, 0x00];
+        assert_eq!(
+            Transform::Swap16.apply(&dump).unwrap(),
+            [0x4E, 0x75, 0x4E, 0x71, 0x00]
+        );
+        assert_eq!(
+            Transform::Swap32.apply(&[1, 2, 3, 4, 5, 6]).unwrap(),
+            [4, 3, 2, 1, 5, 6]
+        );
+    }
+
+    #[test]
     fn transforms_refuse_inputs_they_do_not_fit() {
-        assert!(!Transform::Swap32.applies(6));
+        assert!(!Transform::Swap16.applies(1));
+        assert!(!Transform::Swap32.applies(3));
         assert!(!Transform::Interleave {
             lanes: 2,
             reversed: false

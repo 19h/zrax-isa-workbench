@@ -80,7 +80,7 @@ this order:
    0;
 6. a FAT large enough for `CountofClusters + 2` entries;
 7. the reserved sectors, FATs and root directory region inside the input,
-   and the volume no more than 1 MiB and no more than an eighth of its size
+   and the volume no more than an eighth of its size
    beyond the input (see the assumption register);
 8. FAT[0] holding a media descriptor in its low byte with every other bit
    of the entry set.
@@ -213,7 +213,7 @@ truncated volume. Containers decode at most 64 MiB of a component
 compressed stream reaches the parser cut.
 
 - Detection is unchanged. FAT12, FAT16 and FAT32 have no magic, and weak
-  detection still accepts at most 1 MiB and an eighth of the volume missing
+  detection still accepts at most an eighth of the volume missing
   ([FATGEN] calls a volume larger than its media "seriously damaged or
   malformed"); a volume cut shorter is not recognized by `detect_format`.
   `parse_container` called with the layout parses it at any length. exFAT
@@ -243,7 +243,7 @@ compressed stream reaches the parser cut.
 | ID | Assumption | Falsification probe |
 | --- | --- | --- |
 | F1 | Every FAT volume worth recognizing has the `55 AA` signature, an allowed jump form and FAT[0] with its media byte; [FATGEN] requires all three | DOS 1.x and some Atari ST floppies lack the signature or jump: they are not recognized (left to later checks or raw) |
-| F2 | Weak detection: a dump may miss at most 1 MiB and an eighth of its declared volume; the bound is ours, [FATGEN] calls any shortfall malformed | `truncated_dumps_and_trailing_data_are_noted`; a firmware image trimmed after its last used cluster is not recognized, and neither is the first 64 MiB of a larger FAT volume that a container decoded |
+| F2 | Weak detection: a dump may miss at most an eighth of its declared volume (no absolute cap since 2026-11-03: a 222 MiB FAT16 partition dump in the fw1 corpus lacks 14.6 MiB); the bound is ours, [FATGEN] calls any shortfall malformed | `truncated_dumps_and_trailing_data_are_noted`; a firmware image trimmed after its last used cluster is not recognized, and neither is the first 64 MiB of a larger FAT volume that a container decoded |
 | F3 | Data after the declared volume is not part of it and is noted, not an error: [FATGEN] says a volume smaller than its media is "nothing whatsoever wrong" | A FAT volume followed by another partition's data is still FAT; a non-FAT image whose first sector happens to validate would also be accepted |
 | F4 | A FAT32 BPB on fewer than 65,525 clusters (as `mkfs.fat -F 32` writes on small volumes) is not FAT: the cluster count makes it FAT16 by [FATGEN]'s only rule, and its FAT does not have that layout | `bpb_layouts_that_disagree_with_the_cluster_count_are_not_fat`; such volumes are left to later checks |
 | F5 | `DIR_NTRes` is not looked at ([FATGEN]: "never modify or look at it"), so names the Windows NT case flags lower-case are listed upper-case | The mtools fixtures list `/PAYLOAD.ELF` for `payload.elf` |
@@ -264,7 +264,7 @@ compressed stream reaches the parser cut.
 | TexFAT (two FATs and bitmaps), Windows CE security descriptors, vendor extensions | Benign entries are skipped; the active FAT follows `ActiveFat` |
 | Deleted files | Counted, never recovered |
 | FAT volumes with more than two FATs | Not recognized (`BPB_NumFATs` 1 or 2) |
-| A FAT12/16/32 volume missing more than 1 MiB or an eighth (the first 64 MiB of a larger partition in a DMG, virtual disk or compressed stream) | Not recognized: weak detection is unchanged. Parsed as a truncated volume when `parse_container` is called with its layout. exFAT is read at any length |
+| A FAT12/16/32 volume missing more than an eighth (the first 64 MiB of a larger partition in a DMG, virtual disk or compressed stream) | Not recognized: weak detection is unchanged. Parsed as a truncated volume when `parse_container` is called with its layout. exFAT is read at any length |
 | Truncated volumes | Files whose clusters are all present are listed, the rest counted; files in directory clusters past the end are not known, only those clusters are counted |
 
 ## Verification

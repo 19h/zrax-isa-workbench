@@ -78,7 +78,7 @@ fn expected_isas(filename: &str) -> Option<Vec<Isa>> {
 enum TestResult {
     /// Classifier returned an ISA (may or may not match expected)
     Classified(Isa),
-    /// Classifier returned below-threshold (HeuristicInconclusive)
+    /// Classifier returned below-threshold (`HeuristicInconclusive`, `HeuristicSparseCode`)
     BelowThreshold,
     /// Other error (IO, parse, etc.)
     Error(String),
@@ -87,7 +87,10 @@ enum TestResult {
 fn classify_testbin(path: &Path) -> TestResult {
     match classify_file(path) {
         Ok(result) => TestResult::Classified(result.isa),
-        Err(ClassifierError::HeuristicInconclusive { .. }) => TestResult::BelowThreshold,
+        Err(
+            ClassifierError::HeuristicInconclusive { .. }
+            | ClassifierError::HeuristicSparseCode { .. },
+        ) => TestResult::BelowThreshold,
         Err(e) => TestResult::Error(format!("{}", e)),
     }
 }

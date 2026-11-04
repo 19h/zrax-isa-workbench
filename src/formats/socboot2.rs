@@ -47,6 +47,7 @@ mod qualcomm;
 mod rockchip;
 
 pub(crate) use egon::{decode_jump, sign_extend, Jump, JumpKind};
+pub(crate) use mediatek::{PARTITION_HEADER_SIZE as MTK_HEADER_SIZE, PARTITION_MAGIC as MTK_MAGIC};
 
 /// Storage sector size: the unit of Rockchip sizes and of the search for an
 /// image after the one parsed.
@@ -79,6 +80,8 @@ pub enum Layout {
     MediatekUfs,
     /// `MediaTek` preloader that starts with its `GFH_FILE_INFO` record.
     MediatekGfh,
+    /// `MediaTek` partition image: `mtk_hdr` headers and their payloads.
+    MediatekPartition,
     /// Qualcomm MBN with the 80-byte SBL header.
     QualcommSbl,
     /// Qualcomm SBL ELF image after a NAND preamble.
@@ -100,6 +103,7 @@ impl Layout {
             | Self::MediatekSdmmc
             | Self::MediatekUfs
             | Self::MediatekGfh => FileFormat::MediatekPreloader,
+            Self::MediatekPartition => FileFormat::MediatekImage,
             Self::QualcommSbl | Self::QualcommSblElf | Self::QualcommMbn => FileFormat::QualcommMbn,
         }
     }
@@ -119,6 +123,7 @@ impl Layout {
             Self::MediatekSdmmc => "SDMMC_BOOT preloader",
             Self::MediatekUfs => "UFS_BOOT preloader",
             Self::MediatekGfh => "GFH preloader",
+            Self::MediatekPartition => "MediaTek partition image",
             Self::QualcommSbl => "SBL MBN (80-byte header)",
             Self::QualcommSblElf => "SBL ELF (NAND preamble)",
             Self::QualcommMbn => "MBN (40-byte header)",
@@ -166,6 +171,7 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
             mediatek::parse_device(data, layout)
         }
         Layout::MediatekGfh => mediatek::parse_gfh_image(data),
+        Layout::MediatekPartition => mediatek::parse_partition(data),
         Layout::QualcommSbl | Layout::QualcommSblElf => qualcomm::parse_sbl(data),
         Layout::QualcommMbn => qualcomm::parse_mbn(data),
     }

@@ -188,6 +188,10 @@ pub enum Kind {
     Udf(super::udf::Layout),
     /// A standalone X.509 certificate file.
     X509(super::x509::Layout),
+    /// A data file with its own magic: binary property list or QCA board data.
+    DataFile(super::datafile::Layout),
+    /// An OLE compound file (Windows Installer package, legacy Office file).
+    Cfb(super::cfb::Layout),
 }
 
 impl Kind {
@@ -258,6 +262,8 @@ impl Kind {
             Self::Wim(layout) => layout.format(),
             Self::Udf(layout) => layout.format(),
             Self::X509(layout) => layout.format(),
+            Self::DataFile(layout) => layout.format(),
+            Self::Cfb(layout) => layout.format(),
         }
     }
 
@@ -328,6 +334,8 @@ impl Kind {
             Self::Wim(layout) => layout.label(),
             Self::Udf(layout) => layout.label(),
             Self::X509(layout) => layout.label(),
+            Self::DataFile(layout) => layout.label(),
+            Self::Cfb(layout) => layout.label(),
         }
     }
 
@@ -398,6 +406,8 @@ impl Kind {
             Self::Wim(layout) => layout.is_weak(),
             Self::Udf(layout) => layout.is_weak(),
             Self::X509(layout) => layout.is_weak(),
+            Self::DataFile(layout) => layout.is_weak(),
+            Self::Cfb(layout) => layout.is_weak(),
         }
     }
 }
@@ -473,6 +483,8 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Wim(layout) => super::wim::parse_container(data, layout),
         Kind::Udf(layout) => super::udf::parse_container(data, layout),
         Kind::X509(layout) => super::x509::parse_container(data, layout),
+        Kind::DataFile(layout) => super::datafile::parse_container(data, layout),
+        Kind::Cfb(layout) => super::cfb::parse_container(data, layout),
     }
 }
 

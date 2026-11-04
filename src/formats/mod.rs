@@ -41,6 +41,7 @@ pub mod bootmisc;
 pub mod cab;
 pub mod capsule;
 pub mod cbm;
+pub mod cfb;
 pub mod checksum;
 pub mod chiptune;
 pub mod coff;
@@ -50,6 +51,7 @@ pub mod container;
 pub mod coreboot;
 pub mod cpcdsk;
 pub mod d10;
+pub mod datafile;
 pub(crate) mod decmpfs;
 pub mod dex;
 pub mod discimg;
@@ -1195,6 +1197,22 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
     if let Some(layout) = x509::detect_strong(data) {
         return DetectedFormat::Container {
             kind: container::Kind::X509(layout),
+        };
+    }
+
+    // Binary property lists and QCA Wi-Fi board data hold no code; their
+    // magic comes before the weak layouts that structured data can satisfy
+    // (rearranged board data read as code, a plist trailer as a boot table).
+    if let Some(layout) = datafile::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::DataFile(layout),
+        };
+    }
+
+    // OLE compound files (Windows Installer packages): eight-byte signature.
+    if let Some(layout) = cfb::detect(data) {
+        return DetectedFormat::Container {
+            kind: container::Kind::Cfb(layout),
         };
     }
 
