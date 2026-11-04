@@ -38,6 +38,15 @@ along with the number of readings tried (`transform_trials`) and a note that
 the stored bytes are not in execution order. Extensions are detected on the
 transformed bytes.
 
+When a later reading names the same ISA and byte order at the same
+confidence, the first one tried is applied and the note names the others:
+"a 32-bit byte swap reads the same ISA at the same confidence, so which of
+them restores the execution order is not established". For code of 16-bit
+parcels stored as 32-bit little-endian words (the UniPhier IPP boot images),
+a 16-bit and a 32-bit swap give the same parcels in two orders, which the
+byte-pair model does not tell apart (2026-11-04: `ippboot.rom` reads as IPP
+at 0.99 with code share 0.81 under both).
+
 ## False accepts
 
 Trying `k` readings gives `k` chances of a false accept. Each attempt pays a
