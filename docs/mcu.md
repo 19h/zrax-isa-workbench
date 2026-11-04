@@ -219,6 +219,18 @@ checksum is the one-byte sum whatever the type.
 
 ## Verification
 
+On 2026-11-04 (macOS AArch64, rustc 1.99.1), after `ihex2fw` was added:
+`tests/mcu.rs` passed 30 tests (two new: load sections from address runs in
+file order, and rejection of every prefix, non-zero padding, a non-zero end
+record, data after it, overlapping records, a single record and an empty
+record before the end, plus the shared truncation and mutation sweep), the
+unit tests in `src/formats/mcu/ihex2fw.rs` passed, and
+`web/tests/mcu.test.mjs` classified an `ihex2fw` file of Thumb code as Arm
+through both builds (browser suite 406 of 406, none skipped). On the fw1
+corpus the layout recognizes exactly the 19 files that a separate Python
+walk of the record structure finds (18 EZ-USB 8051 images, read as 8051 at
+0.99, and `down2.fw`).
+
 On 2026-10-12 (macOS AArch64, rustc 1.100.0-nightly `f248f4038`
 2026-09-05):
 

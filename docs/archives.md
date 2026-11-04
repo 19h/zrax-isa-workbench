@@ -185,6 +185,22 @@ file as Linux initramfs counts them. No archive field is a code byte order.
 
 ## Verification
 
+On 2026-11-04 (macOS AArch64, rustc 1.99.1), after StuffIt 5 was added:
+
+- `tests/archives.rs`: 30 tests passed, two of them new (StuffIt 5 members,
+  notes and metadata; corrupt headers, a corrupt fork, every truncation and
+  trailing data), and the StuffIt archive built from the layout is part of
+  the every-prefix truncation and byte-mutation sweeps.
+- `web/tests/archives.test.mjs` passed the StuffIt 5 test through
+  `/pkg/zrax.js` and `/dist/zrax.js`; the whole browser suite passed 406 of
+  406 tests (none skipped, with `D10_FIXTURE` and `TI_C55X_FIXTURE` set),
+  and the native suite 3,007 tests with 7 ignored.
+- The one real StuffIt 5 archive, `F-D200-V201M.sit` (4,194,754 B,
+  signature text `(c)1997-2002`), parses to its declared size: all four
+  entry header CRCs and both stored forks' CRC-16 verify. No archive written
+  by a StuffIt version other than the one that wrote it was tested, and no
+  compressed or encrypted fork from a real archive.
+
 On 2026-10-13 (macOS AArch64, rustc 1.100.0-nightly 2026-09-05):
 
 - After PDX data files were resolved, `tests/archives.rs` (28 tests,

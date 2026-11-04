@@ -419,14 +419,15 @@ MAME ground truth beyond the golden labels (`mame_cpus.py`; `ship23-all`):
   program inside), which read as ARM at 0.54 with `ship22-all`, reads as
   SH-4 since window weights within 5% tie and go to the most code bytes.
 - Leave-one-family-out cross-validation of the µ'nSP class (each fold
-  trained without the family's code and data blocks, `ship22` folds): all 8
+  trained without the family's code and data blocks, `ship22` and `ship23`
+  folds): all 8
   ROMs with traceable code (5 families) read as µ'nSP at 0.98 to 0.99 with
   their family held out; `29dl640e.u3`, which has no vector table, gives no
   ISA. On `ship19` and `ship21` folds, before the tracer's vector-table
   rule: the same 8, and `29dl640e.u3` inconclusive.
 - Leave-one-set-out cross-validation of the MAME data labels (17 sets, each
   fold trained without that set's ROMs and the windows mined from them,
-  `ship21` and `ship22` folds): all 52 graphics and sound ROMs are inconclusive with their
+  `ship21`, `ship22` and `ship23` folds): all 52 graphics and sound ROMs are inconclusive with their
   own set held out, `cg.u23` (IGS sprites) included, which read as SH at 0.99
   in its `ship14` fold. The windows mined from the PGM sound ROM keep the
   group it had when they were mined (`mame:thegladpcb`; the ROM is now
@@ -501,9 +502,13 @@ Arm).
 The submitted `failures` and `z8` folders are reviewed file by file in
 `reports/failures/README.md`.
 
-`cargo test --all-features --locked` passes with `ship22-all` (2,998
-passed, 0 failed, 7 ignored); `npm test` after `./build-web.sh`: 404 tests,
-400 passed, 4 skipped (D10/RX113 firmware not in the repository), 0 failed.
+`cargo test --all-features --locked` passes with `ship23-all` and the
+external fixtures set (`D10_FIXTURE`, `TI_C55X_FIXTURE`): 3,007 passed, 0
+failed, 7 ignored; of the ignored, the D10 reference test passes when run with
+`D10_REFERENCE_DIR` (records written by the supplied extractor), one needs a
+`UARP_FIXTURE` that is not on this machine, and five are diagnostic tools.
+`npm test` after `./build-web.sh` with the same fixtures: 406 tests, 406
+passed, 0 skipped, 0 failed.
 
 ## Known limits
 

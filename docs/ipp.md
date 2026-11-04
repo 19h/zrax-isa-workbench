@@ -103,6 +103,17 @@ zrax does not use that measure.
 - The samples are third-party firmware and stay out of the repository; the
   tests use synthetic ELF headers.
 
+## Verification
+
+On 2026-11-04 (macOS AArch64, rustc 1.99.1): the results above with
+`ship23-train` (held out) and the same answers on the raw images with the
+shipped `ship23-all`; `tests/elf_headers.rs` checks that machine 0x1040
+names `ipp` (32-bit, big-endian) and that an unassigned machine still takes
+the code model's answer; the browser suite checks the display name. The
+native suite passed 3,007 tests with 7 ignored, the browser suite 406 of 406.
+No IPP code outside these samples was available, so how the class does on
+other IPP code is not measured.
+
 ## Sources
 
 - Tanaka, Yoshioka, "UniPhier System LSIs and Their Core Technologies",
