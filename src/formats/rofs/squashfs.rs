@@ -26,6 +26,65 @@ const SQUASHFS_MAGIC_STREAMED_SWAPPED: u32 = 0x4853_5153;
 /// Size of the 4.0 superblock, and of the streamed placeholder header.
 const SUPERBLOCK_SIZE: usize = 96;
 
+/// A RAUC update bundle is a SquashFS image followed by its CMS signature
+/// and, as its last 8 bytes, the signature's size as a big-endian 64-bit
+/// integer (rauc `src/bundle.c`, `append_signature_to_bundle` and
+/// `open_local_bundle`). Erased or zero bytes may sit between image and
+/// signature (mksquashfs pads to 4 KiB).
+const RAUC_SIZE_FIELD: usize = 8;
+
+/// A CMS signature as RAUC writes it: a DER `ContentInfo` SEQUENCE with a
+/// two-byte length, whose first element is the signedData object identifier
+/// 1.2.840.113549.1.7.2 (RFC 5652, section 5.1).
+const DER_SEQUENCE_TWO_BYTE_LENGTH: [u8; 2] = [0x30, 0x82];
+const DER_HEADER: usize = 4;
+const CMS_SIGNED_DATA_OID: [u8; 11] = [
+    0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02,
+];
+
+/// Four bytes after a RAUC bundle's size field in the DFU payload of the
+/// Nintendo Switch 2 camera firmware (2026-11-04). RAUC does not write
+/// them; they are accepted and named, not interpreted.
+const BUNDLE_END_MARKER: &[u8] = b"FEOF";
+
+/// The CMS signature of a RAUC bundle after a SquashFS image.
+struct RaucSignature {
+    /// File offset of the DER signature.
+    offset: usize,
+    /// Signature size in bytes, as the size field gives it.
+    size: usize,
+    /// Whether [`BUNDLE_END_MARKER`] follows the size field.
+    marker: bool,
+}
+
+/// The RAUC signature after a SquashFS image that ends at `image_end`, if
+/// the rest of `data` is one: padding, a CMS signed-data `ContentInfo` whose
+/// DER length is the size field, and the size field (optionally followed by
+/// [`BUNDLE_END_MARKER`]).
+fn rauc_signature(data: &[u8], image_end: usize) -> Option<RaucSignature> {
+    let (bundle, marker) = match data.strip_suffix(BUNDLE_END_MARKER) {
+        Some(bundle) => (bundle, true),
+        None => (data, false),
+    };
+    let size_at = bundle.len().checked_sub(RAUC_SIZE_FIELD)?;
+    let size = usize::try_from(u64::from_be_bytes(array(bundle, size_at).ok()?)).ok()?;
+    let offset = size_at.checked_sub(size)?;
+    if offset < image_end || !is_padding(&bundle[image_end..offset]) {
+        return None;
+    }
+    let signature = &bundle[offset..size_at];
+    let der_length = usize::from(u16::from_be_bytes(array(signature, 2).ok()?));
+    let is_cms = signature.starts_with(&DER_SEQUENCE_TWO_BYTE_LENGTH)
+        && signature.get(DER_HEADER..DER_HEADER + CMS_SIGNED_DATA_OID.len())
+            == Some(&CMS_SIGNED_DATA_OID[..])
+        && DER_HEADER + der_length == size;
+    is_cms.then_some(RaucSignature {
+        offset,
+        size,
+        marker,
+    })
+}
+
 /// Version fields of every superblock revision (major at 28, minor at 30).
 const VERSION_MAJOR: usize = 28;
 const VERSION_MINOR: usize = 30;
@@ -1361,7 +1420,10 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     let image = &data[..sb.bytes_used];
     let options = compressor_options(image, &sb)?;
     let tables = tables(image, &sb)?;
-    expect_padding(data, sb.bytes_used, "SquashFS")?;
+    let signature = rauc_signature(data, sb.bytes_used);
+    if signature.is_none() {
+        expect_padding(data, sb.bytes_used, "SquashFS")?;
+    }
     let codec = sb.compressor.codec;
     let inodes = Table::read(
         image,
@@ -1392,8 +1454,24 @@ pub(super) fn parse(data: &[u8]) -> Result<Container<'_>> {
     if let Some(note) = options {
         c.notes.push(note);
     }
-    if let Some(note) = padding_note(data, sb.bytes_used) {
-        c.notes.push(note);
+    match &signature {
+        Some(rauc) => {
+            let marker = if rauc.marker {
+                "; 4 B `FEOF` follow the size field, which RAUC does not write"
+            } else {
+                ""
+            };
+            c.notes.push(format!(
+                "RAUC bundle: CMS signature of {} B at 0x{:X} after the image (not verified){marker}",
+                rauc.size, rauc.offset
+            ));
+            c.consumed = data.len();
+        }
+        None => {
+            if let Some(note) = padding_note(data, sb.bytes_used) {
+                c.notes.push(note);
+            }
+        }
     }
     c.push_metadata("squashfs_version", "Version", "4.0");
     c.push_metadata("squashfs_compressor", "Compressor", sb.compressor.name);

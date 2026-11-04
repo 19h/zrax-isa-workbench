@@ -90,7 +90,15 @@ and is never reported as code byte order.
 - `bytes_used` bounds a SquashFS image, CramFS `size` (with
   `FSID_VERSION_2`) bounds a CramFS image and the superblock `size` bounds a
   romfs image. Only `0x00`/`0xFF` padding may follow; mksquashfs pads to
-  4 KiB, genromfs to 1 KiB.
+  4 KiB, genromfs to 1 KiB. The exception is a RAUC update bundle, which
+  appends the CMS signature and, as its last 8 bytes, the signature's size
+  (big-endian u64) to the SquashFS image (rauc `src/bundle.c`,
+  `append_signature_to_bundle`): when what follows the padding is a DER
+  `ContentInfo` with the signedData OID whose length is that size field, the
+  image is enumerated and a note gives the signature's size and offset (not
+  verified). Four bytes `FEOF` after the size field are accepted and named:
+  the Nintendo Switch 2 camera firmware's DFU payload carries them, and
+  RAUC does not write them (2026-11-04).
 - CramFS: unsupported flags (outside the low byte, holes, wrong signature,
   shifted root, extended pointers) are rejected; the root must be a
   directory whose entries start at 76 or 588 (or 0 for an empty

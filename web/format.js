@@ -31,7 +31,7 @@ const ISA_NAMES = {
   i860: 'i860', i960: 'i960', vax: 'VAX', pdp11: 'PDP-11',
   z80: 'Z80', mcs6502: '6502',
   wasm: 'WebAssembly', jvm: 'JVM', dalvik: 'Dalvik',
-  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU', mn10300: 'MN10300', i8085: 'Intel 8080/8085',
+  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU', mn10300: 'MN10300', i8085: 'Intel 8080/8085', mcs251: 'Intel MCS-251',
   unsp: 'unSP', w65816: '65816',
 };
 
@@ -75,7 +75,7 @@ const FORMAT_NAMES = {
   bflt: 'bFLT', dxe: 'DXE', zimage: 'Linux Kernel Image', uimage: 'U-Boot uImage', fit: 'U-Boot FIT', dtb: 'Device Tree Blob', goff: 'GOFF', mvs_load: 'MVS Load', mvsload: 'MVS Load', som: 'SOM',
   rsx11: 'RSX-11', vms: 'VMS',
   gzip: 'gzip', zlib: 'zlib', xz: 'xz', lzma: 'LZMA', lz4: 'LZ4', zstd: 'Zstandard', bzip2: 'bzip2',
-  lzop: 'lzop', lzfse: 'LZFSE', lzss: 'Apple LZSS',
+  lzop: 'lzop', binhex: 'BinHex 4.0', lzfse: 'LZFSE', lzss: 'Apple LZSS',
   tds: 'TDS', aof: 'AOF/AXF', epoc: 'EPOC', espfirmware: 'ESP Firmware', palmpdb: 'Palm PDB/PRC', amigahunk: 'Amiga Hunk',
   os9: 'OS-9', snesspc: 'SNES SPC', tmobj: 'TriMedia TMObj', dsplod: 'Motorola DSP LOD', ieee695: 'IEEE-695',
   wasm: 'WebAssembly', javaclass: 'Java Class', dex: 'DEX', odex: 'ODEX', vdex: 'VDEX', art: 'ART', llvmbc: 'LLVM Bitcode',

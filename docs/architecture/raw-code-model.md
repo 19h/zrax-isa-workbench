@@ -187,8 +187,7 @@ a byte swap or interleave never names a CPU with a byte-wide program bus
 that runs only from on-chip program memory (PIC, AVR)
 ([raw-dump transforms](../transforms.md#false-accepts)).
 
-Two structural rules use the code model's evidence without being part of
-it:
+Three structural rules decide around the code model:
 
 * **A boot marker names the boot core.** A raw image that carries the
   architecture's own description of the core that starts it, and holds code
@@ -206,6 +205,14 @@ it:
   already read as x86. The rule changes the three `faceauth` images (RISC-V
   and Thumb code; Arm boot core) and two Asus laptop BIOS images that also
   hold 8051 embedded-controller firmware (x86 boot core).
+* **An STM8 vector table names an STM8 core on its own.** A raw image that
+  starts with the 32 interrupt vectors of STM8 flash (each the `INT` opcode
+  0x82 and a 24-bit handler address in flash, 0x8000 to 0x27FFF; the reset
+  handler after the table and inside the image) is reported as STM8 at 0.9,
+  without the code model, which is noted. The STM8 class holds SDCC output
+  only; 14 demo programs from another compiler were inconclusive and the
+  radare2 STM8 flash image read as HC08 at 0.86. No fw1 file carries such a
+  table (2026-11-04).
 * **An ELF header contradicted by its code names no ISA.** When the code
   model reads an ELF's instructions (sections with `SHF_EXECINSTR`, else
   executable `PT_LOAD` segments, else all loadable segments) as another ISA
@@ -243,7 +250,7 @@ of the code bytes is reported.
 | Intel 8080/8085 code (`corpus_extra/raw-ext/i8085`) | 107 public GitHub repositories of 8080/8085 assembly (monitors, CP/M BIOSes, Kermit, Altair and course programs) at pinned commits, assembled with AS 1.42 in 8085 mode, instruction lines only (`scripts/asl_asm_corpus.py --profile 8085`) | `i8085` by assembly |
 | Motorola 68HC11 code (`corpus_extra/raw-ext/hc11`) | 12 public GitHub repositories of 68HC11 assembly (the Buffalo monitor, Flex11, Holden VY ECU patches, course programs) at pinned commits, assembled with AS 1.42 as `6811` after rewriting full-line `*` comments, instruction lines only (`--profile 68hc11`); 27 KB, with the 23 KB IDA-test ECU dump 50 KB | `hc11` by assembly |
 | Motorola 68000 code (`corpus_extra/raw-asm/m68k`, corpus `corpus-m68kx`) | 77 of 938 public GitHub repositories of 68000 assembly (Atari ST and Amiga programs, Mega Drive games and disassemblies of commercial games, monitors, course programs) at pinned commits, assembled with AS 1.42 for the 68000 after renaming asm68k/Devpac local labels, 68000 instruction lines only (`CPU Z80` stretches dropped; `--profile 68000`); 359 KB after run and text-block removal, under its own corpus source (`asl-68000`) so it does not share the 1 MB cap of `raw`. The other 68000 samples are compiled (Debian, GCC); before this the hand-written Neo-Geo system ROM read at 0.5 to 0.8 bits/byte margins | `m68k` by assembly |
-| µ'nSP code (`fw1-mame-unsp` in `scripts/fw1/fw1_corpus.py`) | the instruction words of 9 fw1 ROMs that MAME maps flat into a µ'nSP SoC's program space (V.Smile and V.Smile Baby system ROMs, SPG2xx and GPL162xx game ROMs; 6 ROM families), found by recursive descent from the interrupt vectors, through `call` targets, and from untraced `push` words (`scripts/fw1/unsp_trace.py`, decoding after MAME's µ'nSP disassembler); 64 KiB blocks of the same ROMs without one traced instruction as `neg_media` (as `neg_rodata` they shifted that class: an ARM relocation table read as PIC24) | MAME's CPU for the ROM region; the trace |
+| µ'nSP code (`fw1-mame-unsp` in `scripts/fw1/fw1_corpus.py`) | the instruction words of 8 fw1 ROMs that MAME maps flat into a µ'nSP SoC's program space (V.Smile and V.Smile Baby system ROMs, SPG2xx and GPL162xx game ROMs; 5 ROM families), found by recursive descent from the interrupt vectors, through `call` targets, and from untraced `push` words (`scripts/fw1/unsp_trace.py`, decoding after MAME's µ'nSP disassembler). A ROM is traced only if the words at the vectors form a vector table (the handler vectors within 0x400 words; 0x14-0x194 in these ROMs): MAME's `pokermor` ROM has 16-bit pixel data there, and its trace through pixel data was labelled code until 2026-11-04. Traced functions of 64 words or more that are mostly one repeated word are fill, not code; 64 KiB blocks of the same ROMs without one traced instruction as `neg_media` (as `neg_rodata` they shifted that class: an ARM relocation table read as PIC24) | MAME's CPU for the ROM region; the trace |
 | byte lanes (`scripts/fw1/lane_negatives.py`) | the 2 and 4 byte lanes of 68000 code samples, 2.3 MB: one file per lane of a wide bus holds no whole instruction | `neg_lanes` by construction |
 | synthetic 8-bit PCM (`synthetic-pcm8`) | signed 8-bit decaying tone bursts at six amplitudes, near-silent to full scale, separated by silence, as haptic and ringtone files store them | `neg_media` by construction |
 | synthetic tiles and pixels (`synthetic-tiles`, `synthetic-pixels`) | canvases of sprites, glyph cells and dithered backgrounds as 8x8 tiles (one bit plane, 2bpp, 4bpp planar and packed, 8bpp) and as RGB565 (both byte orders) and ARGB8888 frame buffers | `neg_pixels` by construction |
@@ -282,11 +289,13 @@ swapped. `WORD_SWAPPED` in `build_corpus.py` adds every `rx` sample to
 handled the same way: DSP56000 (24-bit), DSP56100 (16-bit) and TMS320C3x
 (32-bit) words appear in either byte order depending on the ROM interface or
 converter, so those samples are stored little-endian and the big-endian
-classes (`dsp56keb`, `dsp56100eb`, `tic3xeb`) are derived. µ'nSP dumps come
-in both word orders too (MAME's `pokermor` dump traces as big-endian words,
-the others as little-endian), so `unspeb` is derived from `unsp`. The swap
-happens before padding/text removal, which would otherwise shift the word
-phase.
+classes (`dsp56keb`, `dsp56100eb`, `tic3xeb`) are derived. `unspeb` is
+derived from `unsp` the same way, for µ'nSP dumps read high byte first. MAME
+loads every µ'nSP set's ROM as little-endian words (`ROM_LOAD16_WORD_SWAP`),
+and every fw1 µ'nSP ROM with a vector table has it in little-endian words, so
+no big-endian µ'nSP dump is known (the one that seemed to be, `pokermor`, has
+no vector table in either order). The swap happens before padding/text
+removal, which would otherwise shift the word phase.
 
 The train/test split is by **program** (or by file where there is no program
 identity), so no program is on both sides. fw1 samples are grouped by

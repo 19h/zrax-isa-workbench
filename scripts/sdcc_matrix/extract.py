@@ -53,6 +53,8 @@ MAX_PROG_BYTES = 0x10000
 # assembler for .s/.asm sources.
 PORTS = {
     "mcs51":    dict(src=["mcs51"], asm="sdas8051"),
+    # The SDCC MCS-251 downstream port (variants-mcs251.txt)
+    "mcs251":   dict(src=["mcs251"], asm="sdas251"),
     "ds390":    dict(src=["ds390"], asm="sdas390"),
     "hc08":     dict(src=["hc08"], asm="sdas6808"),
     "s08":      dict(src=["s08", "hc08"], asm="sdas6808"),
@@ -690,7 +692,7 @@ def _place_module(port, model_flags, rel_path, wd):
         cmd = ["sdcc", "-m" + port] + model_flags
         if how == "alone":
             cmd.append("--nostdlib")
-            if port not in ("mcs51", "ds390", "hc08", "s08", "stm8"):
+            if port not in ("mcs51", "mcs251", "ds390", "hc08", "s08", "stm8"):
                 cmd.append("--no-std-crt0")
         cmd += [base, "-o", "m.ihx"]
         rc, out = run(cmd, cwd=wd, timeout=300)
@@ -1248,9 +1250,10 @@ def cc65_lib(a):
 # Reports
 # --------------------------------------------------------------------------
 def _our_classes():
-    """Classes built by this matrix (OUT may be shared with other generators)."""
+    """Classes built by this matrix (OUT may be shared with other generators),
+    from the variants file build.sh uses (VARIANTS, default variants.txt)."""
     cls = set()
-    for line in open(os.path.join(HERE, "variants.txt")):
+    for line in open(os.environ.get("VARIANTS", os.path.join(HERE, "variants.txt"))):
         w = line.split()
         if not w or w[0].startswith("#"):
             continue

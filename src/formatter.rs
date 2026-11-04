@@ -686,6 +686,7 @@ fn format_name(format: &crate::types::FileFormat) -> &'static str {
         FileFormat::Zstd => "Zstandard",
         FileFormat::Bzip2 => "bzip2",
         FileFormat::Lzop => "lzop",
+        FileFormat::BinHex => "BinHex 4.0",
         FileFormat::Lzfse => "LZFSE",
         FileFormat::Lzss => "Apple LZSS",
         FileFormat::Odx => "ASAM ODX",

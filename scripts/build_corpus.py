@@ -19,7 +19,8 @@ Output layout:
 
 Usage:
     scripts/build_corpus.py --out /path/to/corpus [--data /path/to/data] [--armgen /path/to/armgen]
-                            [--gen DIR ...] [--raw CLASS=GLOB ...] [--elf GLOB ...]
+                            [--gen DIR ...] [--raw CLASS=GLOB ...] [--raw-group CLASS=REGEX ...]
+                            [--elf GLOB ...]
                             [--isadetect-per-arch N] [--isadetect-skip N]
 """
 
@@ -900,6 +901,13 @@ def main():
     ap.add_argument("--armgen", default=os.path.join(REPO, "..", "isa-harvester", "armgen"))
     ap.add_argument("--gen", action="append", default=[], help="extra dir of <class>/**/*.o compiler output")
     ap.add_argument("--raw", action="append", default=[], help="CLASS=GLOB of raw code dumps")
+    ap.add_argument(
+        "--raw-group",
+        action="append",
+        default=[],
+        help="CLASS=REGEX: group raw samples of CLASS by the regex's first capture in the file name "
+        "(versions of one program on one side of the split); default one group per file",
+    )
     ap.add_argument("--isadetect-per-arch", type=int, default=400)
     ap.add_argument("--isadetect-skip", type=int, default=0, help="ISAdetect binaries per arch to skip first (for a held-out set)")
     ap.add_argument("--elf", action="append", default=[], help="GLOB of ELF files labelled by e_machine (e.g. hexagon-dsp-binaries)")
@@ -1018,13 +1026,17 @@ def main():
                     corpus.add("neg_rodata", group, "elf-glob-data", chunk)
 
     # 7. Explicit raw dumps.
+    raw_groups = {cls: re.compile(rx) for cls, rx in (spec.split("=", 1) for spec in a.raw_group)}
     for spec in a.raw:
         cls, pattern = spec.split("=", 1)
         for p in sorted(glob.glob(pattern)):
             if not os.path.isfile(p):
                 continue
+            name = os.path.basename(p)
+            match = raw_groups[cls].search(name) if cls in raw_groups else None
+            group = f"{cls}:{match.group(1).lower()}" if match else "file:" + name
             with open(p, "rb") as f:
-                corpus.add(cls, "file:" + os.path.basename(p), "raw", f.read())
+                corpus.add(cls, group, "raw", f.read())
 
     if a.negatives:
         add_negatives(corpus, a.data, a.negatives)

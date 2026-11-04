@@ -65,6 +65,7 @@ use std::borrow::Cow;
 use std::io::{self, Read, Write};
 
 mod adc;
+mod binhex;
 mod blz;
 mod efi;
 mod huffman;
@@ -215,6 +216,8 @@ pub enum Codec {
     /// LZMS, as WIM chunks store it; no magic. [`decode_limited`] decodes
     /// exactly `limit` bytes, the chunk size its resource states.
     Lzms,
+    /// BinHex 4.0 text (`.hqx`): the data fork of an encoded Macintosh file.
+    BinHex,
 }
 
 impl Codec {
@@ -254,6 +257,7 @@ impl Codec {
             window_bits: lzx::MIN_WINDOW_BITS,
         },
         Self::Lzms,
+        Self::BinHex,
     ];
 
     /// Short codec name, used in notes, metadata and slice transforms.
@@ -289,6 +293,7 @@ impl Codec {
             Self::XpressHuffman => "XPRESS",
             Self::LzxWim { .. } => "LZX",
             Self::Lzms => "LZMS",
+            Self::BinHex => "BinHex 4.0",
         }
     }
 
@@ -329,6 +334,7 @@ impl Codec {
             // XPRESS, WIM LZX and LZMS chunks have no magic; only WIM headers
             // name them.
             Self::XpressHuffman | Self::LzxWim { .. } | Self::Lzms => FileFormat::Raw,
+            Self::BinHex => FileFormat::BinHex,
         }
     }
 
@@ -365,6 +371,7 @@ impl Codec {
             Self::XpressHuffman => "XPRESS Huffman stream",
             Self::LzxWim { .. } => "WIM LZX chunk",
             Self::Lzms => "LZMS chunk",
+            Self::BinHex => "BinHex 4.0 file",
         }
     }
 
@@ -570,6 +577,7 @@ pub fn decode_limited(codec: Codec, data: &[u8], limit: usize) -> Result<Decoded
         Codec::XpressHuffman => xpress::decode(data, limit),
         Codec::LzxWim { window_bits } => lzx::decode_wim(data, window_bits, limit),
         Codec::Lzms => lzms::decode(data, limit),
+        Codec::BinHex => binhex::decode(data, limit),
     }
 }
 
@@ -1104,6 +1112,9 @@ pub fn sniff(data: &[u8]) -> Option<Codec> {
     }
     if LZFSE_MAGICS.iter().any(|magic| data.starts_with(*magic)) {
         return Some(Codec::Lzfse);
+    }
+    if binhex::has_banner(data) {
+        return Some(Codec::BinHex);
     }
     None
 }

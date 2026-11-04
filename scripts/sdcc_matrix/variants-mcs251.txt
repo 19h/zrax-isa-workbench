@@ -1,0 +1,12 @@
+# MCS-251 configurations for the SDCC MCS-251 downstream port
+# (github.com/gevico/sdcc-c251, built with --enable-mcs251-port; Source-mode
+# code, the port's default). Same format as variants.txt; run build.sh with
+# VARIANTS=variants-mcs251.txt and that port's sdcc first in PATH.
+mcs251   mcs251_small             sdcc  -mmcs251,--model-small
+mcs251   mcs251_large             sdcc  -mmcs251,--model-large
+mcs251   mcs251_large_stack_auto  sdcc  -mmcs251,--model-large,--stack-auto
+
+lib mcs251   mcs251    mcs251-small             --model-small
+lib mcs251   mcs251    mcs251-large             --model-large
+lib mcs251   mcs251    mcs251-small-stack-auto  --model-small,--stack-auto
+lib mcs251   mcs251    mcs251-large-stack-auto  --model-large,--stack-auto

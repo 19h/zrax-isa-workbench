@@ -340,6 +340,70 @@ fn boot_core(
     Some((boot, note))
 }
 
+/// STM8 interrupt vector table at the start of flash (0x8000): 32 four-byte
+/// entries, each the `INT` opcode 0x82 and a 24-bit handler address, entry 0
+/// the reset handler (ST RM0016, interrupt vector table; PM0044, `INT`).
+const STM8_INT: u8 = 0x82;
+const STM8_VECTORS: usize = 32;
+const STM8_VECTOR_SIZE: usize = 4;
+const STM8_FLASH_START: u32 = 0x8000;
+/// End of the largest STM8 program flash (128 KiB, up to 0x27FFF).
+const STM8_FLASH_END: u32 = 0x2_8000;
+/// Confidence of an STM8 answer from the vector table alone. The table is
+/// structure, not statistics: 32 `INT` entries into flash at offset 0 do not
+/// occur by chance, but nothing beyond the table is checked, so the answer
+/// stays below a header's 1.0. Our value.
+const STM8_VECTOR_TABLE_CONFIDENCE: f64 = 0.9;
+
+/// Whether a raw image starts with a complete STM8 interrupt vector table
+/// whose handlers lie in flash and whose reset handler lies after the table,
+/// inside the image.
+fn has_stm8_vector_table(data: &[u8]) -> bool {
+    let table = STM8_VECTORS * STM8_VECTOR_SIZE;
+    let Some(entries) = data.get(..table) else {
+        return false;
+    };
+    let mut handlers = entries.chunks_exact(STM8_VECTOR_SIZE).map(|entry| {
+        let address = u32::from_be_bytes([0, entry[1], entry[2], entry[3]]);
+        (entry[0] == STM8_INT && (STM8_FLASH_START..STM8_FLASH_END).contains(&address))
+            .then_some(address)
+    });
+    let Some(Some(reset)) = handlers.next() else {
+        return false;
+    };
+    let image_end = u64::from(STM8_FLASH_START) + data.len() as u64;
+    let reset_in_image = reset as usize >= STM8_FLASH_START as usize + table
+        && u64::from(reset) < image_end;
+    reset_in_image && handlers.all(|handler| handler.is_some())
+}
+
+/// The STM8 answer for a raw image that starts with an STM8 vector table
+/// ([`has_stm8_vector_table`]), when the code model answered otherwise or
+/// not at all. The STM8 class is trained on SDCC output, and STM8 firmware
+/// built with other compilers (COSMIC, IAR) leaves its windows short of the
+/// margin a window needs; 14 such demo programs were inconclusive
+/// (2026-11-04). `None` without the table or when the model says STM8.
+fn stm8_vector_table_core(
+    data: &[u8],
+    answer: &Result<ClassificationResult>,
+) -> Option<(ClassificationResult, Note)> {
+    if !has_stm8_vector_table(data) || answer.as_ref().is_ok_and(|r| r.isa == Isa::Stm8) {
+        return None;
+    }
+    let mut result =
+        ClassificationResult::from_heuristics(Isa::Stm8, 8, Endianness::Big, STM8_VECTOR_TABLE_CONFIDENCE);
+    result.source = ClassificationSource::Heuristic;
+    result.format = FileFormat::Raw;
+    let other = match answer {
+        Ok(r) => format!("the code model reads the image as {}", r.isa.name()),
+        Err(_) => "the code model is inconclusive".to_string(),
+    };
+    let note = Note::info(format!(
+        "STM8 interrupt vector table at offset 0 (32 INT vectors into flash) names an STM8 core; {other}"
+    ));
+    Some((result, note))
+}
+
 /// A raw input classified after one of the [`transform::CANDIDATES`].
 struct Transformed {
     transform: transform::Transform,
@@ -375,10 +439,11 @@ const MIN_TRANSFORM_CODE_SHARE: f64 = 0.14;
 /// words, so neither can restore their code (ECU calibration maps read as
 /// Z80 or 8080 code after a 2-lane interleave without this rule; fw1,
 /// 2026-11-04). NAND spare removal applies to any ISA.
-const BYTE_BUS_ISAS: [Isa; 16] = [
+const BYTE_BUS_ISAS: [Isa; 17] = [
     Isa::Z80,
     Isa::I8085,
     Isa::I8051,
+    Isa::Mcs251,
     Isa::Mcs6502,
     Isa::W65816,
     Isa::M6800,
@@ -1228,6 +1293,13 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                 Some((boot, note)) => {
                     notes.push(note);
                     Ok(boot)
+                }
+                None => r,
+            };
+            let r = match stm8_vector_table_core(data, &r) {
+                Some((stm8, note)) => {
+                    notes.push(note);
+                    Ok(stm8)
                 }
                 None => r,
             };

@@ -8,7 +8,9 @@
 #   scripts/sdcc_matrix/build.sh WORK [prep|libs|progs|dedupe|summary|check|all] [JOBS]
 #
 # Environment: ARMGEN (default ../../../isa-harvester/armgen), OUT (default
-# corpus_extra/sdcc-objects), FORCE=1 to redo finished jobs.
+# corpus_extra/sdcc-objects), VARIANTS (default variants.txt here; e.g.
+# variants-mcs251.txt with the SDCC MCS-251 port's sdcc first in PATH),
+# FORCE=1 to redo finished jobs.
 # Needs sdcc (4.6: mcs51 ds390 hc08 s08 z80 z180 ez80 r800 sm83 stm8 mos6502
 # mos65c02 ports), cc65 (cc65/ca65/ld65/ar65/od65) and python3 with pycparser.
 #
@@ -88,6 +90,7 @@ jobs="${3:-$(sysctl -n hw.ncpu 2>/dev/null || nproc)}"
 armgen="${ARMGEN:-$here/../../../isa-harvester/armgen}"
 out="${OUT:-$here/../../corpus_extra/sdcc-objects}"
 py="python3 $here/extract.py"
+variants="${VARIANTS:-$here/variants.txt}"
 force=""; [ "${FORCE:-0}" = 1 ] && force="--force"
 mkdir -p "$work" "$out"
 work="$(cd "$work" && pwd)"; out="$(cd "$out" && pwd)"; armgen="$(cd "$armgen" && pwd)"
@@ -114,7 +117,7 @@ if [ "$stage" = libs ] || [ "$stage" = all ]; then
       $py sdcc-lib --port "$port" --libdir "$libdir" --flags="$fl" --work "$work/lib" \
         --out "$out/$cls/lib_$name" --libinfo "$libinfo" --jobs "$jobs"
     fi
-  done < "$here/variants.txt"
+  done < "$variants"
 fi
 
 if [ "$stage" = progs ] || [ "$stage" = all ]; then
@@ -137,7 +140,7 @@ if [ "$stage" = progs ] || [ "$stage" = all ]; then
         done
       done
     fi
-  done < "$here/variants.txt"
+  done < "$variants"
   echo "$(wc -l < "$jobfile") program jobs"
   # slowest configs first would be nicer; shuffle so long SDCC compiles spread out
   sort -R "$jobfile" | tr '\n' '\0' | xargs -0 -P "$jobs" -n 1 sh -c 'eval "$1" || echo "job failed: $1" >&2' _

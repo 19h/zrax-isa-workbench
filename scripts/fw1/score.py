@@ -25,8 +25,10 @@ def outcome(expected, result):
         if isa != "x86":
             return "wrong"
         return "ok" if result.get("bitwidth") == 16 else "variant"
-    # The CLI writes `aarch64` where the payload JSON writes `a_arch64`.
-    if str(isa).replace("_", "") != expected.replace("_", ""):
+    # The CLI writes `aarch64` where the payload JSON writes `a_arch64`;
+    # `a|b` accepts either (`sh4|sh`: SH-4 code without SH-4-only
+    # instructions is reported as SuperH).
+    if str(isa).replace("_", "") not in [e.replace("_", "") for e in expected.split("|")]:
         return "wrong"
     if expected == "z80" and result.get("variant") == "ez80":
         return "variant"

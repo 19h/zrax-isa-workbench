@@ -2,7 +2,8 @@
 //! Cortex-M vector table at the start, an x86 reset vector at the end of a
 //! BIOS-sized image) and holds that core's code reports the boot core, also
 //! when another core's code dominates the image; a malformed marker or a
-//! marker without that core's code changes nothing.
+//! marker without that core's code changes nothing. A complete STM8
+//! interrupt vector table names an STM8 core on its own.
 
 use std::path::Path;
 use zrax::{detect_payload, ClassifierOptions, DetectionPayload, Isa};
@@ -139,4 +140,54 @@ fn x86_reset_vector_names_the_boot_core_of_a_mixed_flash_image() {
         .notes
         .iter()
         .any(|n| n.message.contains("x86 reset vector")));
+}
+
+/// An STM8 flash image: 32 interrupt vectors (`INT` 0x82 and a 24-bit
+/// handler address; entry 0 the reset handler at `reset`, the others one
+/// shared handler at 0x8100), then `body` from 0x8080 on.
+fn stm8_image(reset: u32, body: &[u8]) -> Vec<u8> {
+    let mut image = Vec::new();
+    for vector in 0..32 {
+        let handler: u32 = if vector == 0 { reset } else { 0x8100 };
+        image.push(0x82);
+        image.extend_from_slice(&handler.to_be_bytes()[1..]);
+    }
+    image.extend_from_slice(body);
+    image
+}
+
+/// Bytes the code model reads as no ISA: a fixed pseudo-random sequence.
+fn noise(len: usize) -> Vec<u8> {
+    let mut state = 0x2545_f491_u32;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state.to_le_bytes()[0]
+        })
+        .collect()
+}
+
+#[test]
+fn stm8_vector_table_names_an_stm8_core() {
+    let body = noise(4096);
+    assert!(classify(&body).is_none(), "the body alone is inconclusive");
+    let p = classify(&stm8_image(0x8200, &body)).expect("the vector table decides");
+    assert_eq!(p.primary.isa, Isa::Stm8);
+    assert!(p
+        .notes
+        .iter()
+        .any(|n| n.message.contains("STM8 interrupt vector table at offset 0")));
+}
+
+#[test]
+fn an_incomplete_stm8_vector_table_names_no_core() {
+    let body = noise(4096);
+    let mut broken = stm8_image(0x8200, &body);
+    broken[31 * 4] = 0x83; // the last entry is no INT instruction
+    assert!(!classify(&broken).is_some_and(|p| p.primary.isa == Isa::Stm8));
+    // A reset handler outside the image is no table of this image either.
+    let outside = stm8_image(0x2_0000, &body);
+    assert!(!classify(&outside).is_some_and(|p| p.primary.isa == Isa::Stm8));
 }

@@ -47,6 +47,16 @@ def read_mame_cpus(path):
     return cpus
 
 
+# Answers that meet an expected ISA besides itself: SH-4 code that uses no
+# SH-4-only instruction is reported as SuperH, which the SH-4 runs.
+BASE_ANSWERS = {"sh4": ("sh",)}
+
+
+def isa_meets(isa, expected):
+    """Whether answer `isa` meets the expected ISA `expected`."""
+    return isa == expected or isa in BASE_ANSWERS.get(expected, ())
+
+
 def no_isa(result):
     isa = result.get("isa")
     return isa in (None, "<rejected>") or str(isa).startswith("unknown")
@@ -73,7 +83,7 @@ def meets(category, name, result, embedded=None, mame_isa=None):
         if no_isa(result):
             return True
         if mame_isa:
-            return isa == mame_isa
+            return isa_meets(isa, mame_isa)
         expected = IDIOM_ISA.get(embedded, ())
         return isa in (expected if isinstance(expected, tuple) else (expected,))
     if category == "z80-as-ez80":
@@ -81,12 +91,12 @@ def meets(category, name, result, embedded=None, mame_isa=None):
         # Z80-only instruction runs on both) and no claim are all supported;
         # MAME's CPU decides where MAME names it.
         if mame_isa:
-            return isa == mame_isa
+            return isa_meets(isa, mame_isa)
         return result.get("variant") != "ez80" and (isa in ("z80", "i8085") or no_isa(result))
     if category == "8051-as-wasm":
         return isa == "i8051"
     if category == "clemency":
-        return isa != "clemency" and (not name.startswith("epr-") or isa == "sh")
+        return isa != "clemency" and (not name.startswith("epr-") or isa_meets(isa, "sh4"))
     if category == "x86-16bit":
         return isa == "x86" and result.get("bitwidth") == 16
     if category == "elf-bitwidth":

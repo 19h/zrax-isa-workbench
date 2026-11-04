@@ -163,6 +163,10 @@ pub const CLASSES: &[ClassInfo] = &[
     code!("m68k", "m68k", M68k, Big, 32),
     code!("sh", "sh", Sh, Little, 32),
     code!("sheb", "sh", Sh, Big, 32),
+    // No model data: SuperH answers become SH-4 when the code holds
+    // SH-4-only instructions (`Scan::checked_sh_variant`).
+    code!("sh4", "sh", Sh4, Little, 32),
+    code!("sh4eb", "sh", Sh4, Big, 32),
     code!("alpha", "alpha", Alpha, Little, 64),
     code!("hppa", "hppa", Parisc, Big, 32),
     code!("ia64", "ia64", Ia64, Little, 64),
@@ -206,6 +210,9 @@ pub const CLASSES: &[ClassInfo] = &[
     // 8/16-bit microcontrollers and DSPs. Endianness is that of multi-byte
     // operands (8-bit ISAs) or of the code words as stored in a ROM image.
     code!("i8051", "i8051", I8051, Big, 8),
+    // Source-mode MCS-251 code (SDCC MCS-251 port output): its own opcode
+    // map, so its own family; Binary-mode code is 8051 code.
+    code!("mcs251", "mcs251", Mcs251, Big, 16),
     code!("hc08", "hc08", Hc08, Big, 8),
     code!("hc05", "hc08", Hc05, Big, 8),
     code!("hc16", "hc16", Hc16, Big, 16),
@@ -220,6 +227,10 @@ pub const CLASSES: &[ClassInfo] = &[
     code!("i8085", "z80", I8085, Little, 8),
     code!("sm83", "z80", Z80, Little, 8, "sm83"),
     code!("z8", "z8", Z8, Big, 8),
+    // eZ8 (Z8 Encore!) code compiled with ZDS II, beside the hand-written
+    // Z8 code of the `z8` class: the eZ8 adds instructions and its compiler
+    // output is another byte distribution. Same ISA, variant `ez8`.
+    code!("ez8", "z8", Z8, Big, 8, "ez8"),
     code!("mos6502", "6502", Mcs6502, Little, 8),
     // No model data: 6502-class answers become 65816 when the code switches
     // to the 65816's native mode (`Scan::checked_6502_variant`).

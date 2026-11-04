@@ -26,12 +26,15 @@ Labels never come from zrax output. Sources and their evidence:
                  address space (UNSP_SETS): the instruction words reached
                  from the vectors (unsp_trace.py) -> unsp, grouped by ROM family;
                  64 KiB blocks of them with no traced instruction -> neg_media
-                 (fw1-mame-unsp-data, same group)
+                 (fw1-mame-unsp-data, same group); a ROM without a vector table
+                 gives only such blocks and is expected to give no ISA
   fw1-mame       ROMs whose SHA-1 MAME lists in a graphics or sound region
                  (mame_match.tsv from mame_regions.py) -> neg_pixels (graphics)
                  or neg_media (sound), grouped by MAME set
   fw1-optionrom  PCI option ROM images whose PCI data structure says x86 -> x86_16
                  (held out: a test of the real-mode class, not training data)
+  fw1-realos     raw images that link Fujitsu's REALOS/FR (its banner) -> fr30,
+                 the 4 KiB blocks holding an FR RET, grouped by image family
   fw1-hex        Intel HEX files whose names name a Z8 program -> z8
 
 XTIDE Universal BIOS ROMs and PCI option ROMs are left out: they are the
@@ -183,6 +186,41 @@ def pil_headers(rows, fw):
     return index
 
 
+# An executable PIL segment is labelled code only if its bytes show code:
+# one that is at least PIL_FILL_SHARE fill (its two most common 32-bit words)
+# with under PIL_MIN_CONTENT_BYTES of other bytes is not. In the fw1 set
+# these are four `cdsp.b03` segments (zeros and 0x7F7F7F7F around a table and
+# the string "face_process", 196-236 B) and `wpss.b03` (104 B of Hexagon code
+# before 998 Hexagon NOP packets, less than a window reads once the fill is
+# skipped as padding); 2026-11-04. Segments with less fill keep their label:
+# 220-byte segments holding 192 B of code read as Hexagon, and `adsp.b02`
+# (97% fill) holds 90 KB of code. Our rule.
+PIL_FILL_SHARE = 0.9
+PIL_MIN_CONTENT_BYTES = 1024
+
+
+def is_fill_segment(data):
+    """Whether a segment is fill with too little other content to show code
+    (PIL_FILL_SHARE, PIL_MIN_CONTENT_BYTES)."""
+    count = len(data) // 4
+    if count == 0:
+        return True
+    words = struct.unpack_from(f"<{count}I", data)
+    fill = sum(n for _, n in collections.Counter(words).most_common(2))
+    content_bytes = 4 * (count - fill)
+    return fill >= PIL_FILL_SHARE * count and content_bytes < PIL_MIN_CONTENT_BYTES
+
+
+# Fujitsu's real-time OS for its FR CPU family: an image that links it runs
+# on an FR core. In the fw1 set, raw images with this banner are Nikon
+# camera firmware (D300S, D3S, D90, D3100) and `B3000111.bin` and
+# `IMG_LOKI-212/213.bin`, 7 to 16 MiB each (2026-11-04). FR30's only other
+# samples are GCC output, and Softune-built firmware read as big-endian
+# SuperH in a quarter of its windows.
+REALOS_FR_BANNER = b"REALOS/FR is Realtime OS for FR Family"
+REALOS_MIN_BYTES = 1 << 20
+
+
 # NAOMI BIOS images below this `rts` density are not taken as SH-4 code;
 # ARM code measures under 25 per MiB, the BIOS images 700 and more.
 SH_MIN_RTS_PER_MIB = 300
@@ -222,6 +260,10 @@ def has_return(cls, block):
         return any(h == 0x4770 or h & 0xFF00 == 0xBD00 for h in halves)
     if cls == "xtensa":
         return any(block.find(p) >= 0 for p in (b"\x0d\xf0", b"\x1d\xf0", b"\x80\x00\x00", b"\x90\x00\x00"))
+    if cls == "fr30":
+        halves = struct.unpack_from(f">{len(block) // 2}H", block)
+        # RET and RET:D (FR30 instruction set: 1001 0111 0010 0000, 1001 1111 0010 0000)
+        return any(h in (0x9720, 0x9F20) for h in halves)
     if cls in ("micromipsel", "micromips"):
         halves = struct.unpack_from(("<" if cls == "micromipsel" else ">") + f"{len(block) // 2}H", block)
         # jr16 ra, jrc ra, jraddiusp
@@ -554,6 +596,8 @@ def file_label(row, fw_dir, pil, smooth, bc, mame=None):
             if (flags >> 24) & 7 == 2:
                 return None  # hash segment: signatures and certificates, opaque
             data = read()
+            if flags & 1 and is_fill_segment(data):
+                return None  # executable, but fill: no code to label
             if flags & 1:
                 # Little-endian: so are all 300 PIL headers in fw1 (2026-11-04).
                 cls = bc.arm_mode([data], True) if machine == 40 else EM_CLASS.get(machine)
@@ -573,6 +617,12 @@ def file_label(row, fw_dir, pil, smooth, bc, mame=None):
     region = mame.get(row["sha"]) if mame else None
     if region and region["set"] in UNSP_SETS and region["region"] in UNSP_REGIONS:
         unsp_group = "mame-unsp:" + UNSP_SETS[region["set"]]
+        if not unsp_samples(path)[0]:
+            # No vector table, so no code is established (MAME's `pokermor`
+            # ROM holds pixel data at the vectors): its blocks are data, and
+            # the file is expected to give no ISA.
+            return FileLabel(UNSP_DATA_CLASS, unsp_group, "fw1-mame-unsp", "mame-unsp-data", lambda: b"",
+                             data_blocks=lambda: unsp_samples(path)[1])
         return FileLabel("unsp", unsp_group, "fw1-mame-unsp", "mame-unsp", lambda: unsp_samples(path)[0],
                          part_size=UNSP_PART_BYTES, data_blocks=lambda: unsp_samples(path)[1])
     if region and region["kind"] == "code" and region["set"] in MAME_CODE_SETS:
@@ -609,6 +659,12 @@ def file_label(row, fw_dir, pil, smooth, bc, mame=None):
         if mcs96_register_loads_per_kib(data) >= MCS96_MIN_LOADS_PER_KIB:
             ecu_group = "fw1:ecu96-" + re.split(r"[_\-. ]", family(name))[0]
             return FileLabel("mcs96", ecu_group, "fw1-ecu96", "ecu96", lambda: data)
+    if size >= REALOS_MIN_BYTES:
+        data = read()
+        if REALOS_FR_BANNER in data:
+            # The name's first token: the camera model or image family.
+            realos_group = "fw1:realos-" + re.split(r"[_\-. ]", name)[0].lower()
+            return FileLabel("fr30", realos_group, "fw1-realos", "realos-fr", lambda: code_blocks("fr30", data))
     if re.match(r"swfl_.*\.159_010_001$", name) or re.match(r"board(-2)?\.bin", name):
         data = read()
         # Two VW blocks of this type are TriCore program flash (3.4 MB, 3.3
@@ -742,7 +798,7 @@ def main():
         if label and not label.held_out:
             data = label.load()
             part_size = label.part_size or max(len(data), 1)
-            for at in range(0, max(len(data), 1), part_size):
+            for at in range(0, len(data), part_size):
                 add(label.cls, label.group, label.source, data[at:at + part_size])
             for block in label.data_blocks() if label.data_blocks else ():
                 add(UNSP_DATA_CLASS, label.group, label.source + "-data", block)

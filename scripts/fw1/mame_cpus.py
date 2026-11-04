@@ -46,11 +46,12 @@ CPU_ISA = {
     "M6502": "mcs6502", "M6504": "mcs6502", "M6510": "mcs6502", "ELAN_EP3A19A_SOC": "mcs6502",
     "W65816": "w65816", "G65816": "w65816",
     "I8031": "i8051", "I8051": "i8051", "I8052": "i8051", "I80C31": "i8051", "I80C51": "i8051",
-    # The model has no SH-4 class: SH-4 is a SuperH variant (lib.rs
-    # `base_isa`), and the code model's answer for it is `sh`. SH7750
-    # (Aristocrat MK6) and SH7091 (NAOMI) are MAME's SH-4 device types
-    # (devices/cpu/sh/sh4.h).
-    "SH7032": "sh", "SH7043A": "sh", "SH7604": "sh", "SH4": "sh", "SH7750": "sh", "SH7091": "sh",
+    # SH7750 (Aristocrat MK6) and SH7091 (NAOMI) are MAME's SH-4 device
+    # types (devices/cpu/sh/sh4.h). The code model reports SH-4 only for code
+    # with SH-4-only instructions and SuperH (`sh`) otherwise, so checks
+    # accept `sh` for an `sh4` CPU (`verify_findings.isa_meets`), never `sh4`
+    # for an SH-2.
+    "SH7032": "sh", "SH7043A": "sh", "SH7604": "sh", "SH4": "sh4", "SH7750": "sh4", "SH7091": "sh4",
     "H83002": "h8300", "H83044": "h8300", "H8S2655": "h8300",
     "SPG24X": "unsp", "SPG28X": "unsp", "SPG2XX_128": "unsp",
     "GPL16218B": "unsp", "GPL16220A": "unsp", "GPL16230A": "unsp", "GPL16238B": "unsp",

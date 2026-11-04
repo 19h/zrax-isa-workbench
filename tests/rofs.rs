@@ -907,6 +907,45 @@ fn squashfs_lists_recognized_members_with_stored_offsets_and_decoded_ranges() {
     assert_eq!(tiny.isa, Isa::X86_64);
 }
 
+/// A RAUC bundle around `image`: zero padding to 4 KiB, a CMS signature (a
+/// DER `ContentInfo` SEQUENCE with the signedData OID and filler), and the
+/// signature's size as a big-endian u64.
+fn rauc_bundle(image: &[u8]) -> Vec<u8> {
+    let mut bundle = image.to_vec();
+    bundle.resize(image.len().div_ceil(4096) * 4096, 0);
+    let mut content = vec![0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x07, 0x02];
+    content.extend_from_slice(&[0x5A; 300]);
+    let length = u16::try_from(content.len()).expect("short signature");
+    let mut signature = vec![0x30, 0x82];
+    signature.extend_from_slice(&length.to_be_bytes());
+    signature.extend_from_slice(&content);
+    bundle.extend_from_slice(&signature);
+    bundle.extend_from_slice(&(signature.len() as u64).to_be_bytes());
+    bundle
+}
+
+#[test]
+fn squashfs_in_a_rauc_bundle_is_enumerated_with_its_signature_noted() {
+    let fixture = rich_zlib();
+    let bundle = rauc_bundle(&fixture.image);
+    let p = classify(&bundle);
+    assert_eq!(p.format.format, FileFormat::Squashfs);
+    assert_eq!(p.primary.isa, Isa::X86_64, "{:?}", p.notes);
+    assert!(has_note(&p, "RAUC bundle: CMS signature of 315 B"));
+    assert!(has_note(&p, "(not verified)"));
+
+    let mut marked = bundle.clone();
+    marked.extend_from_slice(b"FEOF");
+    let p = classify(&marked);
+    assert!(has_note(&p, "4 B `FEOF` follow the size field"));
+
+    // A size field that does not match the DER length is no signature.
+    let mut wrong = bundle;
+    let last = wrong.len() - 1;
+    wrong[last] ^= 1;
+    assert!(error_text(&wrong).contains("after the SquashFS image"));
+}
+
 #[test]
 fn squashfs_stored_blocks_and_fragments_keep_file_coordinates() {
     let spec = sq_image(GZIP, None);

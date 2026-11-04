@@ -93,7 +93,7 @@ therefore accepted only when:
   matched rearranged structured data;
 - for a byte swap or lane interleave, it names a CPU that fetches from a
   16- or 32-bit memory bus (`BYTE_BUS_ISAS` lists the exceptions: Z80,
-  8080/8085, 8051, 6502/65816, 6800/6809, 68HC05/08/11, MELPS 740, C39, Z8,
+  8080/8085, 8051, MCS-251, 6502/65816, 6800/6809, 68HC05/08/11, MELPS 740, C39, Z8,
   ST7, STM8, SPC700). Those transforms undo how a wide bus stores words, and
   a byte-wide program memory is never stored that way; ECU calibration maps
   read as Z80 or 8080 code at 0.99 after a 2-lane interleave without this

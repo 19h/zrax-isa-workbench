@@ -215,6 +215,9 @@ pub enum Isa {
     // 8/16-bit microcontrollers and DSPs (mostly identified from raw code)
     /// Intel MCS-51 (8051/8052, 80C390, 80C51MX)
     I8051,
+    /// Intel MCS-251 (80251, 8x930) in Source mode, its own opcode map; in
+    /// Binary mode it runs MCS-51 code, which is reported as `I8051`
+    Mcs251,
     /// Philips/NXP 80C51XA
     Xa,
     /// Intel MCS-96 (8096, 80196, Ford EEC 8061/8065)
@@ -376,6 +379,7 @@ impl Isa {
             Isa::Ebc => "EFI Byte Code",
             Isa::CellSpu => "Cell SPU",
             Isa::I8051 => "Intel 8051 (MCS-51)",
+            Isa::Mcs251 => "Intel MCS-251",
             Isa::Xa => "Philips 80C51XA",
             Isa::Mcs96 => "Intel MCS-96",
             Isa::M6800 => "Motorola 6800/6801",
@@ -488,6 +492,7 @@ impl Isa {
             | Isa::H8300
             | Isa::M16c
             | Isa::TiC5400
+            | Isa::Mcs251
             | Isa::St9 => 16,
             Isa::M6809 => 8,
 
@@ -565,6 +570,7 @@ impl Isa {
                 | Isa::K78k0r
                 | Isa::Rh850
                 | Isa::I8051
+                | Isa::Mcs251
                 | Isa::I8085
                 | Isa::Xa
                 | Isa::Mcs96
@@ -838,6 +844,8 @@ pub enum FileFormat {
     Bzip2,
     /// lzop file
     Lzop,
+    /// BinHex 4.0 text-encoded Macintosh file (`.hqx`)
+    BinHex,
     /// Apple LZFSE/LZVN block stream
     Lzfse,
     /// Apple kernelcache LZSS/LZVN image (`complzss`)
@@ -1395,6 +1403,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Zstd => write!(f, "Zstandard"),
             FileFormat::Bzip2 => write!(f, "bzip2"),
             FileFormat::Lzop => write!(f, "lzop"),
+            FileFormat::BinHex => write!(f, "BinHex 4.0"),
             FileFormat::Lzfse => write!(f, "LZFSE"),
             FileFormat::Lzss => write!(f, "Apple LZSS"),
             // Automotive

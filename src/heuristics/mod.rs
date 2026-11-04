@@ -21,6 +21,7 @@
 //! `scripts/build_corpus.py` + `examples/train_model.rs`.
 
 pub mod model;
+mod sh4;
 mod w65816;
 mod z80;
 
@@ -386,6 +387,37 @@ impl<'m> Scan<'m> {
         }
     }
 
+    /// The class to report for `decision`: the SH-4 when the decision is
+    /// SuperH and its code windows hold SH-4-only instructions, at least
+    /// [`MIN_SH4_ONLY_INSTRUCTIONS`] and [`MIN_SH4_ONLY_PER_MILLE`], in the
+    /// decision's byte order. SH-4
+    /// code reads as SuperH code, which the SH-4 runs; without those
+    /// instructions the bytes do not tell it from SH-2 or SH-3 code.
+    fn checked_sh_variant(&self, data: &[u8], decision: &Decision) -> &'static ClassInfo {
+        let (le, sh4) = match decision.info.name {
+            "sh" => (true, "sh4"),
+            "sheb" => (false, "sh4eb"),
+            _ => return decision.info,
+        };
+        let count = sh4::sh4_only_count(&self.family_code(data, decision.info.family), le);
+        let is_sh4 = count.sh4_only >= MIN_SH4_ONLY_INSTRUCTIONS
+            && count.per_mille() >= MIN_SH4_ONLY_PER_MILLE;
+        match class_info(sh4) {
+            Some(info) if is_sh4 => info,
+            _ => decision.info,
+        }
+    }
+
+    /// The class to report for `decision`, after the variant checks the
+    /// byte model cannot make: 65816 over 6502, SH-4 over SuperH.
+    fn reported_class(&self, data: &[u8], decision: &Decision) -> &'static ClassInfo {
+        match decision.info.family {
+            "6502" => self.checked_6502_variant(data, decision),
+            "sh" => self.checked_sh_variant(data, decision),
+            _ => decision.info,
+        }
+    }
+
     /// The bytes of the code windows won by classes of `family`, in order.
     fn family_code(&self, data: &[u8], family: &str) -> Vec<u8> {
         self.code_windows()
@@ -430,6 +462,16 @@ const MIN_PREFIX_GROUP_SHARE_FOR_Z80: f64 = 0.002;
 /// 42-168 (2.7-35.7 per thousand).
 const MIN_NATIVE_MODE_INSTRUCTIONS: u32 = 8;
 const MIN_NATIVE_MODE_PER_MILLE: f64 = 1.0;
+
+/// Least SH-4-only instructions (see `sh4.rs`) in the SuperH family's code
+/// windows, and least of them per thousand instructions, for an SH-4
+/// answer. In MAME-identified fw1 ROMs (2026-11-04), SH-2 code windows
+/// (SH7604, SH7032, SH7043A) hold 0 to 2 (at most 0.10 per thousand) and
+/// Sega NAOMI BIOS ROMs 121 to 1,260 (3.6 to 5.6 per thousand); each GCC
+/// SuperH training sample holds at most 2, which in a small program's code
+/// windows can pass 1 per thousand.
+const MIN_SH4_ONLY_INSTRUCTIONS: u32 = 8;
+const MIN_SH4_ONLY_PER_MILLE: f64 = 1.0;
 
 /// `class`, or the base variant it extends when the evidence does not
 /// clearly favor the superset.
@@ -850,7 +892,7 @@ fn analyze_reading_with_model(
         {
             Err(sparse)
         }
-        Some(d) => result_for(scan.checked_6502_variant(data, &d), d.confidence)
+        Some(d) => result_for(scan.reported_class(data, &d), d.confidence)
             .ok_or_else(|| inconclusive(0.0))
             .map(|mut r| {
                 if options.detect_extensions {

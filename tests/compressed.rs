@@ -268,3 +268,84 @@ fn byte_mutations_never_panic() {
         }
     }
 }
+
+/// CRC-16/XMODEM (polynomial 0x1021, initial value 0), BinHex's CRC.
+fn crc16_xmodem(bytes: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for &byte in bytes {
+        crc ^= u16::from(byte) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+/// A BinHex 4.0 file whose data fork is `data_fork` (RFC 1741, appendix):
+/// the banner line, then between colons the 6-bit text of the stream
+/// header (name length, name, version 0, type, creator, Finder flags, data
+/// and resource fork lengths, CRC), the data fork and its CRC, and an empty
+/// resource fork's CRC. Bytes 0x90 are escaped as `90 00`; no runs are
+/// folded.
+fn binhex(data_fork: &[u8]) -> Vec<u8> {
+    const ALPHABET: &[u8; 64] =
+        b"!\"#$%&'()*+,-012345689@ABCDEFGHIJKLMNPQRSTUVXYZ[`abcdefhijklmpqr";
+    let name = b"payload.elf";
+    let mut header = vec![u8::try_from(name.len()).expect("short name")];
+    header.extend_from_slice(name);
+    header.push(0); // version
+    header.extend_from_slice(b"BINAzrax"); // file type and creator
+    header.extend_from_slice(&[0, 0]); // Finder flags
+    header.extend_from_slice(&u32::try_from(data_fork.len()).expect("small").to_be_bytes());
+    header.extend_from_slice(&0u32.to_be_bytes()); // resource fork length
+    let mut stream = header.clone();
+    stream.extend_from_slice(&crc16_xmodem(&header).to_be_bytes());
+    stream.extend_from_slice(data_fork);
+    stream.extend_from_slice(&crc16_xmodem(data_fork).to_be_bytes());
+    stream.extend_from_slice(&crc16_xmodem(&[]).to_be_bytes());
+    let packed: Vec<u8> = stream
+        .iter()
+        .flat_map(|&b| if b == 0x90 { vec![0x90, 0x00] } else { vec![b] })
+        .collect();
+
+    let mut text = b"(This file must be converted with BinHex 4.0)\r\r:".to_vec();
+    let mut bits = 0u32;
+    let mut count = 0u32;
+    for (i, &byte) in packed.iter().enumerate() {
+        bits = (bits << 8 | u32::from(byte)) & 0xFFFF;
+        count += 8;
+        while count >= 6 {
+            count -= 6;
+            text.push(ALPHABET[((bits >> count) & 0x3F) as usize]);
+        }
+        if i % 48 == 47 {
+            text.push(b'\r'); // 64-character lines, as BinHex writes them
+        }
+    }
+    if count > 0 {
+        text.push(ALPHABET[((bits << (6 - count)) & 0x3F) as usize]);
+    }
+    text.extend_from_slice(b":\r");
+    text
+}
+
+#[test]
+fn binhex_text_reports_its_format_and_the_data_fork_isa() {
+    let text = binhex(&fixture("payload.elf"));
+    let payload = detect_payload(&text, &ClassifierOptions::new()).expect("BinHex decodes");
+    assert_eq!(payload.format.format, FileFormat::BinHex);
+    assert_eq!(payload.primary.isa, Isa::X86_64);
+    assert!(payload
+        .notes
+        .iter()
+        .any(|n| n.message.contains("BinHex CRC-16 of header and forks verified")));
+    // One changed data character breaks a CRC: an error, not a raw guess.
+    let mut corrupt = text.clone();
+    let middle = corrupt.len() / 2;
+    corrupt[middle] = if corrupt[middle] == b'!' { b'"' } else { b'!' };
+    assert!(detect_payload(&corrupt, &ClassifierOptions::new()).is_err());
+}

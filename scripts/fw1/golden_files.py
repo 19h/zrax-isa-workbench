@@ -20,7 +20,13 @@ CLASS_ISA = {
     "hexagon": "hexagon", "aarch64": "a_arch64", "arm": "arm", "thumb": "arm", "armeb": "arm",
     "thumbeb": "arm", "xtensa": "xtensa", "z80": "z80", "sh": "sh", "i8051": "i8051", "x86_16": "x86_16",
     "z8": "z8", "msp430": "msp430", "mipsel": "mips", "i8085": "i8085", "unsp": "unsp", "mcs96": "mcs96",
+    "fr30": "fr30",
 }
+
+
+# Golden labels whose expected answer is not their class's: the NAOMI BIOS
+# runs on an SH-4 (training class `sh`), reported as SH-4 or as SuperH.
+LABEL_ISA = {"naomi-bios": "sh4|sh"}
 
 
 def load_fw1_corpus():
@@ -54,7 +60,7 @@ def main():
         if label is None:
             continue
         group_split = "test" if label.held_out else split.get((label.cls, label.group), "absent")
-        expect = "none" if label.cls.startswith("neg_") else CLASS_ISA.get(label.cls)
+        expect = "none" if label.cls.startswith("neg_") else LABEL_ISA.get(label.label, CLASS_ISA.get(label.cls))
         if expect is None:
             continue
         print(f"{row['sha']}\t{group_split}\t{expect}\t{label.label}\t{row['name']}")
