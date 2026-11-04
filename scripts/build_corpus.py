@@ -181,6 +181,11 @@ def elf_class(machine, is_le, is_64, flags):
         return "f2mc16"
     if m == 162:
         return "r32c"
+    if m == 0x1040:
+        # Unregistered; the toolchain of these files calls the architecture
+        # `ipp` (`rtld-elf/ipp`, `R_IPP_*` relocations, `ipp-unknown-freebsd`):
+        # Panasonic UniPhier IPP, big-endian 16-bit parcels.
+        return "ipp" if not is_le else None
     return None
 
 

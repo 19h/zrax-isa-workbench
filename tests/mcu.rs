@@ -1,9 +1,9 @@
 //! MCU update images: UF2 block files (family IDs, reassembly, file
 //! containers, RP2350 workaround blocks), STM32 DfuSe files, Silicon Labs
-//! GBL v3 tag streams (plain, LZ4, LZMA, encrypted) and Cypress `.cyacd` /
-//! `.cyacd2` text, with checksums, truncation and mutation sweeps. Fixtures
-//! are built here from the documented wire layouts around compiled code in
-//! `tests/fixtures/mcu`.
+//! GBL v3 tag streams (plain, LZ4, LZMA, encrypted), Cypress `.cyacd` /
+//! `.cyacd2` text and Linux ihex2fw records, with checksums, truncation and
+//! mutation sweeps. Fixtures are built here from the documented wire
+//! layouts around compiled code in `tests/fixtures/mcu`.
 
 use zrax::formats::checksum::{crc32, crc32_update};
 use zrax::formats::container::Kind;
@@ -1046,4 +1046,88 @@ fn cyacd_truncation_is_only_accepted_at_row_boundaries() {
     let rows = cyacd2(&["@APPINFO:0x0,0x20", "@EIV:"], &[(0, &code[..16])]);
     assert_eq!(mcu_layout(&rows), Some(Layout::Cyacd2));
     sweep(&rows, Layout::Cyacd2);
+}
+
+// Linux ihex2fw (Linux v6.11 `include/linux/ihex.h`): a big-endian load
+// address (4) and data length (2), the data and zero padding to 4 bytes per
+// record; six zero bytes, a zero-length record at address 0, end the file.
+
+fn ihex2fw(records: &[(u32, &[u8])]) -> Vec<u8> {
+    let mut file = Vec::new();
+    for (address, data) in records {
+        file.extend_from_slice(&address.to_be_bytes());
+        file.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        file.extend_from_slice(data);
+        file.resize(file.len() + (4 - file.len() % 4) % 4, 0);
+    }
+    file.extend_from_slice(&[0; 6]);
+    file
+}
+
+/// Thumb code in 64-byte records at 0x0800_0000, with its last record
+/// stored first, so the file holds two address-contiguous runs.
+fn ihex2fw_thumb() -> (Vec<u8>, Vec<u8>) {
+    let code = thumb()[..1024].to_vec();
+    let mut records: Vec<(u32, &[u8])> = code
+        .chunks(64)
+        .enumerate()
+        .map(|(i, chunk)| (0x0800_0000 + 64 * i as u32, chunk))
+        .collect();
+    let last = records.pop().expect("records");
+    records.insert(0, last);
+    (ihex2fw(&records), code)
+}
+
+#[test]
+fn ihex2fw_records_are_load_sections_classified_by_the_code_model() {
+    let (file, code) = ihex2fw_thumb();
+    assert_eq!(mcu_layout(&file), Some(Layout::Ihex2fw));
+    let c = mcu::parse_container(&file, Layout::Ihex2fw).expect("valid records");
+    assert_eq!(c.sections.len(), 2);
+    assert_eq!(c.sections[0].address, 0x0800_03c0);
+    assert_eq!((c.sections[0].offset, c.sections[0].data.len()), (6, 64));
+    assert_eq!(c.sections[1].address, 0x0800_0000);
+    assert_eq!(&c.sections[1].data[..], &code[..960]);
+    let p = classify(&file);
+    assert_eq!(p.format.format, FileFormat::Ihex2fw);
+    assert_eq!(p.primary.isa, Isa::Arm);
+    assert_ne!(p.primary.source, ClassificationSource::FileFormat);
+    assert!(has_note(
+        &p,
+        "16 records, 1024 B; addresses are the Intel HEX load addresses and name no ISA"
+    ));
+    assert_eq!(metadata_text(&p, "ihex2fw_records"), "16");
+}
+
+#[test]
+fn ihex2fw_needs_every_record_its_padding_and_the_end_record() {
+    let (file, _) = ihex2fw_thumb();
+    for end in 0..file.len() {
+        assert_eq!(mcu_layout(&file[..end]), None, "prefix {end}");
+    }
+    let code = thumb();
+    let odd = ihex2fw(&[(0, &code[..3]), (0x10, &code[3..6])]);
+    assert_eq!(mcu_layout(&odd), Some(Layout::Ihex2fw));
+    let mut padding = odd.clone();
+    padding[9] = 1;
+    assert_eq!(mcu_layout(&padding), None, "padding must be zero");
+    let mut end_address = odd.clone();
+    let at = end_address.len() - 6;
+    end_address[at] = 1;
+    assert_eq!(
+        mcu_layout(&end_address),
+        None,
+        "the end record is all zeros"
+    );
+    let mut longer = odd.clone();
+    longer.extend_from_slice(&[0; 4]);
+    assert_eq!(mcu_layout(&longer), None, "the end record ends the file");
+    let overlapping = ihex2fw(&[(0, &code[..8]), (4, &code[8..12])]);
+    assert_eq!(mcu_layout(&overlapping), None);
+    assert!(mcu::parse_container(&overlapping, Layout::Ihex2fw)
+        .unwrap_err()
+        .to_string()
+        .contains("Duplicate ihex2fw load address"));
+    assert_eq!(mcu_layout(&ihex2fw(&[(0, &code[..8])])), None, "one record");
+    sweep(&odd, Layout::Ihex2fw);
 }

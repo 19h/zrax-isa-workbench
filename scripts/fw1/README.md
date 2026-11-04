@@ -22,13 +22,17 @@ Most scripts read and write tables in the current directory. Run them from
 
 ## Rebuild the shipped model
 
-`src/heuristics/model.bin` is `ship22-all` (2026-11-04): the base corpus
-(`corpus-base7`), the fw1 golden set (`corpus-fw1v22`), transform-augmented
+`src/heuristics/model.bin` is `ship23-all` (2026-11-04): the base corpus
+(`corpus-base7`), the fw1 golden set (`corpus-fw1v23`), transform-augmented
 fw1 negatives (`corpus-aug14`), mined hard negatives (`corpus-hardU6`),
 68HC11 code (`corpus-hc11x`), byte lanes of 68000 code (`corpus-lanes`),
 hand-written 68000 code (`corpus-m68kx`), Z8 and eZ8 code from the submitted
-Z8 archive (`corpus-z8x`) and SDCC MCS-251 output (`corpus-mcs251x`), all
-splits.
+Z8 archive (`corpus-z8x`), SDCC MCS-251 output (`corpus-mcs251x`) and
+Panasonic UniPhier IPP code from the 0x1040 ELF files of the submitted IPP
+samples (`corpus-ippx`), all splits.
+
+- `corpus-fw1v23` is `corpus-fw1v22` with one sample more: the MCS-251
+  records of the Edgeport `down2.fw` (`ihex2fw-mcs251`, train split).
 
 - `corpus-base7` is `corpus-base6` rebuilt after the ARM labelling fix
   (`arm_class` in `build_corpus.py`): 19 rows of 18 idaref and radare2 ELF
@@ -92,6 +96,8 @@ PATH="$S/bin:$PATH" SDCC_SHARE="$S/share/sdcc" VARIANTS=$R/scripts/sdcc_matrix/v
   OUT="$E/mcs251-objects" scripts/sdcc_matrix/build.sh "$E/mcs251-work/matrix" all 8
 #     Z8 and eZ8 programs: the submitted Z8 archive, classic Z8 files (Z8__*) in raw-z8/z8,
 #     Z8 Encore! files (eZ8_Encore__*) in raw-z8/ez8
+#     UniPhier IPP code: the 212 ELF files with e_machine 0x1040 of the submitted IPP samples
+#     (IPP=the sample folder; third-party firmware, read in place, never copied into the repo)
 #     Motorola 68000 code the same way, into raw-asm/ (not raw-ext/: step 2 must not take it);
 #     REPOS from `gh search repos QUERY --language=Assembly --limit 100` for 68000, 68000 assembly,
 #     mc68000, m68k, 68k, sega genesis, genesis assembly, megadrive, mega drive, neogeo, neo geo,
@@ -133,9 +139,9 @@ python3 -I scripts/fw1/holdout.py "$C/corpus-ds2h" "$C/corpus-base7"
 
 # 4. fw1 golden set and its transform-augmented negatives
 python3 -I scripts/fw1/fw1_corpus.py --repo . --fw "$FW" --work reports/fw1 \
-  --out "$C/corpus-fw1v22" --exclude-ids "$C/corpus-base2/manifest.jsonl"
+  --out "$C/corpus-fw1v23" --exclude-ids "$C/corpus-base2/manifest.jsonl"
 python3 -I scripts/fw1/aug_neg.py --sources fw1-cal,fw1-table16,fw1-amdgpu-ucode,fw1-pil-data \
-  "$C/corpus-aug14" "$C/corpus-fw1v22"
+  "$C/corpus-aug14" "$C/corpus-fw1v23"
 #    68HC11 samples from step 0b as their own corpus (build_corpus.py adds its default
 #    sources too: keep the hc11 rows that are not already in corpus-base7)
 mkdir -p "$C/none" && python3 -I scripts/build_corpus.py --out "$C/corpus-hc11x" --armgen "$C/none" \
@@ -225,24 +231,43 @@ EOF
 python3 -I scripts/fw1/merge.py "$C/corpus-ship19pre" "$C/corpus-base6" "$C/corpus-fw1v18" "$C/corpus-aug14" \
   "$C/corpus-hardU" "$C/corpus-hc11x"
 python3 -I scripts/fw1/lane_negatives.py "$C/corpus-ship19pre" "$C/corpus-lanes" m68k
-python3 -I scripts/fw1/merge.py "$C/corpus-ship22" "$C/corpus-base7" "$C/corpus-fw1v22" "$C/corpus-aug14" \
-  "$C/corpus-hardU" "$C/corpus-hc11x" "$C/corpus-lanes" "$C/corpus-m68kx" "$C/corpus-z8x" "$C/corpus-mcs251x"
+#    IPP code from the 0x1040 ELF files, one group per file, kept to its class as above
+python3 -I scripts/build_corpus.py --out "$C/corpus-ippx" --armgen "$C/none" --isadetect-per-arch 0 \
+  --negatives 0 --elf "$IPP/elf-0x1040/*"
+python3 -I - <<'EOF'
+import json, os, shutil
+C, base = "corpus_extra/fw1/corpus-ippx", "corpus_extra/fw1/corpus-base7/manifest.jsonl"
+known = {json.loads(line)["id"] for line in open(base)}
+rows = [r for r in map(json.loads, open(f"{C}/manifest.jsonl")) if r["class"] == "ipp" and r["id"] not in known]
+open(f"{C}/manifest.jsonl", "w").writelines(json.dumps(r) + "\n" for r in rows)
+for cls in os.listdir(f"{C}/samples"):
+    if cls != "ipp":
+        shutil.rmtree(f"{C}/samples/{cls}")
+EOF
+python3 -I scripts/fw1/merge.py "$C/corpus-ship23" "$C/corpus-base7" "$C/corpus-fw1v23" "$C/corpus-aug14" \
+  "$C/corpus-hardU6" "$C/corpus-hc11x" "$C/corpus-lanes" "$C/corpus-m68kx" "$C/corpus-z8x" "$C/corpus-mcs251x" \
+  "$C/corpus-ippx"
 
 # 6. Held-out model and sample-level evaluation
-$T/train_model --corpus "$C/corpus-ship22" --split train --out $M/ship22-train.bin
-for c in base7 fw1v22 ds2h m68kx z8x mcs251x; do
-  $T/eval --corpus "$C/corpus-$c" --model $M/ship22-train.bin > reports/fw1/eval-ship22-train-$c.txt
+$T/train_model --corpus "$C/corpus-ship23" --split train --out $M/ship23-train.bin
+for c in base7 fw1v23 ds2h m68kx z8x mcs251x ippx; do
+  $T/eval --corpus "$C/corpus-$c" --model $M/ship23-train.bin > reports/fw1/eval-ship23-train-$c.txt
 done
 
 # 7. File-level evaluation through the CLI with the held-out model
+#    The held-out CLI is built in a worktree (a copy of the working tree), so the
+#    repository's own model.bin is never replaced
 (cd reports/fw1 &&
-  python3 -I "$R/scripts/fw1/golden_files.py" "$R" "$FW" "$C/corpus-fw1v22" > golden.tsv &&
-  awk -F'\t' 'NR>1 && $2=="test"{print $1}' golden.tsv > golden-test.txt)
-cp $M/ship22-train.bin src/heuristics/model.bin
-cargo build --release --locked --features cli --bin zrax && cp target/release/zrax reports/fw1/bin/zrax-ship22-train
+  python3 -I "$R/scripts/fw1/golden_files.py" "$R" "$FW" "$C/corpus-fw1v23" > golden23.tsv &&
+  awk -F'\t' 'NR>1 && $2=="test"{print $1}' golden23.tsv > golden23-test.txt)
+[ -d reports/wt-verify ] || git worktree add --detach reports/wt-verify HEAD
+git ls-files -z --cached --others --exclude-standard | rsync -a --from0 --files-from=- ./ reports/wt-verify/
+cp $M/ship23-train.bin reports/wt-verify/src/heuristics/model.bin
+(cd reports/wt-verify && cargo build --release --locked --features cli --bin zrax) &&
+  cp reports/wt-verify/target/release/zrax reports/fw1/bin/zrax-ship23-train
 (cd reports/fw1 &&
-  "$R/scripts/fw1/runlist.sh" "$PWD/bin/zrax-ship22-train" "$FW" "$PWD/golden-test.txt" "$PWD/gold-ship22t.jsonl" &&
-  python3 -I "$R/scripts/fw1/score.py" test gold-ship22t.jsonl)
+  "$R/scripts/fw1/runlist.sh" "$PWD/bin/zrax-ship23-train" "$FW" "$PWD/golden23-test.txt" "$PWD/gold-ship23t.jsonl" &&
+  python3 -I "$R/scripts/fw1/score.py" --golden golden23.tsv test gold-ship23t.jsonl)
 
 # 8. Leave-one-group-out cross-validation of the µ'nSP families and the MAME data
 #    sets: each fold is trained without the group's samples (and the windows mined
@@ -250,28 +275,31 @@ cargo build --release --locked --features cli --bin zrax && cp target/release/zr
 #    crossval/unsp-files.tsv and crossval/mame21-files.tsv list `group<TAB>sha256` of
 #    the files each group labels (UNSP_SETS ROMs; MAME graphics and sound ROMs).
 #    Fold models go to their own directory: crossval_run.sh reuses a model of the
-#    same fold name.
-python3 -I scripts/fw1/crossval.py "$C/corpus-ship22" mame-unsp: "$C/crossval-unsp22" \
-  > reports/fw1/crossval/unsp22-folds.tsv
-python3 -I scripts/fw1/crossval.py "$C/corpus-ship22" mame: "$C/crossval-mame22" \
-  > reports/fw1/crossval/mame22-folds.tsv
-mkdir -p $M/cv22
-scripts/fw1/crossval_run.sh reports/fw1/crossval/unsp22-folds.tsv reports/fw1/crossval/unsp-files.tsv \
-  "$FW" $M/cv22 reports/fw1/crossval/unsp22-results.tsv
-scripts/fw1/crossval_run.sh reports/fw1/crossval/mame22-folds.tsv reports/fw1/crossval/mame21-files.tsv \
-  "$FW" $M/cv22 reports/fw1/crossval/mame22-results.tsv
+#    same fold name. It builds each fold's CLI in its own worktree (BUILD_TREE,
+#    default reports/wt-crossval, a copy of the working tree), so the
+#    repository's src/heuristics/model.bin is never replaced while folds run
+#    (until 2026-11-04 it was, and a commit made during a run took a fold model).
+python3 -I scripts/fw1/crossval.py "$C/corpus-ship23" mame-unsp: "$C/crossval-unsp23" \
+  > reports/fw1/crossval/unsp23-folds.tsv
+python3 -I scripts/fw1/crossval.py "$C/corpus-ship23" mame: "$C/crossval-mame23" \
+  > reports/fw1/crossval/mame23-folds.tsv
+mkdir -p $M/cv23
+scripts/fw1/crossval_run.sh reports/fw1/crossval/unsp23-folds.tsv reports/fw1/crossval/unsp-files.tsv \
+  "$FW" $M/cv23 reports/fw1/crossval/unsp23-results.tsv
+scripts/fw1/crossval_run.sh reports/fw1/crossval/mame23-folds.tsv reports/fw1/crossval/mame21-files.tsv \
+  "$FW" $M/cv23 reports/fw1/crossval/mame23-results.tsv
 
 # 9. Ship model (all splits), the full-corpus run against the findings, and the
 #    file-level ELF check on held-out ISAdetect files and the Hexagon libraries
-$T/train_model --corpus "$C/corpus-ship22" --out $M/ship22-all.bin
-cp $M/ship22-all.bin src/heuristics/model.bin
-cargo build --release --locked --features cli --bin zrax && cp target/release/zrax reports/fw1/bin/zrax-ship22
+$T/train_model --corpus "$C/corpus-ship23" --out $M/ship23-all.bin
+cp $M/ship23-all.bin src/heuristics/model.bin
+cargo build --release --locked --features cli --bin zrax && cp target/release/zrax reports/fw1/bin/zrax-ship23
 (cd reports/fw1 &&
   ls "$FW" | grep -v '\.json$' > all-shas.txt &&
-  "$R/scripts/fw1/runlist.sh" "$PWD/bin/zrax-ship22" "$FW" "$PWD/all-shas.txt" "$PWD/run-ship22.jsonl" &&
-  python3 -I "$R/scripts/fw1/verify_findings.py" run-ship22.jsonl --fw "$FW" --show 20)
-mkdir -p reports/fw1/elfcheck22
-python3 -I scripts/fw1/elf_check.py reports/fw1/bin/zrax-ship22 reports/fw1/elfcheck22 \
+  "$R/scripts/fw1/runlist.sh" "$PWD/bin/zrax-ship23" "$FW" "$PWD/all-shas.txt" "$PWD/run-ship23.jsonl" &&
+  python3 -I "$R/scripts/fw1/verify_findings.py" run-ship23.jsonl --fw "$FW" --show 20)
+mkdir -p reports/fw1/elfcheck23
+python3 -I scripts/fw1/elf_check.py reports/fw1/bin/zrax-ship23 reports/fw1/elfcheck23 \
   --ds2 /path/to/ds2 --elf "$H"
 ```
 
@@ -321,54 +349,64 @@ train and test by group hash.
 ## Results (2026-11-04, macOS AArch64)
 
 Held-out, file level, through the CLI, on the 940 golden test files of
-`corpus-fw1v22`:
+`corpus-fw1v23` (the same files as `corpus-fw1v22`'s):
 
 | Model | Correct | Wrong | Rejected |
 | --- | --- | --- | --- |
 | Base corpus only (`m-base-train`, 924 files of `corpus-fw1v13`) | 71.6% | 241 | 2 (and 19 wrong variant) |
 | Iteration 12 (`m12-train`, 924 files of `corpus-fw1v13`) | 99.0% | 8 | 1 |
 | Shipped recipe, train split (`ship22-train`) | 100.0% | 0 | 0 |
+| Shipped recipe, train split (`ship23-train`) | 100.0% | 0 | 0 |
 
-Per label for `ship22-train`, all at 100%: 8051 vectors (48), AMD GPU
-microcode (3), calibration maps (38), Cortex-M (195), ECU96 dumps (9), MAME
+Per label for `ship23-train` (and `ship22-train`), all at 100%: 8051
+vectors (48), AMD GPU microcode (3), calibration maps (38), Cortex-M (195), ECU96 dumps (9), MAME
 8085 program ROMs (3), MAME graphics (6) and sound (1), MAME µ'nSP ROMs
 (4), option ROMs (115), PCM (182), Qualcomm code segments (276), Qualcomm
 data segments (18), data segments with another core's code (4), REALOS/FR
 images (2), DISCiPLE ROMs (6), 16-bit tables (6), XT-IDE (22) and Z8 HEX
-(2). On the 3,157 training-split files, `ship22-all` gets 3,157 right. The
+(2). On the 3,158 training-split files, `ship23-all` gets 3,158 right
+(`down2.fw`, the one file more than for `ship22-all`, among them). The
 NAOMI BIOS label accepts SH-4 or SuperH (`golden_files.py` `LABEL_ISA`):
 the NAOMI BIOS runs on an SH-4.
 
-Sample level, `ship22-train` on held-out samples (whole samples):
+Sample level, `ship23-train` on held-out samples (whole samples); every
+summary line equals `ship22-train`'s, the model without the `ipp` class and
+the `down2.fw` sample:
 
 | Corpus | Code samples | Correct | Exact | Wrong | Non-code | False accepts |
 | --- | --- | --- | --- | --- | --- | --- |
 | `corpus-base7` | 14,526 | 99.3% | 98.9% | 0.0% | 464 | 0.2% (1) |
-| `corpus-fw1v22` | 983 | 99.2% | 99.1% | 0.0% | 536 | 0.9% (5) |
+| `corpus-fw1v23` | 983 | 99.2% | 99.1% | 0.0% | 536 | 0.9% (5) |
 | `corpus-ds2h` | 3,438 | 100.0% | 100.0% | 0.0% | 0 | - |
 | `corpus-m68kx` | 18 | 83.3% | 83.3% | 0.0% | 0 | - |
 | `corpus-z8x` | 13 | 100.0% | 100.0% | 0.0% | 0 | - |
 | `corpus-mcs251x` | 114 | 100.0% | 100.0% | 0.0% | 0 | - |
+| `corpus-ippx` | 33 | 100.0% | 100.0% | 0.0% | 0 | - |
 
 The fw1 false accepts are 5 of 300 held-out `.rodata`/`.data` samples (3
 little-endian and 1 big-endian ARM, 1 CR16; iteration 12: 4). The three
 rejected hand-written 68000 samples are under 1 KiB of code each. In
 `corpus-base7`, one SuperH sample of 300 reads as SH-4, which counts as not
-exact. With `ship22-train`, the MAME data ROM `5.u5` reads as WebAssembly at
-0.73 from six weak windows; with `ship22-all` it gives no ISA.
+exact. With `ship23-train`, the MAME data ROM `5.u5` reads as WebAssembly at
+0.73 from six weak windows; with `ship23-all` it gives no ISA. The 33
+held-out IPP files share C library code with training files (143 of the 212
+are static executables), so the `corpus-ippx` row is an upper bound for
+other IPP code.
 
-File level on the other two corpora (`elf_check.py`, `ship21-all`): the
+File level on the other two corpora (`elf_check.py`, `ship23-all`, as with
+`ship22-all`): the
 ISAdetect files 550-599 of each architecture (1,150, used by no corpus)
 classify whole 1,150 right, and their largest executable section alone,
-as raw bytes, 1,149 right, 0 wrong and 1 rejected (556 B); the 1,063
-Hexagon libraries 1,063 and 1,063 (they are training data of the base
-corpus).
+as raw bytes, 1,149 right, 0 wrong and 1 rejected (556 B, 42% of it a jump
+table); one of the 50 Debian `sh4` sections reads as SH-4, which the
+`sh4` label accepts. The 1,063 Hexagon libraries: 1,063 and 1,063 (they
+are training data of the base corpus).
 
-MAME ground truth beyond the golden labels (`mame_cpus.py`; `ship22-all`):
+MAME ground truth beyond the golden labels (`mame_cpus.py`; `ship23-all`):
 
 - Program ROMs whose MAME CPU maps to a zrax ISA (302 files, with the ROMs
   MAME declares inside macros; byte-lane dumps must give no ISA, word-lane
-  dumps of 16-bit-instruction CPUs their ISA): 298 right. SH-4 154 of 155
+  dumps of 16-bit-instruction CPUs their ISA): 299 right. SH-4 155 of 155
   (SH-4 code without SH-4-only instructions is reported as SuperH, which
   counts; the NAOMI BIOS ROMs read as SH-4), SH-2 11 of 11 (none as SH-4),
   Z80 58 of 60, 8080/8085 21 of 21, 68000 13 of 13, Arm 10 of 10,
@@ -376,18 +414,19 @@ MAME ground truth beyond the golden labels (`mame_cpus.py`; `ship22-all`):
   of 3, 65816 2 of 2, x86 1 of 1. Without an answer: `29dl640e.u3` (above),
   which has no vector table, so no traceable code, and two data ROMs in CPU
   regions, `5.u5` (note tables at 0x8000 above the program ROM) and
-  `epr-12648.ic25` (unsigned 8-bit samples around 0x81).
-  Wrong: the Sega Hikaru BIOS `epr-23400.ic94`, SH-4 boot code with a
-  28 KiB ARM program inside, read as ARM at 0.54 (`reports/fw1/gaps.md`,
-  known boundaries).
-- Leave-one-family-out cross-validation of the µ'nSP class (6 ROM families,
-  each fold trained without the family's code and data blocks, `ship21`
-  folds): 8 of 9 ROMs read as µ'nSP at 0.97 to 0.99 with their family held
-  out; the ninth, `29dl640e.u3`, is inconclusive (the same on `ship19`
-  folds).
+  `epr-12648.ic25` (unsigned 8-bit samples around 0x81). None wrong: the
+  Sega Hikaru BIOS `epr-23400.ic94` (SH-4 boot code with a 28 KiB ARM
+  program inside), which read as ARM at 0.54 with `ship22-all`, reads as
+  SH-4 since window weights within 5% tie and go to the most code bytes.
+- Leave-one-family-out cross-validation of the µ'nSP class (each fold
+  trained without the family's code and data blocks, `ship22` folds): all 8
+  ROMs with traceable code (5 families) read as µ'nSP at 0.98 to 0.99 with
+  their family held out; `29dl640e.u3`, which has no vector table, gives no
+  ISA. On `ship19` and `ship21` folds, before the tracer's vector-table
+  rule: the same 8, and `29dl640e.u3` inconclusive.
 - Leave-one-set-out cross-validation of the MAME data labels (17 sets, each
   fold trained without that set's ROMs and the windows mined from them,
-  `ship21` folds): all 52 graphics and sound ROMs are inconclusive with their
+  `ship21` and `ship22` folds): all 52 graphics and sound ROMs are inconclusive with their
   own set held out, `cg.u23` (IGS sprites) included, which read as SH at 0.99
   in its `ship14` fold. The windows mined from the PGM sound ROM keep the
   group it had when they were mined (`mame:thegladpcb`; the ROM is now
@@ -395,7 +434,7 @@ MAME ground truth beyond the golden labels (`mame_cpus.py`; `ship22-all`):
   for it; a fold without both groups also leaves it inconclusive. On
   `ship19` folds: 51 of 51 ROMs of 16 sets.
 
-Full corpus with `ship22-all` (`run-ship22.jsonl`), by
+Full corpus with `ship23-all` (`run-ship23.jsonl`), by
 `verify_findings.py --fw`: every category is resolved, with no exception
 list; where MAME names the file's CPU (`mame_cpus.tsv`), the answer must be
 that CPU's ISA.
@@ -412,7 +451,7 @@ that CPU's ISA.
 | cLEMENCy | 28 / 28 |
 | XT-IDE BIOS not read as 16-bit x86 | 13 / 13 |
 | QCA board data as code | 10 / 10 |
-| ELF with an unknown `e_machine` | 6 / 6 |
+| ELF with an unknown `e_machine` (0x1040, now the UniPhier IPP) | 6 / 6 |
 | Name contradicts the ISA | 5 / 5 |
 | Cortex-M missed | 3 / 3 |
 | Other data as code | 2 / 2 |
@@ -433,15 +472,22 @@ assumption was wrong:
   `hop_leds_pic12c671.bin` is PIC (14-bit core); the GH2 images are MN10300.
 - Cortex-M missed: the `faceauth` images start with a Cortex-M vector table
   and hold RISC-V code as well; the boot marker reports Arm.
+- ELF with `e_machine` 0x1040: the finding was an ISA guessed by the code
+  model. The header now names the UniPhier IPP, the architecture the files'
+  toolchain calls `ipp`; that answer counts, a guess does not.
 
 Against the iteration-12 ship model, 206 files changed answer under
 `ship14`; each is reviewed with the evidence checked on its bytes in
-`reports/fw1/review-206.md` (`review206.py`): with `ship22-all`, 204 right,
+`reports/fw1/review-206.md` (`review206.py`): with `ship23-all`, 204 right,
 0 wrong, 0 misses and 2 without a claim where the bytes do not establish
-the ISA. `down2.fw` counts as right without an ISA: Linux `io_edgeport.c`
-loads it only on 80251-based Edgeports, and its code is unlike the SDCC
-MCS-251 output the `mcs251` class holds; `vs-bios.rom` reads as 68000 after
-a 16-bit swap. The 55 files that changed ISA from `ship21-all` to
+the ISA. `down2.fw` reads as MCS-251 (Linux `io_edgeport.c` loads it only on
+80251-based Edgeports); its records are `mcs251` training data, so that is
+fit; `vs-bios.rom` reads as 68000 after a 16-bit swap. The 45 files that
+change from `ship22-all` to `ship23-all` (ISA or format): 19 SuperH ELF files
+whose `e_flags` name an SH-4 machine to SH-4, 18 EZ-USB 8051 images to the
+`ihex2fw` format (still 8051), the 6 ELF files of machine 0x1040 to the IPP,
+`down2.fw` to MCS-251 and the Hikaru BIOS `epr-23400.ic94` from ARM to SH-4.
+The 55 files that changed ISA from `ship21-all` to
 `ship22-all` are 48 Sega NAOMI, Chihiro and Hikaru BIOS ROMs from SuperH to
 SH-4 (MAME SH-4 CPUs), four Zilog Intel HEX programs to Z8 (the programs
 the Z8 archive also holds), `sapp105.bin`/`sapp106.bin` to FR30 (FR `RET`
@@ -455,16 +501,19 @@ Arm).
 The submitted `failures` and `z8` folders are reviewed file by file in
 `reports/failures/README.md`.
 
-VERIFICATION-PENDING
+`cargo test --all-features --locked` passes with `ship22-all` (2,998
+passed, 0 failed, 7 ignored); `npm test` after `./build-web.sh`: 404 tests,
+400 passed, 4 skipped (D10/RX113 firmware not in the repository), 0 failed.
 
 ## Known limits
 
-- MCS-251 code unlike SDCC's output (`down2.fw`) is inconclusive, and SH-4
-  code without SH-4-only instructions is reported as SuperH.
-- Mixed images give the family with the most window weight: the Sega Hikaru
-  BIOS `epr-23400.ic94` (SH-4 boot code and a 28 KiB ARM program) reads as
-  ARM at 0.54, while its candidate list, ranked by evidence bits, puts SH
-  first.
+- Vendor-compiled MCS-251 code is one file (`down2.fw`), which is training
+  data; raw SH-4 code without SH-4-only instructions is reported as SuperH
+  (ELF files report SH-4 when `e_flags` name an SH-4 machine).
+- Mixed images give the family with the most window weight (ties within 5%
+  to the most code bytes); the other family appears only with `--multi-isa`.
+- UniPhier IPP: no instruction is decoded, and the parcel order inside the
+  words of byte-swapped IPP images is not established (`docs/ipp.md`).
 - Hand-written 68000 training code is 359 KB: most 68000 sources on GitHub
   are for asm68k, vasm or Devpac, which AS does not assemble.
 - StuffIt archives are not parsed.
@@ -483,6 +532,7 @@ VERIFICATION-PENDING
 | `unsp_trace.py` | µ'nSP instruction words of a ROM by recursive descent from the vectors |
 | `lane_negatives.py` | byte lanes of code samples as the `neg_lanes` data class |
 | `crossval.py`, `crossval_run.sh` | leave-one-group-out folds of a corpus; train each fold and classify its group's files with a CLI built on it |
+| `examples/family_split.rs` | per raw file, the two families with the most window weight and the first code window's family (mixed images, weight ties) |
 | `runlist.sh`, `runall.sh` | run a zrax CLI over listed / all fw1 files to JSONL (`runall.sh` records no rejections; use `runlist.sh` with `all-shas.txt`) |
 | `score.py` | score CLI runs against `golden.tsv` |
 | `elf_check.py` | file-level check of a CLI on labelled ELF corpora (ISAdetect ds2 by architecture, Hexagon libraries by `e_machine`): the whole file and its largest executable section as raw bytes |

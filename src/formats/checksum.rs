@@ -160,6 +160,12 @@ pub fn crc16_modbus_update(mut crc: u16, data: &[u8]) -> u16 {
     crc
 }
 
+/// CRC-16/ARC of `data`: the reflected polynomial of CRC-16/MODBUS with an
+/// initial value of 0 (`StuffIt` fork and header CRCs).
+pub fn crc16_arc(data: &[u8]) -> u16 {
+    crc16_modbus_update(0, data)
+}
+
 /// Continue a CRC-16/IBM-3740 over `data`. `crc` is the register (start
 /// with `0xFFFF`); appending the result big-endian brings it to zero.
 pub fn crc16_ibm3740_update(mut crc: u16, data: &[u8]) -> u16 {
@@ -530,6 +536,7 @@ mod tests {
         assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
         assert_eq!(adler32(b"123456789"), 0x091e_01de);
         assert_eq!(crc16_modbus(b"123456789"), 0x4b37);
+        assert_eq!(crc16_arc(b"123456789"), 0xbb3d);
         assert_eq!(crc64(b"123456789"), 0x995d_c9bb_df19_39fa);
         assert_eq!(!crc32c_update(!0, b"123456789"), 0xe306_9283);
         assert_eq!(crc32(b""), 0);

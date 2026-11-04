@@ -1,6 +1,6 @@
-//! Archive containers: ZIP, tar and CPIO members are listed only when they
-//! are a recognized format (or, in a PDX package, a data file an ODX
-//! document names) and are classified on their own bytes; slices keep
+//! Archive containers: ZIP, tar, CPIO and StuffIt 5 members are listed only
+//! when they are a recognized format (or, in a PDX package, a data file an
+//! ODX document names) and are classified on their own bytes; slices keep
 //! stored offsets with decoded ranges; package layouts are labels only;
 //! corrupt, truncated and mutated archives are errors or bounded results,
 //! never panics.
@@ -1782,6 +1782,7 @@ fn built_archives() -> Vec<(&'static str, Vec<u8>)> {
         ("big-endian binary", big_endian),
         ("zip64", zip64),
         ("gnu", gnu),
+        ("stuffit5", stuffit5_sample().0),
     ]
 }
 
@@ -1838,4 +1839,277 @@ fn byte_mutations_never_panic() {
             }
         }
     }
+}
+
+// StuffIt 5 (The Unarchiver XADMaster 7cb9ee0a, XADStuffIt5Parser.m).
+
+/// CRC-16/ARC: reflected polynomial 0x8005 (0xA001), initial value 0.
+fn crc16_arc(data: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for &byte in data {
+        crc ^= u16::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 0 {
+                crc >> 1
+            } else {
+                (crc >> 1) ^ 0xa001
+            };
+        }
+    }
+    crc
+}
+
+/// Size of the fixed part of an entry header, before password data and
+/// name.
+const SIT_ENTRY_FIXED: usize = 48;
+
+/// Offset of the first root entry: the 100-byte archive header and the 14
+/// bytes that archive flag 0x10 adds.
+const SIT_FIRST_ENTRY: usize = 114;
+
+/// A file or folder of a built StuffIt 5 archive.
+enum SitItem<'a> {
+    File(SitFile<'a>),
+    Folder(&'a str, Vec<SitItem<'a>>),
+}
+
+/// A file entry: its data fork (stored as given), the method byte written
+/// for it, encryption and an optional resource fork.
+struct SitFile<'a> {
+    name: &'a str,
+    data: &'a [u8],
+    method: u8,
+    encrypted: bool,
+    resource: Option<&'a [u8]>,
+}
+
+impl<'a> SitFile<'a> {
+    fn stored(name: &'a str, data: &'a [u8]) -> Self {
+        Self {
+            name,
+            data,
+            method: 0,
+            encrypted: false,
+            resource: None,
+        }
+    }
+}
+
+/// Entry header: magic `A5A5A5A5`, version 1, 0, header size (2), 0, flags,
+/// creation and modification dates (4 each, 0), previous and next entry
+/// (4 each, 0), parent folder offset (4), name length (2), header CRC (2),
+/// data length (4), data stored length (4), data CRC (2), 0 (2), then the
+/// method and password data length (files) or the entry count (folders),
+/// the password data and the name. The CRC covers the header with its
+/// field zeroed.
+fn sit_header(
+    flags: u8,
+    parent: usize,
+    fields: [u32; 2],
+    data_crc: u16,
+    tail: [u8; 2],
+    password: &[u8],
+    name: &str,
+) -> Vec<u8> {
+    let mut header = 0xa5a5_a5a5u32.to_be_bytes().to_vec();
+    header.extend_from_slice(&[1, 0]);
+    let size = SIT_ENTRY_FIXED + password.len() + name.len();
+    header.extend_from_slice(&(size as u16).to_be_bytes());
+    header.extend_from_slice(&[0, flags]);
+    header.extend_from_slice(&[0; 16]); // dates, previous and next entry
+    header.extend_from_slice(&(parent as u32).to_be_bytes());
+    header.extend_from_slice(&(name.len() as u16).to_be_bytes());
+    header.extend_from_slice(&[0, 0]); // header CRC, filled in below
+    header.extend_from_slice(&fields[0].to_be_bytes());
+    header.extend_from_slice(&fields[1].to_be_bytes());
+    header.extend_from_slice(&data_crc.to_be_bytes());
+    header.extend_from_slice(&[0, 0]);
+    header.extend_from_slice(&tail);
+    header.extend_from_slice(password);
+    header.extend_from_slice(name.as_bytes());
+    let crc = crc16_arc(&header);
+    header[32..34].copy_from_slice(&crc.to_be_bytes());
+    header
+}
+
+/// Second block: fork flags (bit 0: resource fork), 0 (2), file type and
+/// creator (4 each), Finder flags (2) and 22 B for an entry of version 1;
+/// with a resource fork, its length, stored length, CRC, 0 (2), method and
+/// password data length.
+fn sit_second_block(resource: Option<&[u8]>) -> Vec<u8> {
+    let mut block = u16::from(resource.is_some()).to_be_bytes().to_vec();
+    block.extend_from_slice(&[0, 0]);
+    block.extend_from_slice(b"BINAzrax");
+    block.extend_from_slice(&[0; 2 + 22]);
+    if let Some(fork) = resource {
+        block.extend_from_slice(&(fork.len() as u32).to_be_bytes());
+        block.extend_from_slice(&(fork.len() as u32).to_be_bytes());
+        block.extend_from_slice(&crc16_arc(fork).to_be_bytes());
+        block.extend_from_slice(&[0, 0, 0, 0]);
+    }
+    block
+}
+
+/// Append `items` (children of the folder at `parent`, 0 for the root) to
+/// `out`; returns the file offset of each file's data fork by name.
+fn sit_items(out: &mut Vec<u8>, items: &[SitItem<'_>], parent: usize, forks: &mut Vec<usize>) {
+    for item in items {
+        let at = out.len();
+        match item {
+            SitItem::Folder(name, children) => {
+                let count = (children.len() as u16).to_be_bytes();
+                out.extend(sit_header(0x40, parent, [0, 0], 0, count, b"", name));
+                out.extend(sit_second_block(None));
+                // The unnamed entry after every folder: data length
+                // 0xFFFFFFFF, nothing after its fixed header.
+                out.extend(sit_header(0x40, 0, [0xffff_ffff, 0], 0, [0, 0], b"", ""));
+                sit_items(out, children, at, forks);
+            }
+            SitItem::File(file) => {
+                let flags = if file.encrypted { 0x20 } else { 0 };
+                let password: &[u8] = if file.encrypted {
+                    b"\x01\x02\x03\x04\x05"
+                } else {
+                    b""
+                };
+                let len = file.data.len() as u32;
+                let tail = [file.method, password.len() as u8];
+                let crc = crc16_arc(file.data);
+                out.extend(sit_header(
+                    flags,
+                    parent,
+                    [len, len],
+                    crc,
+                    tail,
+                    password,
+                    file.name,
+                ));
+                out.extend(sit_second_block(file.resource));
+                out.extend_from_slice(file.resource.unwrap_or_default());
+                forks.push(out.len());
+                out.extend_from_slice(file.data);
+            }
+        }
+    }
+}
+
+/// A StuffIt 5 archive of `items`: the signature text, `1A 00`, version 5,
+/// flags 0x10, archive size (4), 0 (4), root entry count (2), first entry
+/// offset (4) and a header CRC (2, not checked by the parser), 14 bytes for
+/// flag 0x10, then the entries. Returns the archive and the data fork
+/// offsets in file order.
+fn stuffit5(items: &[SitItem<'_>]) -> (Vec<u8>, Vec<usize>) {
+    let mut out =
+        b"StuffIt (c)1997-2002 Aladdin Systems, Inc., http://www.aladdinsys.com/StuffIt/\r\n"
+            .to_vec();
+    out.extend_from_slice(&[0x1a, 0x00, 5, 0x10]);
+    out.extend_from_slice(&[0; 8]); // archive size (below), unknown
+    out.extend_from_slice(&(items.len() as u16).to_be_bytes());
+    out.extend_from_slice(&(SIT_FIRST_ENTRY as u32).to_be_bytes());
+    out.extend_from_slice(&[0; 2 + 14]);
+    let mut forks = Vec::new();
+    sit_items(&mut out, items, 0, &mut forks);
+    let size = (out.len() as u32).to_be_bytes();
+    out[84..88].copy_from_slice(&size);
+    (out, forks)
+}
+
+fn stuffit5_sample() -> (Vec<u8>, Vec<usize>) {
+    static ELF: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    let aarch64 = ELF.get_or_init(|| elf(2, false, EM_AARCH64));
+    stuffit5(&[
+        SitItem::Folder(
+            "fw",
+            vec![
+                SitItem::File(SitFile::stored("payload.elf", aarch64)),
+                SitItem::File(SitFile {
+                    resource: Some(b"resource fork bytes"),
+                    ..SitFile::stored("notes.txt", b"not a recognized format")
+                }),
+                SitItem::File(SitFile {
+                    method: 13,
+                    ..SitFile::stored("packed.bin", b"\x13 compressed bytes")
+                }),
+            ],
+        ),
+        SitItem::File(SitFile {
+            encrypted: true,
+            ..SitFile::stored("secret.bin", b"encrypted bytes")
+        }),
+    ])
+}
+
+#[test]
+fn stuffit5_stored_data_forks_are_members_with_verified_crcs() {
+    let (archive, forks) = stuffit5_sample();
+    assert_eq!(detected_layout(&archive), Some(archives::Layout::StuffIt5));
+    let p = classify(&archive).unwrap();
+    assert_eq!(p.format.format, FileFormat::StuffIt);
+    assert_eq!(p.primary.isa, Isa::AArch64);
+    assert_eq!(p.slices.len(), 1);
+    let member = slice(&p, "fw/payload.elf");
+    assert_eq!(member.isa, Isa::AArch64);
+    assert_eq!((member.offset as usize, member.size), (forks[0], 64));
+    for note in [
+        "Entry header CRC-16s verified; the archive header CRC is not verified",
+        "Data fork CRC-16 verified for 2 of 2 stored files",
+        "Compressed data forks are not decoded and are opaque: fw/packed.bin (method 13)",
+        "Encrypted files are opaque and were not analyzed: secret.bin",
+        "1 resource fork is not classified",
+        "1 of 2 file members are in a recognized format and listed",
+    ] {
+        assert!(has_note(&p, note), "{note}: {:?}", p.notes);
+    }
+    for (key, value) in [
+        ("stuffit_entries", 5),
+        ("stuffit_files", 4),
+        ("stuffit_folders", 1),
+    ] {
+        assert!(
+            matches!(metadata(&p, key), Some(MetadataValue::Integer(v)) if *v == value),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn stuffit5_corrupt_headers_are_errors_and_bad_forks_are_not_classified() {
+    let (archive, forks) = stuffit5_sample();
+    let error = |data: &[u8]| classify(data).unwrap_err().to_string();
+
+    let mut bad_header = archive.clone();
+    bad_header[SIT_FIRST_ENTRY + 10] ^= 0x01; // a date byte under the header CRC
+    assert!(error(&bad_header).contains("Invalid StuffIt entry header CRC"));
+
+    let mut bad_magic = archive.clone();
+    bad_magic[SIT_FIRST_ENTRY] = 0;
+    assert!(error(&bad_magic).contains("Invalid StuffIt entry magic at 0x72"));
+
+    let mut old_version = archive.clone();
+    old_version[82] = 4;
+    assert!(error(&old_version).contains("Unsupported StuffIt archive version 4"));
+
+    let mut bad_fork = archive.clone();
+    bad_fork[forks[0] + 63] ^= 0x01;
+    let p = classify(&bad_fork).unwrap();
+    assert!(p.slices.is_empty());
+    assert!(matches!(p.primary.isa, Isa::Unknown(_)));
+    assert!(has_note(
+        &p,
+        "Files that failed to verify were not classified: fw/payload.elf: CRC-16"
+    ));
+
+    for end in 80..archive.len() {
+        assert!(classify(&archive[..end]).is_err(), "prefix {end}");
+    }
+
+    let mut padded = archive.clone();
+    padded.extend_from_slice(&[0xff; 32]);
+    assert!(has_note(
+        &classify(&padded).unwrap(),
+        "32 B of padding after the archive"
+    ));
+    let mut trailing = archive;
+    trailing.extend_from_slice(b"text after the archive");
+    assert!(error(&trailing).contains("Unexpected data after the StuffIt archive"));
 }

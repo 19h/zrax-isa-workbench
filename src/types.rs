@@ -248,6 +248,10 @@ pub enum Isa {
     Mn10200,
     /// Panasonic (Matsushita) MN10300 and its AM33/AM34 extensions
     Mn10300,
+    /// Panasonic `UniPhier` IPP (Instruction Parallel Processor), the
+    /// architecture its toolchain calls `ipp` (ELF `e_machine` 0x1040,
+    /// unregistered); code is a stream of big-endian 16-bit parcels
+    Ipp,
     /// Intel 8080 and 8085 (the 8085 adds RIM and SIM)
     I8085,
     /// National Semiconductor/TI CompactRISC CR16
@@ -395,6 +399,7 @@ impl Isa {
             Isa::Tlcs900 => "Toshiba TLCS-900",
             Isa::Mn10200 => "Panasonic MN10200",
             Isa::Mn10300 => "Panasonic MN10300",
+            Isa::Ipp => "Panasonic UniPhier IPP",
             Isa::I8085 => "Intel 8080/8085",
             Isa::Cr16 => "National CompactRISC CR16",
             Isa::F2mc16 => "Fujitsu F2MC-16",
@@ -521,6 +526,8 @@ impl Isa {
             | Isa::OakDsp => 16,
             Isa::Dsp56k => 24,
             Isa::St20 | Isa::R32c | Isa::TiC3x | Isa::Dsp96k | Isa::TriMedia | Isa::Mn10300 => 32,
+            // The IPP has a 32-bit ALU (Spring Processor Forum 2005).
+            Isa::Ipp => 32,
             // 27-bit words of 9-bit bytes
             Isa::Clemency => 27,
 
@@ -973,6 +980,8 @@ pub enum FileFormat {
     Tar,
     /// CPIO archive (newc, crc, odc or old binary)
     Cpio,
+    /// `StuffIt` 5 archive (`.sit`)
+    StuffIt,
 
     // Read-only filesystems
     /// Squashfs filesystem image
@@ -1142,6 +1151,8 @@ pub enum FileFormat {
     SilabsEbl,
     /// Nordic nRF5 DFU init packet (`.dat`)
     NordicInitPacket,
+    /// Linux `ihex2fw` firmware records (`.fw`)
+    Ihex2fw,
     // Windows minidumps
     /// Windows user-mode minidump (`MDMP`)
     Minidump,
@@ -1470,6 +1481,7 @@ impl fmt::Display for FileFormat {
             FileFormat::Zip => write!(f, "ZIP"),
             FileFormat::Tar => write!(f, "tar"),
             FileFormat::Cpio => write!(f, "CPIO"),
+            FileFormat::StuffIt => write!(f, "StuffIt"),
             // Read-only filesystems
             FileFormat::Squashfs => write!(f, "SquashFS"),
             FileFormat::Cramfs => write!(f, "CramFS"),
@@ -1558,6 +1570,7 @@ impl fmt::Display for FileFormat {
             FileFormat::DfuSuffix => write!(f, "USB DFU file"),
             FileFormat::SilabsEbl => write!(f, "Silicon Labs EBL"),
             FileFormat::NordicInitPacket => write!(f, "Nordic DFU init packet"),
+            FileFormat::Ihex2fw => write!(f, "Linux ihex2fw"),
             // Windows minidumps
             FileFormat::Minidump => write!(f, "Windows minidump"),
             FileFormat::WindowsKernelDump => write!(f, "Windows kernel dump"),

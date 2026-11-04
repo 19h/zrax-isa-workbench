@@ -29,7 +29,7 @@ IDIOM_ISA = {"thumb": "arm", "arm": "arm", "aarch64": "a_arch64", "hexagon": "he
              "shframe": "sh", "riscv": ("risc_v32", "risc_v64", "riscv32", "riscv64")}
 
 NO_ISA_CATEGORIES = {"calibration-as-arc", "weak-format-on-pil-data",
-                     "bdf-as-code", "data-as-code", "elf-unknown-machine", "mame-data-as-code"}
+                     "bdf-as-code", "data-as-code", "mame-data-as-code"}
 
 
 def read_mame_cpus(path):
@@ -79,6 +79,12 @@ def meets(category, name, result, embedded=None, mame_isa=None):
     isa = result.get("isa")
     if category in NO_ISA_CATEGORIES:
         return no_isa(result)
+    if category == "elf-unknown-machine":
+        # The defect was an ISA guessed by the code model for e_machine 0x1040.
+        # Since 2026-11-04 that machine names the UniPhier IPP (its toolchain's
+        # `ipp`), so the header's own answer is right; a guess is not.
+        from_header = result.get("source") == "FileFormat" and result.get("endianness") == "big"
+        return no_isa(result) or (isa == "ipp" and from_header)
     if category in ("isa-on-pil-data", "pcm-as-code"):
         if no_isa(result):
             return True

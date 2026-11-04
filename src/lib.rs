@@ -411,10 +411,42 @@ fn stm8_vector_table_core(
 /// A raw input classified after one of the [`transform::CANDIDATES`].
 struct Transformed {
     transform: transform::Transform,
+    /// Later transforms whose readings name the same ISA and byte order at
+    /// the same confidence: a 16-bit and a 32-bit byte swap give code of
+    /// 16-bit parcels in two parcel orders that the byte-pair model may not
+    /// tell apart.
+    ties: Vec<transform::Transform>,
     trials: usize,
     data: Vec<u8>,
     result: ClassificationResult,
     candidates: Vec<IsaCandidate>,
+}
+
+impl Transformed {
+    /// Whether `result` reads the same ISA and byte order at the same
+    /// confidence as this reading.
+    fn is_tied_by(&self, result: &ClassificationResult) -> bool {
+        result.isa == self.result.isa
+            && result.endianness == self.result.endianness
+            && result.confidence.total_cmp(&self.result.confidence).is_eq()
+    }
+
+    /// The note naming the transform, and any that tie with it.
+    fn note(&self) -> String {
+        let note = format!(
+            "ISA identified after {}; the stored bytes are not in execution order",
+            self.transform.name()
+        );
+        if self.ties.is_empty() {
+            return note;
+        }
+        let names: Vec<String> = self.ties.iter().map(|t| t.name()).collect();
+        format!(
+            "{note}; a {} reads the same ISA at the same confidence, so which of them restores \
+             the execution order is not established",
+            names.join(" or a ")
+        )
+    }
 }
 
 /// Least confidence a transformed reading needs. Nothing in the bytes
@@ -529,14 +561,18 @@ fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transfo
         {
             continue;
         }
-        if best
-            .as_ref()
-            .is_some_and(|b| b.result.confidence >= result.confidence)
-        {
-            continue;
+        if let Some(b) = best.as_mut() {
+            if b.is_tied_by(&result) {
+                b.ties.push(t);
+                continue;
+            }
+            if b.result.confidence >= result.confidence {
+                continue;
+            }
         }
         best = Some(Transformed {
             transform: t,
+            ties: Vec::new(),
             trials,
             data: transformed,
             result,
@@ -1316,10 +1352,7 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                     let Some(found) = search_transforms(data, options) else {
                         return Err(e);
                     };
-                    notes.push(Note::info(format!(
-                        "ISA identified after {}; the stored bytes are not in execution order",
-                        found.transform.name()
-                    )));
+                    notes.push(Note::info(found.note()));
                     metadata.extend(transform_metadata(found.transform, found.trials));
                     candidates = found.candidates;
                     code_payload = Some(std::borrow::Cow::Owned(found.data));
@@ -2402,6 +2435,37 @@ mod tests {
         let isas = supported_isas();
         assert!(isas.contains(&Isa::X86_64));
         assert!(isas.contains(&Isa::AArch64));
+    }
+
+    #[test]
+    fn transforms_that_tie_with_the_chosen_one_are_named_in_its_note() {
+        let result = ClassificationResult::from_heuristics(Isa::Ipp, 32, Endianness::Big, 0.99);
+        let mut found = Transformed {
+            transform: transform::Transform::Swap16,
+            ties: Vec::new(),
+            trials: 8,
+            data: Vec::new(),
+            result: result.clone(),
+            candidates: Vec::new(),
+        };
+        assert_eq!(
+            found.note(),
+            "ISA identified after 16-bit byte swap; the stored bytes are not in execution order"
+        );
+        assert!(found.is_tied_by(&result));
+        let mut little = result.clone();
+        little.endianness = Endianness::Little;
+        assert!(!found.is_tied_by(&little));
+        let mut weaker = result;
+        weaker.confidence = 0.9;
+        assert!(!found.is_tied_by(&weaker));
+        found.ties.push(transform::Transform::Swap32);
+        assert_eq!(
+            found.note(),
+            "ISA identified after 16-bit byte swap; the stored bytes are not in execution order; \
+             a 32-bit byte swap reads the same ISA at the same confidence, so which of them \
+             restores the execution order is not established"
+        );
     }
 
     fn elf_header(class: u8, machine: u16) -> Vec<u8> {

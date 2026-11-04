@@ -1,16 +1,17 @@
 # MCU update images
 
-`src/formats/mcu.rs` and its submodules parse seven microcontroller update
+`src/formats/mcu.rs` and its submodules parse eight microcontroller update
 formats into the shared container model
 ([compressed streams and the container model](compressed-streams.md)): UF2
 block files, STM32 DfuSe files, Silicon Labs Gecko Bootloader (GBL v3) files,
 Cypress/Infineon `.cyacd`/`.cyacd2` text, USB DFU files (any firmware followed
-by the DFU suffix), Silicon Labs Ember bootloader (EBL) files and Nordic nRF5
-DFU init packets. UF2 names a target through its family ID, and EBL through
-the platform field of the application address table in its header. The other
-formats carry USB IDs, product IDs, silicon IDs or hardware versions, which
-identify a device, not an instruction set, so their payloads go to the code
-model; Nordic init packets carry metadata only.
+by the DFU suffix), Silicon Labs Ember bootloader (EBL) files, Nordic nRF5
+DFU init packets and Linux `ihex2fw` firmware records. UF2 names a target
+through its family ID, and EBL through the platform field of the application
+address table in its header. The other formats carry USB IDs, product IDs,
+silicon IDs or hardware versions (or, in `ihex2fw`, only load addresses),
+which identify a device, not an instruction set, so their payloads go to the
+code model; Nordic init packets carry metadata only.
 
 ## Implemented layouts
 
@@ -24,6 +25,7 @@ model; Nordic init packets carry metadata only.
 | `dfusuffix` | `DFU 1.1 file`: firmware, optional vendor suffix fields, then `bcdDevice`, `idProduct`, `idVendor`, `bcdDFU` `0x0100`, `UFD`, `bLength`, `dwCRC`; the firmware is one child | Strong once valid: `UFD` at `len - 8` and a matching `dwCRC` (the two criteria Appendix B gives the host). Checked after the `DfuSe` prefix and before the UF2, GBL and EBL magics | None. USB IDs are metadata; the child is classified on its own bytes | [USB DFU 1.1](https://www.usb.org/sites/default/files/DFU_1.1.pdf) (2004-08-05), Appendix B and its sample program; dfu-util v0.11 `src/dfu_file.c`, `src/suffix.c`, `src/dfuse.c` |
 | `silabsebl` | `EBL v2 file`: big-endian tag stream; header tag `0x0000` (version, signature `0xE350`, `flashAddr`, `aatCrc`, up to 128 AAT bytes), program `0xFE01` and erase-then-program `0xFD03` tags as load sections, manufacturing program `0x02FE` and metadata `0xF608` tags as opaque children, end tag `0xFC04`; encrypted files: `0xFB05`, `0xFA06`, `0xF907` data, `0xF709` MAC, end | Strong: tag `0x0000` at 0 with a header length of 12-140 B, version major `0x02` and `0xE350` at 6, or tag `0xFB05` at 0 with length 6 and `0xE350` at 8. The header tag ID is zero, which many files start with, so the signature alone would be a 16-bit key | The AAT's `platInfo` byte (type `0x0AA7` tables only): platform 4 (`CortexM3`, also written by EFR32 builds) is `arm`, 32-bit, little-endian; any other platform names no ISA and the code model decides | Silicon Labs UG103.6 rev. 1.6, chapter 5; Gecko SDK Suite v2.6 `platform/base/hal/micro/cortexm3/common/ebl.h`, `bootloader-ccm.h`, `platform/base/hal/micro/micro-types.h` (vendor files read from the `tomyqg/gecko_sdk_suite` mirror at `095c3631`); gecko_sdk v4.5.1 (`8a2efd2c`) `platform/service/legacy_hal/inc/bootloader-common.h`, `platform/bootloader/api/ember_btl_interface.h`, `ember_btl_common.c`, `sl_legacy_bootloader_device_info.h.jinja`; Simplicity Commander "EBL Commands" |
 | `nordicinitpacket` | `nRF DFU init packet`: one `dfu.Packet` protocol buffer (proto2) with a `command` or `signed_command`, the `InitCommand` (firmware and hardware versions, `sd_req`, type, sizes, hash, debug flag, boot validations) and the signature | Weak: no magic. At most 512 B, first byte `0x0A` or `0x12`, and the whole buffer must parse with the documented field numbers and wire types within the bootloader's field limits, with exactly one command, an `InitCommand`, a hash and the size its type requires | None; metadata only (`hw_version` names a device family) | pc-nrfutil v6.1.7 (`804bc0ff`) `nordicsemi/dfu/dfu-cc.proto`, `init_packet_pb.py`, `package.py`; nRF5 SDK 17.1.0 `components/libraries/bootloader/dfu/` `dfu-cc.proto`, `dfu-cc.options`, `nrf_dfu_types.h`, `nrf_dfu_validation.c` (read from the `bluerange-io/bluerange-mesh` mirror at `7131ad13`, `sdk/sdk17_1`) |
+| `ihex2fw` | `Linux ihex2fw records`: records of a big-endian load address (4) and data length (2) with the data, each padded to 4 bytes, ended by a zero-length record; records that follow each other in the file and in the address space form one load section (transform `ihex2fw records`) | Weak: no magic. At least two records, none empty, zero padding, an end record of six zero bytes that is the last 6 bytes of the file, no overlapping records | None; the code model classifies the sections | Linux v6.11 `include/linux/ihex.h` (`struct ihex_binrec`, `__ihex_next_binrec`, `ihex_validate_fw`) |
 
 ### UF2 family table
 
@@ -125,7 +127,9 @@ header are little-endian ("native (little) endian order"), and the end tag's
 CRC is little-endian; `flashAddr` is a flash byte address. Nordic init
 packets are protocol buffers: varints in 7-bit groups, sizes in bytes; the
 SHA-256 hash is stored in reverse byte order (pc-nrfutil
-`calculate_sha256_hash`) and reported in file order. Header byte order is
+`calculate_sha256_hash`) and reported in file order. `ihex2fw` addresses and
+lengths are big-endian; addresses are the Intel HEX load addresses in bytes
+(24-bit `FF:xxxx` addresses for MCS-251 code memory in `down2.fw`). Header byte order is
 never reported as code byte order; a UF2 family target fixes the code byte
 order of the family's core, and the EBL `CortexM3` platform fixes
 little-endian, the AAT's native order.
@@ -182,6 +186,7 @@ checksum is the one-byte sum whatever the type.
 | M17 | The EBL header holds 12 to 140 B | `ebl.h` minimum 12, `AAT_MAX_SIZE` 128; Commander and pygbl write 140; a longer header would be rejected |
 | M18 | Nordic init packets always carry a hash and the firmware size for their type | pc-nrfutil `_validate` and the nRF5 SDK bootloader require the size; the SDK always compares the hash. A packet from another generator without them is not recognized |
 | M19 | Unknown protobuf fields do not occur in init packets | Strict for weak recognition; a newer `dfu-cc.proto` with added fields would not be recognized until the field table is extended |
+| M20 | `ihex2fw` alignment padding is zero, the end record is six zero bytes, and records never load the same byte twice | Not stated by `ihex.h`; all 19 `ihex2fw` files in fw1 (Keyspan, Whiteheat, Edgeport and EZ-USB audio firmware) hold exactly that (2026-11-04); a writer that leaves other padding would not be recognized |
 
 ## Known boundaries
 
@@ -209,6 +214,7 @@ checksum is the one-byte sum whatever the type.
 | Nordic init packet signatures and the firmware hash | Reported as present and not verified; the image is a separate file, and the public key is in the bootloader |
 | Init packets of other Nordic DFU generations (legacy nRF5 SDK DFU, nRF Connect SDK packages) | Not recognized; their layouts were not researched here |
 | DfuSe alternate settings | The memory each alternate setting selects (flash, option bytes, OTP) is not encoded, so all elements are load sections |
+| `ihex2fw` files with a single record, or with an empty record before the end | Not recognized: one record is too little structure for a magic-less layout, and the kernel stops reading at the first empty record |
 | Weak recognition from a prefix (`container::is_recognized`) | `.cyacd` text cut inside a row is not recognized, so archive members are only recognized whole |
 
 ## Verification

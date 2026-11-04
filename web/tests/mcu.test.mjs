@@ -6,7 +6,7 @@ import { FORMAT_NAMES } from '../format.js';
 before(setup);
 after(teardown);
 
-const MCU_IDS = ['uf2', 'dfuse', 'gbl', 'cyacd'];
+const MCU_IDS = ['uf2', 'dfuse', 'gbl', 'cyacd', 'ihex2fw'];
 
 // Cortex-M4 Thumb-2 and RV32IMAC code from tests/fixtures/mcu/generate.sh.
 const fixture = name => readFile(new URL(`../../tests/fixtures/mcu/${name}`, import.meta.url));
@@ -141,6 +141,22 @@ function cyacd(code) {
   return Buffer.from(lines.join('\r\n') + '\r\n');
 }
 
+// Linux ihex2fw (include/linux/ihex.h): per record a big-endian load
+// address (4) and data length (2), the data and zero padding to 4 bytes;
+// six zero bytes end the file.
+function ihex2fw(code, address) {
+  const records = [];
+  for (let at = 0; at < code.length; at += 64) {
+    const data = code.subarray(at, at + 64);
+    const record = Buffer.alloc(Math.ceil((6 + data.length) / 4) * 4);
+    record.writeUInt32BE(address + at, 0);
+    record.writeUInt16BE(data.length, 4);
+    data.copy(record, 6);
+    records.push(record);
+  }
+  return Buffer.concat([...records, Buffer.alloc(6)]);
+}
+
 const hasCustom = (p, key) => p.metadata.some(m => m.key?.custom === key);
 
 for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
@@ -154,6 +170,7 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
       ['dfuse', dfuse(thumb, 0x08000000)],
       ['gbl', gbl(thumb, 0x00004000)],
       ['cyacd', cyacd(thumb)],
+      ['ihex2fw', ihex2fw(thumb, 0x08000000)],
     ].map(([name, bytes]) => ({ name, bytes: [...bytes] }));
     const payloads = await page.evaluate(async ({ module, fixtures }) => {
       const wasm = await import(module);
@@ -179,6 +196,8 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
     assert.ok(payloads.gbl.notes.some(n => n.message.includes('end-tag CRC-32 verified')));
     assert.equal(payloads.cyacd.primary.isa, 'arm');
     assert.ok(hasCustom(payloads.cyacd, 'cyacd_silicon_id'));
+    assert.equal(payloads.ihex2fw.primary.isa, 'arm');
+    assert.ok(hasCustom(payloads.ihex2fw, 'ihex2fw_records'));
   });
 }
 

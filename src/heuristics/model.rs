@@ -210,8 +210,9 @@ pub const CLASSES: &[ClassInfo] = &[
     // 8/16-bit microcontrollers and DSPs. Endianness is that of multi-byte
     // operands (8-bit ISAs) or of the code words as stored in a ROM image.
     code!("i8051", "i8051", I8051, Big, 8),
-    // Source-mode MCS-251 code (SDCC MCS-251 port output): its own opcode
-    // map, so its own family; Binary-mode code is 8051 code.
+    // Source-mode MCS-251 code (SDCC MCS-251 port output and one vendor-
+    // compiled firmware): its own opcode map, so its own family; Binary-mode
+    // code is 8051 code.
     code!("mcs251", "mcs251", Mcs251, Big, 16),
     code!("hc08", "hc08", Hc08, Big, 8),
     code!("hc05", "hc08", Hc05, Big, 8),
@@ -251,6 +252,9 @@ pub const CLASSES: &[ClassInfo] = &[
     code!("tlcs900", "tlcs900", Tlcs900, Little, 16),
     code!("mn10200", "mn10200", Mn10200, Little, 16),
     code!("mn10300", "mn10300", Mn10300, Little, 32),
+    // Panasonic UniPhier IPP: FreeBSD userland code of the ELF machine
+    // 0x1040, big-endian 16-bit parcels.
+    code!("ipp", "ipp", Ipp, Big, 32),
     code!("f2mc16", "f2mc16", F2mc16, Little, 16),
     code!("h8500", "h8500", H8500, Big, 16),
     code!("unsp", "unsp", Unsp, Little, 16),

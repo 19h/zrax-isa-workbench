@@ -1,8 +1,8 @@
 //! MCU update images: UF2 block files, STM32 `DfuSe` files, Silicon Labs
 //! Gecko Bootloader (GBL v3) files, Cypress/Infineon `.cyacd`/`.cyacd2`
 //! bootloader text files, USB DFU files (firmware plus the DFU suffix),
-//! Silicon Labs Ember bootloader (EBL) files and Nordic nRF5 DFU init
-//! packets.
+//! Silicon Labs Ember bootloader (EBL) files, Nordic nRF5 DFU init packets
+//! and Linux `ihex2fw` firmware records.
 //!
 //! Sources, by layout (details and pinned revisions in `docs/mcu.md`):
 //! - UF2: microsoft/uf2 `README.md` and `utils/uf2families.json` at commit
@@ -27,12 +27,13 @@
 //!   (see [`ebl`]).
 //! - Nordic init packets: pc-nrfutil v6.1.7 `dfu-cc.proto`; nRF5 SDK 17.1.0
 //!   `dfu-cc.options` and `nrf_dfu_validation.c` (see [`nordic`]).
+//! - `ihex2fw`: Linux v6.11 `include/linux/ihex.h` (see [`ihex2fw`]).
 //!
 //! UF2 and EBL name a target. The UF2 family ID (flag `0x2000`, the README's
 //! "board family ID") is the format's own target field, mapped to the ISA of
 //! the family's application core; the EBL header's application address
 //! table names its platform, and platform 4 (`CortexM3`) is an Arm Cortex-M.
-//! `DfuSe`, GBL, the Cypress formats and DFU suffixes carry no architecture
+//! `DfuSe`, GBL, the Cypress formats, DFU suffixes and `ihex2fw` records carry no architecture
 //! field; USB IDs, silicon IDs and vendor names are reported as metadata and
 //! never become an ISA, so their payloads go to the code model. Nordic init
 //! packets hold metadata only.
@@ -48,6 +49,7 @@ mod dfu_suffix;
 mod dfuse;
 mod ebl;
 mod gbl;
+mod ihex2fw;
 mod nordic;
 mod uf2;
 
@@ -71,6 +73,9 @@ pub enum Layout {
     /// Nordic nRF5 DFU init packet (`.dat`): one `dfu.Packet` protocol
     /// buffer.
     NordicInitPacket,
+    /// Linux `ihex2fw` firmware: binary Intel HEX records ending in a
+    /// zero-length record.
+    Ihex2fw,
 }
 
 impl Layout {
@@ -84,6 +89,7 @@ impl Layout {
         Self::DfuSuffix,
         Self::Ebl,
         Self::NordicInitPacket,
+        Self::Ihex2fw,
     ];
 
     /// The reported file format.
@@ -96,6 +102,7 @@ impl Layout {
             Self::DfuSuffix => FileFormat::DfuSuffix,
             Self::Ebl => FileFormat::SilabsEbl,
             Self::NordicInitPacket => FileFormat::NordicInitPacket,
+            Self::Ihex2fw => FileFormat::Ihex2fw,
         }
     }
 
@@ -110,13 +117,17 @@ impl Layout {
             Self::DfuSuffix => "DFU 1.1 file",
             Self::Ebl => "EBL v2 file",
             Self::NordicInitPacket => "nRF DFU init packet",
+            Self::Ihex2fw => "Linux ihex2fw records",
         }
     }
 
-    /// The Cypress text layouts and Nordic init packets have no magic and
-    /// are recognized from complete structure.
+    /// The Cypress text layouts, Nordic init packets and `ihex2fw` records
+    /// have no magic and are recognized from complete structure.
     pub fn is_weak(self) -> bool {
-        matches!(self, Self::Cyacd | Self::Cyacd2 | Self::NordicInitPacket)
+        matches!(
+            self,
+            Self::Cyacd | Self::Cyacd2 | Self::NordicInitPacket | Self::Ihex2fw
+        )
     }
 
     /// Prefix of the layout's metadata keys.
@@ -129,6 +140,7 @@ impl Layout {
             Self::DfuSuffix => "dfu",
             Self::Ebl => "ebl",
             Self::NordicInitPacket => "nordic",
+            Self::Ihex2fw => "ihex2fw",
         }
     }
 }
@@ -158,10 +170,13 @@ pub fn detect(data: &[u8]) -> Option<Layout> {
 
 /// Weak recognition of the magic-less layouts: `.cyacd` and `.cyacd2` text
 /// (the header and every row must parse, and every `.cyacd` row checksum
-/// must match) and Nordic init packets (the whole protocol buffer must
-/// parse with the documented fields and hold what the bootloader requires).
+/// must match), Nordic init packets (the whole protocol buffer must parse
+/// with the documented fields and hold what the bootloader requires) and
+/// `ihex2fw` records (every record, its padding and the end record).
 pub fn detect_weak(data: &[u8]) -> Option<Layout> {
-    cyacd::detect(data).or_else(|| nordic::detect(data).then_some(Layout::NordicInitPacket))
+    cyacd::detect(data)
+        .or_else(|| nordic::detect(data).then_some(Layout::NordicInitPacket))
+        .or_else(|| ihex2fw::detect(data).then_some(Layout::Ihex2fw))
 }
 
 /// Parse `data` as the given layout.
@@ -181,6 +196,7 @@ pub fn parse_container(data: &[u8], layout: Layout) -> Result<Container<'_>> {
         Layout::DfuSuffix => dfu_suffix::parse(data),
         Layout::Ebl => ebl::parse(data),
         Layout::NordicInitPacket => nordic::parse(data),
+        Layout::Ihex2fw => ihex2fw::parse(data),
     }
 }
 
@@ -327,7 +343,7 @@ mod tests {
         for &layout in Layout::ALL {
             let magic_less = matches!(
                 layout.format(),
-                FileFormat::Cyacd | FileFormat::NordicInitPacket
+                FileFormat::Cyacd | FileFormat::NordicInitPacket | FileFormat::Ihex2fw
             );
             assert_eq!(layout.is_weak(), magic_less);
             assert_ne!(layout.label(), "");

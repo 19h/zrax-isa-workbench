@@ -640,6 +640,11 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // ChipON KungFu32
         0x103 => (Isa::Unknown(0x103), 32),
 
+        // Panasonic UniPhier IPP: not in the gABI registry; the toolchain
+        // that writes it names the architecture `ipp` (FreeBSD
+        // `rtld-elf/ipp`, `R_IPP_*` relocations, `ipp-unknown-freebsd`).
+        0x1040 => (Isa::Ipp, 32),
+
         // DEC Alpha (official/experimental)
         0x9026 => (Isa::Alpha, 64),
 
@@ -973,16 +978,55 @@ fn parse_ppc_flags(isa: Isa, e_flags: u32) -> (Variant, Vec<Extension>) {
     (variant, Vec::new())
 }
 
+/// `EF_SH_MACH_MASK` (binutils `include/elf/sh.h`): the SH machine in
+/// `e_flags[4:0]`.
+const EF_SH_MACH_MASK: u32 = 0x1F;
+
+/// The machine values of `include/elf/sh.h` (`EF_SH1` to `EF_SH2A_SH3E`)
+/// and the cores they name. A value names the machines whose instruction
+/// sets hold the object's code, not the machine it was built for: of the
+/// 5,931 Debian `sh4` binaries in the ds2 corpus, 1,067 carry `EF_SH2` and
+/// 2,949 `EF_SH2A_SH4` (2026-11-04).
+const SH_MACHINES: [(u32, &str); 20] = [
+    (1, "SH-1"),
+    (2, "SH-2"),
+    (3, "SH-3"),
+    (4, "SH-DSP"),
+    (5, "SH3-DSP"),
+    (6, "SH4AL-DSP"),
+    (8, "SH-3E"),
+    (9, "SH-4"),
+    (11, "SH-2E"),
+    (12, "SH-4A"),
+    (13, "SH-2A"),
+    (16, "SH-4 without FPU"),
+    (17, "SH-4A without FPU"),
+    (18, "SH-4 without MMU and FPU"),
+    (19, "SH-2A without FPU"),
+    (20, "SH-3 without MMU"),
+    (21, "SH-2A or SH-4, without FPU"),
+    (22, "SH-2A or SH-3, without FPU"),
+    (23, "SH-2A or SH-4"),
+    (24, "SH-2A or SH-3E"),
+];
+
+/// Machine values whose code only SH-4-class cores run (`EF_SH4AL_DSP`,
+/// `EF_SH4`, `EF_SH4A`, `EF_SH4_NOFPU`, `EF_SH4A_NOFPU`,
+/// `EF_SH4_NOMMU_NOFPU`). The `EF_SH2A_SH4` values also fit an SH-2A.
+const SH4_MACHINES: [u32; 6] = [6, 9, 12, 16, 17, 18];
+
+/// Whether SH `e_flags` name a machine that only SH-4-class cores are.
+fn is_sh4_machine(e_flags: u32) -> bool {
+    SH4_MACHINES.contains(&(e_flags & EF_SH_MACH_MASK))
+}
+
 /// Parse SuperH ELF flags.
 fn parse_sh_flags(e_flags: u32) -> (Variant, Vec<Extension>) {
-    let variant = e_flags & 0x1F;
-    let name = match variant {
-        9 => "SH-4",
-        12 => "SH-4A",
-        13 => "SH-2A",
-        _ => "",
-    };
-
+    let machine = e_flags & EF_SH_MACH_MASK;
+    let name = SH_MACHINES
+        .iter()
+        .find(|(value, _)| *value == machine)
+        .map_or("", |(_, name)| name);
     (Variant::new(name), Vec::new())
 }
 
@@ -1117,6 +1161,12 @@ pub fn parse(data: &[u8], ei_class: u8, ei_data: u8) -> Result<ClassificationRes
     if matches!(isa, Isa::Ppc | Isa::Ppc64) && has_ppc_vle_marker(data) {
         isa = Isa::PpcVle;
         bitwidth = 32;
+    }
+
+    // SuperH has one e_machine; the machine field of e_flags tells SH-4
+    // code from code that SH-1, SH-2 or SH-3 cores also run.
+    if isa == Isa::Sh && is_sh4_machine(e_flags) {
+        isa = Isa::Sh4;
     }
 
     // Parse architecture-specific flags
@@ -1698,6 +1748,7 @@ mod tests {
         assert_eq!(e_machine_to_isa(0x47, 1).0, Isa::Hc08);
         assert_eq!(e_machine_to_isa(0xA5, 1).0, Isa::I8051);
         assert_eq!(e_machine_to_isa(0xB1, 1).0, Isa::Cr16);
+        assert_eq!(e_machine_to_isa(0x1040, 1), (Isa::Ipp, 32));
     }
 
     #[test]
@@ -1714,6 +1765,28 @@ mod tests {
         assert_eq!(name(Isa::LoongArch64, 0x42), "LoongArch [LP64F]");
         assert_eq!(name(Isa::LoongArch32, 0x41), "LoongArch [ILP32S]");
         assert_eq!(name(Isa::LoongArch64, 0x40), "LoongArch");
+    }
+
+    #[test]
+    fn superh_machine_field_names_the_core_and_sh4_code_reports_sh4() {
+        let name = |e_flags: u32| parse_e_flags(Isa::Sh, e_flags, &[]).0.to_string();
+        assert_eq!(name(9), "SH-4");
+        assert_eq!(name(0x17), "SH-2A or SH-4");
+        assert_eq!(name(2), "SH-2");
+        assert_eq!(name(0), "");
+        assert_eq!(name(7), "");
+        let machines = [
+            (9, true),
+            (0xC, true),
+            (0x12, true),
+            (0x17, false),
+            (2, false),
+        ];
+        for (e_flags, sh4) in machines {
+            assert_eq!(is_sh4_machine(e_flags), sh4, "e_flags 0x{e_flags:X}");
+        }
+        // EF_SH4 with EF_SH_PIC set.
+        assert!(is_sh4_machine(0x109));
     }
 
     #[test]

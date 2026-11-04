@@ -10,6 +10,8 @@ const MODEL_ISAS = {
   hc11: '68HC11',
   unsp: 'unSP',
   w65816: '65816',
+  mcs251: 'Intel MCS-251',
+  ipp: 'Panasonic UniPhier IPP',
 };
 
 test('raw-code model ISAs have display names', () => {

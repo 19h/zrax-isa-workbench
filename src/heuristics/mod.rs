@@ -508,15 +508,28 @@ struct FamilyWeight {
     weak: f64,
 }
 
-/// The family of `weights` with the most window weight, then the most
-/// bytes, then the first name: see [`Scan::most_supported_family`].
+/// Window weights within this share of the largest tie: the summed weight
+/// does not resolve smaller differences. Shifting the 1 KiB window grid of
+/// the four Sega Hikaru BIOS ROMs (SH-4 boot code and an ARM sound program
+/// of about equal size) by 128 to 896 B moved a family's summed weight by up
+/// to 3.6% and swapped the two families in two of the ROMs (fw1,
+/// 2026-11-04).
+const WEIGHT_TIE_SHARE: f64 = 0.05;
+
+/// The family of `weights` with the most window weight, see
+/// [`Scan::most_supported_family`]. Families within [`WEIGHT_TIE_SHARE`] of
+/// the most weight tie; a tie goes to the most code bytes, then the most
+/// weight, then the first name.
 fn most_supported(weights: Vec<FamilyWeight>) -> Option<&'static str> {
+    let total = |f: &FamilyWeight| f.strong + f.weak;
+    let largest = weights.iter().map(total).fold(0.0, f64::max);
     weights
         .into_iter()
+        .filter(|f| total(f) >= largest * (1.0 - WEIGHT_TIE_SHARE))
         .max_by(|a, b| {
-            (a.strong + a.weak)
-                .total_cmp(&(b.strong + b.weak))
-                .then(a.bytes.cmp(&b.bytes))
+            a.bytes
+                .cmp(&b.bytes)
+                .then(total(a).total_cmp(&total(b)))
                 .then(b.family.cmp(a.family))
         })
         .map(|f| f.family)
@@ -1331,6 +1344,19 @@ mod tests {
         assert_eq!(most_supported(tie), Some("b"));
         let tie = vec![weight("b", 1024, 1.0, 0.0), weight("a", 1024, 1.0, 0.0)];
         assert_eq!(most_supported(tie), Some("a"));
+        // Weight within 5% of the most ties and goes to more bytes (the
+        // Hikaru BIOS `epr-23400.ic94`: 31 SH windows, 28 stronger ARM
+        // windows); beyond it, weight decides.
+        let near = vec![
+            weight("arm", 28 * 1024, 19.0, 6.70),
+            weight("sh", 31 * 1024, 16.0, 9.41),
+        ];
+        assert_eq!(most_supported(near), Some("sh"));
+        let apart = vec![
+            weight("arm", 28 * 1024, 19.0, 6.70),
+            weight("sh", 31 * 1024, 16.0, 8.00),
+        ];
+        assert_eq!(most_supported(apart), Some("arm"));
         assert_eq!(most_supported(Vec::new()), None);
     }
 

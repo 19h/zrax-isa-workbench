@@ -39,6 +39,82 @@ async function classifyAll(page, module, names) {
   }, { module, fixtures });
 }
 
+// A StuffIt 5 archive is built here from the layout in
+// src/formats/archives/stuffit.rs (The Unarchiver XADMaster 7cb9ee0a,
+// XADStuffIt5Parser.m): no archiver on this platform writes one.
+
+/** CRC-16/ARC: reflected polynomial 0xA001, initial value 0. */
+function crc16Arc(bytes) {
+  let crc = 0;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = crc & 1 ? (crc >>> 1) ^ 0xa001 : crc >>> 1;
+    }
+  }
+  return crc;
+}
+
+const be16 = value => [(value >>> 8) & 0xff, value & 0xff];
+const be32 = value => [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
+
+/**
+ * Entry header: magic A5A5A5A5, version 1, 0, header size (2), 0, flags
+ * (0x40 folder), dates and previous/next entry offsets (16 zero bytes),
+ * parent folder offset (4), name length (2), header CRC (2, over the header
+ * with the field zeroed), two 32-bit fields (a file's data length and
+ * stored length), data CRC (2), 0 (2), two tail bytes (a file's method and
+ * password data length, a folder's entry count) and the name.
+ */
+function sitHeader(flags, parent, fields, dataCrc, tail, name) {
+  const nameBytes = [...Buffer.from(name, 'latin1')];
+  const header = [
+    ...be32(0xa5a5a5a5), 1, 0, ...be16(48 + nameBytes.length), 0, flags,
+    ...new Array(16).fill(0),
+    ...be32(parent), ...be16(nameBytes.length), 0, 0,
+    ...be32(fields[0]), ...be32(fields[1]), ...be16(dataCrc), 0, 0,
+    ...tail, ...nameBytes,
+  ];
+  header.splice(32, 2, ...be16(crc16Arc(header)));
+  return header;
+}
+
+/**
+ * Second block without a resource fork: fork flags 0 (2), 0 (2), file type
+ * and creator (4 each), Finder flags (2) and 22 B for an entry of version 1.
+ */
+const SIT_SECOND_BLOCK = [0, 0, 0, 0, ...Buffer.from('BINAzrax'), 0, 0, ...new Array(22).fill(0)];
+
+/**
+ * Archive of one folder holding stored files: the signature text, 1A 00,
+ * version 5, flags 0x10, archive size (4), 0 (4), one root entry (2), the
+ * first entry at 114 (4), a header CRC (2, not checked) and the 14 bytes of
+ * flag 0x10; then the folder, the unnamed entry that follows every folder
+ * (data length 0xFFFFFFFF) and each file's header, second block and data.
+ */
+function stuffit5(folder, files) {
+  const signature = 'StuffIt (c)1997-2002 Aladdin Systems, Inc., http://www.aladdinsys.com/StuffIt/\r\n';
+  const out = [...Buffer.from(signature, 'latin1'), 0x1a, 0x00, 5, 0x10];
+  out.push(...be32(0), ...be32(0), ...be16(1), ...be32(114), 0, 0, ...new Array(14).fill(0));
+  const folderAt = out.length;
+  out.push(...sitHeader(0x40, 0, [0, 0], 0, be16(files.length), folder), ...SIT_SECOND_BLOCK);
+  out.push(...sitHeader(0x40, 0, [0xffffffff, 0], 0, [0, 0], ''));
+  for (const [name, bytes] of files) {
+    out.push(...sitHeader(0, folderAt, [bytes.length, bytes.length], crc16Arc(bytes), [0, 0], name));
+    out.push(...SIT_SECOND_BLOCK, ...bytes);
+  }
+  out.splice(84, 4, ...be32(out.length));
+  return out;
+}
+
+async function classifyBytes(page, module, bytes) {
+  return page.evaluate(async ({ module, bytes }) => {
+    const wasm = await import(module);
+    await wasm.default();
+    return JSON.parse(wasm.classify(new Uint8Array(bytes)));
+  }, { module, bytes });
+}
+
 for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
   test(`archive members are classified on their own bytes through ${module}`, async t => {
     const page = await openPage(t);
@@ -56,6 +132,24 @@ for (const module of ['/pkg/zrax.js', '/dist/zrax.js']) {
       assert.equal(member.decoded?.transform ?? null, transform, name);
       assert.ok(!p.slices.some(s => s.label === 'notes.txt'), `${name}: text members are not listed`);
     });
+  });
+
+  test(`StuffIt 5 stored data forks are classified on their own bytes through ${module}`, async t => {
+    const page = await openPage(t);
+    await page.goto(baseUrl + '/web/index.html');
+    const payload = [...await fixture('payload.elf')];
+    const text = [...Buffer.from('not a recognized format\n')];
+    const archive = stuffit5('bin', [['payload.elf', payload], ['notes.txt', text]]);
+    const p = await classifyBytes(page, module, archive);
+    assert.ok(!p.error, p.error);
+    assert.equal(p.format.format, 'stuffit');
+    assert.equal(FORMAT_NAMES.stuffit, 'StuffIt');
+    assert.equal(p.primary.isa, 'a_arch64');
+    const member = p.slices.find(s => s.label === 'bin/payload.elf');
+    assert.ok(member, JSON.stringify(p.slices));
+    assert.equal(member.size, payload.length);
+    assert.ok(!p.slices.some(s => s.label === 'bin/notes.txt'), 'text members are not listed');
+    assert.ok(p.notes.some(n => n.message === 'Data fork CRC-16 verified for 2 of 2 stored files'));
   });
 
   test(`encrypted and Deflate64 ZIP members stay opaque through ${module}`, async t => {

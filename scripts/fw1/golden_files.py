@@ -20,7 +20,7 @@ CLASS_ISA = {
     "hexagon": "hexagon", "aarch64": "a_arch64", "arm": "arm", "thumb": "arm", "armeb": "arm",
     "thumbeb": "arm", "xtensa": "xtensa", "z80": "z80", "sh": "sh", "i8051": "i8051", "x86_16": "x86_16",
     "z8": "z8", "msp430": "msp430", "mipsel": "mips", "i8085": "i8085", "unsp": "unsp", "mcs96": "mcs96",
-    "fr30": "fr30",
+    "fr30": "fr30", "mcs251": "mcs251",
 }
 
 

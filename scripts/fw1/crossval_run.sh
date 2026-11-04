@@ -8,33 +8,46 @@ set -euo pipefail
 # FILES: `group<TAB>sha256` per line, the fw1 files each group labels.
 # OUT:   `group<TAB>sha256<TAB>isa<TAB>confidence` per file ("<rejected>"
 #        for no answer).
-# The CLI embeds src/heuristics/model.bin, so each fold copies its model
-# there; the model that was there is restored on exit.
+# The CLI embeds src/heuristics/model.bin. The folds are built in a copy of
+# the working tree (BUILD_TREE, default reports/wt-crossval, a git worktree
+# created on first use), so the repository's own model.bin is never
+# replaced: a commit made while folds run cannot pick up a fold model.
 #
 # Usage (from the repository root):
 #   scripts/fw1/crossval_run.sh FOLDS FILES FW1_DIR MODEL_DIR OUT
 
-folds="$1"
-files="$2"
-fw="$3"
-model_dir="$4"
-out="$5"
-
-shipped="$(mktemp "$model_dir/shipped.XXXXXX")"
-cp src/heuristics/model.bin "$shipped"
-restore() {
-    cp "$shipped" src/heuristics/model.bin
-    rm -f "$shipped"
+repo="$(pwd)"
+# Path arguments, relative to the repository root unless absolute.
+absolute() {
+    if [[ "$1" == /* ]]; then
+        printf '%s\n' "$1"
+    else
+        printf '%s\n' "$repo/$1"
+    fi
 }
-trap restore EXIT
+folds="$(absolute "$1")"
+files="$(absolute "$2")"
+fw="$(absolute "$3")"
+model_dir="$(absolute "$4")"
+out="$(absolute "$5")"
+build_tree="${BUILD_TREE:-reports/wt-crossval}"
 
+if [[ ! -d "$build_tree" ]]; then
+    git worktree add --detach "$build_tree" HEAD
+fi
+# Copy the working tree's tracked and untracked (not ignored) files, so the
+# folds run the code as it is now, committed or not.
+git ls-files -z --cached --others --exclude-standard \
+    | rsync -a --from0 --files-from=- ./ "$build_tree/"
+
+cd "$build_tree"
 cargo build --release --locked --features cli --example train_model
 : > "$out"
 while IFS=$'\t' read -r group fold; do
     name="$(basename "$fold")"
     model="$model_dir/cv-$name.bin"
     if [[ ! -s "$model" ]]; then
-        target/release/examples/train_model --corpus "$fold" --out "$model"
+        target/release/examples/train_model --corpus "$(absolute "$fold")" --out "$model"
     fi
     cp "$model" src/heuristics/model.bin
     cargo build --release --locked --features cli --bin zrax

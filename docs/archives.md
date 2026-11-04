@@ -24,11 +24,12 @@ the differential validation of the classification path.
 | `zip` | Local headers, central directory (authoritative), end of central directory record found in the last 64 KiB + 22 B, ZIP64 end record and locator, ZIP64 extra fields, data descriptors in all four forms; methods 0 (stored), 8 (deflate), 12 (bzip2), 14 (LZMA), 93 (Zstandard) and 95 (xz) decoded; CRC-32 of every stored or decoded member verified | Strong: `PK\3\4` at offset 0, or the end record at 0 for an empty archive | [PKWARE APPNOTE.TXT 6.3.10](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT) (2022-11-01), sections 4.3-4.5, 5.8.8 and Appendix E |
 | `tar` | POSIX ustar (`prefix`/`name`), pax extended (`x`) and global (`g`) headers, GNU format with `L`/`K` long names, octal and GNU base-256 numbers, GNU and pax sparse members, every header checksum verified | Strong: `ustar\0` or `ustar  \0` at 257 and a valid header checksum | [POSIX.1-2024 `pax`](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/pax.html) (ustar and pax interchange formats); GNU tar 1.35 `src/tar.h`, `src/create.c`, `src/list.c`; libarchive v3.7.4 `tar.5`, `archive_read_support_format_tar.c` |
 | `cpio` | newc (`070701`), crc (`070702`, data byte sum verified), odc (`070707`), old binary (`0x71C7`) in both byte orders; `TRAILER!!!`; archives concatenated after NUL padding | Strong for the ASCII magics with a valid first header and name (the first member's data may be cut off, so a truncated archive is a parse error); weak (confidence 0.85) for old binary, which needs every header up to the last trailer and only padding, further archives or a recognized format after it | libarchive v3.7.4 `cpio.5`, `archive_read_support_format_cpio.c`; POSIX.1-2024 `pax` ("cpio Interchange Format"); Linux v6.11 `init/initramfs.c` |
+| `stuffit` | StuffIt 5 (archive version 5, written by StuffIt 5.0 and later): archive header, entries in file order with folders, the unnamed entry after each folder, comments, Finder information and resource fork fields; every entry header's CRC-16/ARC verified; data forks stored with method 0 are members, their CRC-16/ARC verified | Strong: the signature text `StuffIt (c)1997-` + 4 bytes + ` Aladdin Systems, Inc., http://www.aladdinsys.com/StuffIt/` CR LF at offset 0 | The Unarchiver [`XADMaster` `7cb9ee0a`](https://github.com/MacPaw/XADMaster/blob/7cb9ee0abbb163f261e4cb74501e15067032319c/XADStuffIt5Parser.m) `XADStuffIt5Parser.m` (layout), `XADStuffItParser.m` and `XADCRCHandle.m` (fork CRC); Aladdin Systems published no specification |
 
 The format variant names the layout: `ZIP archive`, `tar archive`, `CPIO
 newc archive`, `CPIO crc archive`, `CPIO odc archive`, `CPIO binary
-archive (little-endian)` or `(big-endian)`. The tar summary note names the
-dialect (`POSIX ustar`, `pax` or `GNU tar`).
+archive (little-endian)` or `(big-endian)`, `StuffIt 5 archive`. The tar
+summary note names the dialect (`POSIX ustar`, `pax` or `GNU tar`).
 
 Detection order: the strong checks run after the executable and firmware
 formats, right before the magic-bearing compressed streams. Old binary
@@ -79,7 +80,9 @@ All offsets and sizes are bytes; slice offsets are stored file offsets.
 ZIP fields are little-endian. tar numbers are ASCII octal or big-endian
 base-256. newc and crc fields are ASCII hex, odc fields ASCII octal. Old
 binary CPIO words use the byte order of the magic; its 32-bit values are
-two 16-bit words, most significant first. newc and crc names and data are
+two 16-bit words, most significant first. StuffIt 5 numbers are
+big-endian; a member's path joins its folder names with `/`. newc and crc
+names and data are
 padded to 4 bytes and binary ones to 2 bytes, counted from the start of the
 file as Linux initramfs counts them. No archive field is a code byte order.
 
@@ -120,6 +123,21 @@ file as Linux initramfs counts them. No archive field is a code byte order.
   its digest is reported as `tar_md5_trailer` metadata and compared with
   the MD5 of the archive bytes before it (a mismatch is noted).
   Anything else is an error.
+- StuffIt 5: the archive version must be 5, the first entry must lie after
+  the 100-byte archive header, and the declared archive size may not pass
+  the file. Every entry needs the magic `A5A5A5A5`, a header size of at
+  least 48 B that holds its name, and a matching header CRC; password data
+  in an unencrypted entry is an error. Entries are read in file order and
+  each one moves forward by at least 48 B, so the walk ends; a folder adds
+  its entry count to the entries still to read, and a parent must be a
+  folder read earlier, so label paths cannot loop (at most 32 folders and
+  255 B per name are shown). The entries must end within the declared
+  size, only padding may fill the rest, and after it the rules for data
+  after an archive apply. A stored data fork whose length or CRC-16 does not
+  match its entry is noted and not classified. Compressed forks (any method
+  other than 0) and encrypted entries (entry flag 0x20, archive flag 0x80)
+  are opaque and named in notes; resource forks are counted, not
+  classified. The archive header's CRC is not verified.
 - A member is listed only when its first 4 KiB, and then its whole
   contents, are a recognized format.
 - Limits (shared container constants): at most 4096 listed members per
@@ -143,6 +161,8 @@ file as Linux initramfs counts them. No archive field is a code byte order.
 | A8 | Nordic DFU packages name their images under the `manifest` object of `manifest.json` | Taken from nrfutil package output, not a published specification; a manifest with other keys is not labelled |
 | A9 | A `DATAFILE` path names a PDX member by its path inside the archive, exactly or ignoring ASCII case | Read from odxtools 11.7.0 `externflashdata.py`, not from the ASAM schema; `pdx_data_files_are_listed_in_the_coding_their_document_states` matches `CAL.HEX` to `cal.hex`; a package that stores data files under another directory would report them as not in the package |
 | A10 | Samsung `.tar.md5` packages are a tar archive followed by the `md5sum` output line for it, as Odin and Heimdall read them | Community convention (no Samsung publication); `data_after_the_tar_end_is_padding_a_recognized_component_or_an_error` covers the accepted line and four near misses, which stay errors |
+| A11 | StuffIt 5 entries follow one another in file order, each folder followed by an unnamed 48-byte entry whose data length is `0xFFFFFFFF`, and the second block starts right after the name and comment | Read from The Unarchiver, not from an Aladdin publication; the one real archive tested (`F-D200-V201M.sit`, signature text `(c)1997-2002`) walks to exactly its declared size with every header CRC matching; an archive that breaks the rule fails on the next entry's magic or CRC |
+| A12 | The data fork CRC is CRC-16/ARC (`XADCRCTable_a001`, initial value 0) of the uncompressed fork | Both stored forks of `F-D200-V201M.sit` match; a mismatch is noted and the fork is not classified |
 
 ## Known boundaries
 
@@ -158,6 +178,10 @@ file as Linux initramfs counts them. No archive field is a code byte order.
 | afio large ASCII CPIO and PWB binary CPIO | Not recognized; PWB mode bits differ, so PWB regular files would be counted as other entries |
 | Nested archives | Each nested archive has its own 256 MiB decode budget; total work is bounded by the six-level nesting limit and the per-archive limits, not by one global budget |
 | Member signatures (JAR, APK, IPA) | Not verified |
+| StuffIt compression methods (13, 15 and the others) | Opaque: the LZ/Huffman (13) and Arsenic (15) decoders are not implemented |
+| StuffIt encryption | Opaque; never decrypted |
+| StuffIt 1.5 to 4 archives (`SIT!` … `rLau`), StuffIt X (`.sitx`), self-extracting archives | Not recognized; no sample was available |
+| Raw members (firmware images in no recognized format) | Not listed, as in every archive: `F-D200-V201M.sit` (the two stored files of a `D200Update` folder; `B2000201.bin` holds the REALOS/FR banner and reads as FR30 on its own) reports StuffIt with no ISA |
 
 ## Verification
 

@@ -1343,10 +1343,12 @@ pub fn detect_format(data: &[u8]) -> DetectedFormat {
         };
     }
 
-    // Cypress .cyacd/.cyacd2 text and Nordic DFU init packets have no magic:
-    // the header and every row must parse, and every .cyacd row checksum
-    // must match; an init packet must parse completely as the documented
-    // protocol buffer.
+    // Cypress .cyacd/.cyacd2 text, Nordic DFU init packets and Linux
+    // ihex2fw records have no magic: the header and every row must parse,
+    // and every .cyacd row checksum must match; an init packet must parse
+    // completely as the documented protocol buffer; every ihex2fw record,
+    // its zero padding and the end record that ends the file must be
+    // present.
     if let Some(layout) = mcu::detect_weak(data) {
         return DetectedFormat::Container {
             kind: container::Kind::Mcu(layout),

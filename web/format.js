@@ -31,7 +31,7 @@ const ISA_NAMES = {
   i860: 'i860', i960: 'i960', vax: 'VAX', pdp11: 'PDP-11',
   z80: 'Z80', mcs6502: '6502',
   wasm: 'WebAssembly', jvm: 'JVM', dalvik: 'Dalvik',
-  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU', mn10300: 'MN10300', i8085: 'Intel 8080/8085', mcs251: 'Intel MCS-251',
+  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU', mn10300: 'MN10300', ipp: 'Panasonic UniPhier IPP', i8085: 'Intel 8080/8085', mcs251: 'Intel MCS-251',
   unsp: 'unSP', w65816: '65816',
 };
 
@@ -93,7 +93,7 @@ const FORMAT_NAMES = {
   androidboot: 'Android boot image', androidvendorboot: 'Android vendor_boot image', androidsparse: 'Android sparse image', androidota: 'Android OTA payload', androidbootloader: 'Android bootloader pack',
   xilinxbootbin: 'Xilinx BOOT.BIN', imximage: 'NXP i.MX Image', nxpsb: 'NXP Secure Binary',
   ndsrom: 'Nintendo DS ROM', gbarom: 'Game Boy Advance ROM', gbrom: 'Game Boy ROM', nesrom: 'NES ROM', snesrom: 'SNES ROM', n64rom: 'Nintendo 64 ROM',
-  zip: 'ZIP', tar: 'tar', cpio: 'CPIO',
+  zip: 'ZIP', tar: 'tar', cpio: 'CPIO', stuffit: 'StuffIt',
   squashfs: 'SquashFS', cramfs: 'CramFS', romfs: 'romfs',
   ubi: 'UBI', ubifs: 'UBIFS', jffs2: 'JFFS2',
   ext: 'ext filesystem',
@@ -113,7 +113,7 @@ const FORMAT_NAMES = {
   iso9660: 'ISO 9660',
   gamecubedisc: 'GameCube disc', wiidisc: 'Wii disc', xboxdvd: 'Xbox DVD (XDVDFS)',
   jimage: 'Java jimage', jmod: 'JMOD',
-  dfusuffix: 'USB DFU file', silabsebl: 'Silicon Labs EBL', nordicinitpacket: 'Nordic DFU init packet',
+  dfusuffix: 'USB DFU file', silabsebl: 'Silicon Labs EBL', nordicinitpacket: 'Nordic DFU init packet', ihex2fw: 'Linux ihex2fw',
   minidump: 'Windows minidump', windowskerneldump: 'Windows kernel dump',
   netwarenlm: 'NetWare NLM',
   geosgeode: 'PC/GEOS geode',

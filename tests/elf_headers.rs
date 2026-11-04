@@ -1,7 +1,8 @@
 //! ELF header fields that bound the classification: `EI_CLASS` sets the
 //! PA-RISC bit width; `EI_DATA` must agree with a code-model answer for a
 //! machine number the classifier cannot map; `EM_MN10300` names the
-//! MN10300; a header whose loaded code reads decisively as another ISA
+//! MN10300 and machine 0x1040 the UniPhier IPP; a header whose loaded code
+//! reads decisively as another ISA
 //! family names no ISA; ELF images stored after an image's file extent are
 //! listed as components.
 
@@ -13,9 +14,11 @@ const AARCH64_CODE: &[u8] = include_bytes!(concat!(
     "/testbins/aarch64_aarch64-unknown-linux-gnu_O0_int_crc32.bin"
 ));
 
-/// `e_machine` value no ELF table assigns (seen on big-endian FreeBSD
-/// set-top-box executables in the fw1 audit).
-const EM_UNASSIGNED: u16 = 0x1040;
+/// `e_machine` value no ELF table assigns.
+const EM_UNASSIGNED: u16 = 0x7777;
+/// Panasonic UniPhier IPP: unregistered, the value its toolchain writes
+/// (big-endian FreeBSD executables in the fw1 audit and the IPP samples).
+const EM_IPP: u16 = 0x1040;
 /// HP PA-RISC.
 const EM_PARISC: u16 = 15;
 /// Matsushita MN10300 (binutils `include/elf/common.h`).
@@ -164,6 +167,17 @@ fn mn10300_machine_names_the_mn10300() {
     assert_eq!(p.primary.isa, Isa::Mn10300);
     assert_eq!(p.primary.bitwidth, 32);
     assert_eq!(serde_json::to_value(Isa::Mn10300).unwrap(), "mn10300");
+}
+
+#[test]
+fn ipp_machine_names_the_uniphier_ipp() {
+    let v = elf(ELFCLASS32, ELFDATA2MSB, EM_IPP, &[]);
+    let p = detect_payload(&v, &ClassifierOptions::default()).unwrap();
+    assert_eq!(p.format.format, FileFormat::Elf);
+    assert_eq!(p.primary.isa, Isa::Ipp);
+    assert_eq!(p.primary.bitwidth, 32);
+    assert_eq!(p.primary.endianness, Endianness::Big);
+    assert_eq!(serde_json::to_value(Isa::Ipp).unwrap(), "ipp");
 }
 
 #[test]

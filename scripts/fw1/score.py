@@ -6,7 +6,7 @@ Outcomes: ok; wrong (another ISA, or an ISA for non-code); variant (right
 ISA, wrong variant: eZ80 for Z80, a width other than 16 bits for real-mode
 x86); rejected (no ISA for code).
 
-Usage (from the directory holding golden.tsv): score.py SPLIT RUN.jsonl...
+Usage (from the directory holding golden.tsv): score.py [--golden TSV] SPLIT RUN.jsonl...
 """
 import argparse
 import collections
@@ -39,8 +39,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("split")
     parser.add_argument("runs", nargs="+")
+    parser.add_argument("--golden", default="golden.tsv", help="golden_files.py output (default golden.tsv)")
     args = parser.parse_args()
-    with open("golden.tsv") as f:
+    with open(args.golden) as f:
         gold = [r for r in csv.DictReader(f, delimiter="\t") if r["split"] == args.split]
     for run in args.runs:
         results = {}

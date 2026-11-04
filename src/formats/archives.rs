@@ -1,4 +1,4 @@
-//! Archive containers: ZIP, tar and CPIO.
+//! Archive containers: ZIP, tar, CPIO and `StuffIt` 5.
 //!
 //! None of these formats names an ISA. Each regular-file member is a child
 //! classified on its own bytes and listed only when it is a recognized
@@ -17,6 +17,8 @@
 //!   `archive_read_support_format_cpio.c`, POSIX.1-2024 `pax` ("cpio
 //!   Interchange Format") and Linux v6.11 `init/initramfs.c`; see the `cpio`
 //!   submodule.
+//! - `StuffIt` 5: The Unarchiver's `XADMaster` revision `7cb9ee0a`
+//!   (`XADStuffIt5Parser.m`); see the `stuffit` submodule.
 //!
 //! Member offsets and sizes are stored file coordinates; a decoded ZIP
 //! member carries its decoded bytes and names its codec. A member is listed
@@ -34,6 +36,7 @@ use std::borrow::Cow;
 use std::fmt;
 
 mod cpio;
+mod stuffit;
 mod tar;
 mod zip;
 
@@ -66,6 +69,9 @@ pub enum Layout {
     CpioBinaryLe,
     /// Old binary CPIO (`0x71C7`) in big-endian byte order.
     CpioBinaryBe,
+    /// `StuffIt` 5 archive that starts with the `StuffIt (c)1997-` signature
+    /// text.
+    StuffIt5,
 }
 
 impl Layout {
@@ -79,6 +85,7 @@ impl Layout {
             | Self::CpioOdc
             | Self::CpioBinaryLe
             | Self::CpioBinaryBe => FileFormat::Cpio,
+            Self::StuffIt5 => FileFormat::StuffIt,
         }
     }
 
@@ -92,6 +99,7 @@ impl Layout {
             Self::CpioOdc => "CPIO odc archive",
             Self::CpioBinaryLe => "CPIO binary archive (little-endian)",
             Self::CpioBinaryBe => "CPIO binary archive (big-endian)",
+            Self::StuffIt5 => "StuffIt 5 archive",
         }
     }
 
@@ -104,10 +112,14 @@ impl Layout {
 
 /// Strong recognition: the ZIP local file header or end of central
 /// directory signature at offset 0, the tar magic at offset 257 with a valid
-/// header checksum, or an ASCII CPIO magic with a valid first header.
+/// header checksum, an ASCII CPIO magic with a valid first header, or the
+/// `StuffIt` 5 signature text at offset 0.
 pub fn detect(data: &[u8]) -> Option<Layout> {
     if zip::is_zip(data) {
         return Some(Layout::Zip);
+    }
+    if stuffit::is_stuffit5(data) {
+        return Some(Layout::StuffIt5);
     }
     if tar::is_tar(data) {
         return Some(Layout::Tar);
@@ -161,6 +173,7 @@ fn parse_members(data: &[u8], layout: Layout, mode: MemberMode) -> Result<Contai
         | Layout::CpioOdc
         | Layout::CpioBinaryLe
         | Layout::CpioBinaryBe => cpio::parse(data, layout, mode),
+        Layout::StuffIt5 => stuffit::parse(data, mode),
     }
 }
 

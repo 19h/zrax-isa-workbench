@@ -35,7 +35,9 @@ import os
 import struct
 import subprocess
 
-# ISAdetect architecture directory -> (zrax ISA ID, byte order).
+# ISAdetect architecture directory -> (zrax ISA ID, byte order); `a|b`
+# accepts either (Debian's sh4 port targets the SH-4, whose code without
+# SH-4-only instructions is reported as SuperH).
 DS2_LABELS = {
     "alpha": ("alpha", "little"),
     "amd64": ("x86_64", "little"),
@@ -56,7 +58,7 @@ DS2_LABELS = {
     "riscv64": ("riscv64", "little"),
     "s390": ("s390", "big"),
     "s390x": ("s390x", "big"),
-    "sh4": ("sh", "little"),
+    "sh4": ("sh4|sh", "little"),
     "sparc": ("sparc", "big"),
     "sparc64": ("sparc64", "big"),
     "x32": ("x86_64", "little"),
@@ -170,6 +172,7 @@ def check(zrax, text_dir, item):
         data = f.read()
     whole = classify(zrax, path)
     whole_isa = whole.get("isa", "<rejected>")
+    accepted = isa.split("|")
     code = largest_code(data)
     raw = {}
     if code is not None:
@@ -179,7 +182,7 @@ def check(zrax, text_dir, item):
         raw = classify(zrax, text_path)
     raw_isa = raw.get("isa", "<rejected>" if code is not None else "<no code>")
     raw_order = raw.get("endianness")
-    if raw_isa == isa and raw_order == order:
+    if raw_isa in accepted and raw_order == order:
         raw_verdict = "right"
     elif raw_isa in ("<rejected>", "<no code>") or raw_isa.startswith("unknown"):
         raw_verdict = "none"
@@ -192,7 +195,7 @@ def check(zrax, text_dir, item):
         "expected": isa,
         "whole_isa": whole_isa,
         "whole_variant": whole.get("variant") or "",
-        "whole_verdict": "right" if whole_isa == isa else "wrong",
+        "whole_verdict": "right" if whole_isa in accepted else "wrong",
         "raw_isa": raw_isa,
         "raw_order": raw_order or "",
         "raw_confidence": f"{raw.get('confidence') or 0:.2f}",

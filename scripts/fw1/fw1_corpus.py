@@ -81,6 +81,18 @@ ROM_FAMILIES = [
 # PlayStation BIOS-ROM delay register), so the name is wrong (2026-11-04).
 # Intel HEX files whose names name a Zilog Z8 program (monitors, BASIC, Forth).
 Z8_HEX = re.compile(r"(?i)(z8[-_]forth|z8_mon|unimon_z8|basic_compiler_for_z8|rz8-40)")
+# Linux ihex2fw binary records (include/linux/ihex.h): big-endian address
+# (4) and length (2), the data, the next record at ALIGN(6 + length, 4), and
+# a zero-length record in the last 6 bytes. Records in the FF: segment load
+# into MCS-251 code memory (Intel 8XC251 user's guide, memory space FF:0000h-
+# FF:FFFFh), which the 8051 does not have; fw1 holds one such file, the
+# Edgeport `down2.fw` that Linux io_edgeport.c loads only on 80251 boards.
+IHEX2FW_HEADER = 6
+IHEX2FW_ALIGN = 4
+MCS251_CODE_SEGMENT = 0xFF
+MCS251_MIN_CODE_BYTES = 1024
+# Largest file read for the check (our choice: Linux USB firmware is small).
+IHEX2FW_MAX_BYTES = 1 << 20
 # PCI option ROM: `55 AA`, PCI data structure pointer at 0x18; the
 # structure (`PCIR`) holds the image length in 512 B units at 0x10 and the
 # code type at 0x14, 0 meaning PC-AT x86 (PCI Firmware Specification 3.0,
@@ -287,6 +299,34 @@ def code_blocks(cls, data):
     """The 4 KiB blocks of data that contain a return instruction of cls, concatenated."""
     kept = [data[i:i + RETURN_BLOCK] for i in range(0, len(data), RETURN_BLOCK)]
     return b"".join(b for b in kept if len(b) >= 64 and has_return(cls, b[:len(b) - len(b) % 4]))
+
+
+def ihex2fw_records(data):
+    """(address, data) of each Linux ihex2fw record, or None when `data` is
+    not a complete record list."""
+    records = []
+    pos = 0
+    last = len(data) - IHEX2FW_HEADER
+    while 0 <= pos <= last:
+        address = int.from_bytes(data[pos:pos + 4], "big")
+        length = int.from_bytes(data[pos + 4:pos + IHEX2FW_HEADER], "big")
+        if length == 0:
+            return records if pos == last and records else None
+        end = pos + IHEX2FW_HEADER + length
+        if end > len(data):
+            return None
+        records.append((address, data[pos + IHEX2FW_HEADER:end]))
+        pos = (end + IHEX2FW_ALIGN - 1) // IHEX2FW_ALIGN * IHEX2FW_ALIGN
+    return None
+
+
+def mcs251_code(data):
+    """The records of a Linux ihex2fw file that load in the MCS-251 code
+    segment, in address order; empty for any other file."""
+    records = ihex2fw_records(data) or []
+    code = [body for address, body in sorted(records) if address >> 16 == MCS251_CODE_SEGMENT]
+    joined = b"".join(code)
+    return joined if len(joined) >= MCS251_MIN_CODE_BYTES else b""
 
 
 def intel_hex_bytes(text):
@@ -634,6 +674,11 @@ def file_label(row, fw_dir, pil, smooth, bc, mame=None):
         return FileLabel(cls, "mame:" + region["set"], "fw1-mame", "mame-" + region["kind"], read)
     if Z8_HEX.search(name):
         return FileLabel("z8", group, "fw1-hex", "z8-hex", lambda: intel_hex_bytes(read()))
+    if name.endswith(".fw") and size <= IHEX2FW_MAX_BYTES and mcs251_code(read()):
+        # MCS-251 Source-mode code from a vendor compiler, unlike the SDCC
+        # output of the class (the only such code in fw1, so its own answer
+        # is fit, not held out).
+        return FileLabel("mcs251", group, "fw1-ihex2fw", "ihex2fw-mcs251", lambda: mcs251_code(read()))
     if XTIDE.match(name):
         return FileLabel("x86_16", "fw1:xtide", "fw1-xtide", "xtide", read, held_out=True)
     if row["format"] != "raw":
