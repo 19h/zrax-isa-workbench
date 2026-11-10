@@ -62,8 +62,8 @@ pub mod batch;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-#[cfg(feature = "wasm")]
-mod workbench;
+#[cfg(feature = "workbench")]
+pub mod workbench;
 
 pub use error::{ClassifierError, Result};
 pub use formatter::{

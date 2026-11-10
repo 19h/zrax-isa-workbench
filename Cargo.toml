@@ -103,7 +103,10 @@ batch = [
     "dep:crossterm",
     "dep:num_cpus",
 ]
-wasm = ["dep:wasm-bindgen", "dep:wide"]
+# Entropy, map and inspection engine shared by the browser and desktop
+# workbenches (src/workbench).
+workbench = ["dep:wide"]
+wasm = ["workbench", "dep:wasm-bindgen"]
 full-heuristics = []
 
 [profile.release]
