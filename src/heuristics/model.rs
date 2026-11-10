@@ -307,6 +307,55 @@ pub fn class_info(name: &str) -> Option<&'static ClassInfo> {
 pub struct Model<'a> {
     classes: Vec<(&'static ClassInfo, &'a [u8])>,
     cost_scale: u32,
+    /// The cost tables regrouped by byte pair, built on first use
+    /// ([`Model::pair_costs`]).
+    pair_costs: OnceLock<PairCosts>,
+}
+
+/// Row lengths of [`PairCosts`] are multiples of this, so that a loop over a
+/// row compiles to whole vector operations (16 bytes with SSE2, NEON and
+/// WASM SIMD) without a scalar remainder.
+const PAIR_ROW_ALIGN: usize = 16;
+
+/// Every class's cost of every byte pair, grouped by pair.
+///
+/// Scoring a window needs the cost of each of its pairs under every class.
+/// Read from the per-class tables that is one access per class and pair,
+/// each in a different 64 KiB table; read from here it is one contiguous row
+/// per pair. The copy takes slightly more
+/// memory than the tables themselves ([`PAIR_ROW_ALIGN`]).
+#[derive(Debug, Clone)]
+pub struct PairCosts {
+    row_len: usize,
+    rows: Vec<u8>,
+}
+
+impl PairCosts {
+    fn new(classes: &[(&'static ClassInfo, &[u8])]) -> Self {
+        // At least one aligned row length; the class count is a 16-bit field.
+        let padded_len = classes.len().max(1) + PAIR_ROW_ALIGN - 1;
+        let row_len = padded_len - padded_len % PAIR_ROW_ALIGN;
+        let mut rows = vec![0u8; TABLE_LEN * row_len];
+        for (pair, row) in rows.chunks_exact_mut(row_len).enumerate() {
+            for (cost, (_, table)) in row.iter_mut().zip(classes) {
+                *cost = table[pair];
+            }
+        }
+        Self { row_len, rows }
+    }
+
+    /// Length of every row: the class count rounded up to a multiple of
+    /// [`PAIR_ROW_ALIGN`].
+    pub fn row_len(&self) -> usize {
+        self.row_len
+    }
+
+    /// The costs of the pair (`prev`, `byte`) in class order, followed by
+    /// zeros up to [`PairCosts::row_len`].
+    pub fn row(&self, prev: u8, byte: u8) -> &[u8] {
+        let start = (usize::from(prev) << 8 | usize::from(byte)) * self.row_len;
+        &self.rows[start..start + self.row_len]
+    }
 }
 
 /// Error returned when model bytes are malformed.
@@ -350,7 +399,11 @@ impl<'a> Model<'a> {
                 classes.push((info, &bytes[off..off + TABLE_LEN]));
             }
         }
-        Ok(Self { classes, cost_scale })
+        Ok(Self {
+            classes,
+            cost_scale,
+            pair_costs: OnceLock::new(),
+        })
     }
 
     /// Serialize class tables (as produced by [`ModelBuilder`]) into a model file.
@@ -400,6 +453,12 @@ impl<'a> Model<'a> {
     /// Cost table by index (`TABLE_LEN` entries).
     pub fn table(&self, i: usize) -> &'a [u8] {
         self.classes[i].1
+    }
+
+    /// The cost tables regrouped by byte pair, built on first use.
+    pub fn pair_costs(&self) -> &PairCosts {
+        self.pair_costs
+            .get_or_init(|| PairCosts::new(&self.classes))
     }
 
     /// Iterate over class descriptions.

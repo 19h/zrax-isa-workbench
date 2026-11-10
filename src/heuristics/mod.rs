@@ -601,14 +601,44 @@ fn spread(candidates: &[usize], wanted: usize) -> Vec<usize> {
 }
 
 fn is_padding(w: &[u8]) -> bool {
+    is_byte_fill(w)
+        || FILL_WORD_WIDTHS.iter().any(|&width| is_word_fill(w, width))
+        || has_few_distinct_pairs(w)
+}
+
+/// The most values that may differ from a fill value which covers
+/// `fraction` of `count` values: `count` less the smallest whole number that
+/// reaches `fraction * count`.
+// Window lengths are far below f64's 52-bit mantissa, and the product is
+// between 0 and `count`, so the conversions are exact.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn max_other_values(count: usize, fraction: f64) -> usize {
+    let needed = (fraction * count as f64).ceil() as usize;
+    count.saturating_sub(needed)
+}
+
+/// Whether one byte value covers [`PADDING_FRACTION`] of the window.
+///
+/// Most windows are not fill, and the count of positions whose byte differs
+/// from the next one shows that without a histogram: every such position
+/// has a byte other than the fill value on one side, and a byte has two
+/// sides, so a filled window has at most two of them per other byte.
+fn is_byte_fill(w: &[u8]) -> bool {
+    let next_bytes = w.get(1..).unwrap_or_default();
+    let changes = w.iter().zip(next_bytes).filter(|(a, b)| a != b).count();
+    if changes > 2 * max_other_values(w.len(), PADDING_FRACTION) {
+        return false;
+    }
     let mut hist = [0u32; 256];
     for &b in w {
         hist[b as usize] += 1;
     }
     let max = hist.iter().copied().max().unwrap_or(0);
     max as f64 >= PADDING_FRACTION * w.len() as f64
-        || FILL_WORD_WIDTHS.iter().any(|&width| is_word_fill(w, width))
-        || has_few_distinct_pairs(w)
 }
 
 /// Whether the window has fewer than [`MIN_DISTINCT_PAIRS`] distinct
@@ -637,7 +667,24 @@ fn has_few_distinct_pairs(w: &[u8]) -> bool {
 /// Whether one aligned `width`-byte value covers [`WORD_FILL_FRACTION`] of
 /// the window's words. A value above half the words is the majority, so a
 /// majority vote finds the only candidate.
+///
+/// As in [`is_byte_fill`], the words that differ from the next word bound
+/// the answer first: a filled window has at most two per other word, and
+/// each has at most `width` bytes that differ from the byte one word on.
 fn is_word_fill(w: &[u8], width: usize) -> bool {
+    let words = w.chunks_exact(width).count();
+    if words == 0 {
+        return false;
+    }
+    let aligned = &w[..words * width];
+    let byte_changes = aligned
+        .iter()
+        .zip(&aligned[width..])
+        .filter(|(a, b)| a != b)
+        .count();
+    if byte_changes > 2 * width * max_other_values(words, WORD_FILL_FRACTION) {
+        return false;
+    }
     let mut candidate: &[u8] = &[];
     let mut lead = 0usize;
     for word in w.chunks_exact(width) {
@@ -650,7 +697,6 @@ fn is_word_fill(w: &[u8], width: usize) -> bool {
             lead -= 1;
         }
     }
-    let words = w.chunks_exact(width).count();
     let matching = w
         .chunks_exact(width)
         .filter(|&word| word == candidate)
@@ -669,14 +715,35 @@ fn is_text(w: &[u8]) -> bool {
     printable as f64 >= TEXT_FRACTION * w.len() as f64
 }
 
+/// Byte pairs whose costs are summed in 16 bits before the sums are widened:
+/// 257 costs of at most 255 each cannot exceed `u16::MAX`.
+const PAIRS_PER_BLOCK: usize = 257;
+
 /// Score one window against every class; returns costs in model units.
+///
+/// The sums are exact integers, so the costs do not depend on the order of
+/// the additions: this walks the window's pairs once and adds each pair's
+/// row of [`model::PairCosts`] to all classes at a time.
 fn window_costs(model: &Model, w: &[u8], costs: &mut Vec<u64>) {
-    costs.clear();
-    let pairs: Vec<u16> = w.windows(2).map(|p| u16::from(p[0]) << 8 | u16::from(p[1])).collect();
-    for i in 0..model.len() {
-        let t = model.table(i);
-        costs.push(pairs.iter().map(|&p| u64::from(t[p as usize])).sum());
+    let pair_costs = model.pair_costs();
+    let mut totals = vec![0u64; pair_costs.row_len()];
+    let mut block_costs = vec![0u16; pair_costs.row_len()];
+    let pairs = w.len().saturating_sub(1);
+    for block_start in (0..pairs).step_by(PAIRS_PER_BLOCK) {
+        let block_end = (block_start + PAIRS_PER_BLOCK).min(pairs);
+        block_costs.fill(0);
+        for pair in w[block_start..=block_end].windows(2) {
+            let row = pair_costs.row(pair[0], pair[1]);
+            for (block_cost, &cost) in block_costs.iter_mut().zip(row) {
+                *block_cost += u16::from(cost);
+            }
+        }
+        for (total, &block_cost) in totals.iter_mut().zip(&block_costs) {
+            *total += u64::from(block_cost);
+        }
     }
+    costs.clear();
+    costs.extend_from_slice(&totals[..model.len()]);
 }
 
 /// Scan `data` with `model` using windows of `window` bytes, looking at no
@@ -1229,6 +1296,103 @@ mod tests {
         let varied: Vec<u8> = (0..=255u8).collect();
         assert!(!has_few_distinct_pairs(&varied));
         assert!(!has_few_distinct_pairs(&[0x00]));
+    }
+
+    /// Deterministic bytes for the sweeps below (a 64-bit LCG, top byte).
+    fn noise(len: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        (0..len)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                state.to_be_bytes()[0]
+            })
+            .collect()
+    }
+
+    /// The byte-fill rule as defined, without the shortcut of `is_byte_fill`.
+    // Window lengths are far below f64's 52-bit mantissa.
+    #[allow(clippy::cast_precision_loss)]
+    fn is_byte_fill_by_histogram(w: &[u8]) -> bool {
+        let mut hist = [0usize; 256];
+        for &b in w {
+            hist[usize::from(b)] += 1;
+        }
+        let max = hist.iter().copied().max().unwrap_or(0);
+        max as f64 >= PADDING_FRACTION * w.len() as f64
+    }
+
+    /// The word-fill rule as defined, without the shortcut of `is_word_fill`.
+    // Window lengths are far below f64's 52-bit mantissa.
+    #[allow(clippy::cast_precision_loss)]
+    fn is_word_fill_by_count(w: &[u8], width: usize) -> bool {
+        let words: Vec<&[u8]> = w.chunks_exact(width).collect();
+        let most = words
+            .iter()
+            .map(|&word| words.iter().filter(|&&other| other == word).count())
+            .max()
+            .unwrap_or(0);
+        !words.is_empty() && most as f64 >= WORD_FILL_FRACTION * words.len() as f64
+    }
+
+    #[test]
+    fn fill_shortcuts_agree_with_full_counts_at_every_density() {
+        // Windows of one fill word with a growing number of other bytes,
+        // scattered or in one run, cross both thresholds from either side.
+        for len in [0, 1, 2, 3, 4, 5, 7, 8, 24, 96, 97, 1023, 1024] {
+            for others in (0..=len).step_by((len / 64).max(1)) {
+                for scattered in [false, true] {
+                    let seed = (len * 2048 + others * 2 + usize::from(scattered)) as u64;
+                    let mut w = [0x12, 0x12, 0x34, 0x12].repeat(len / 4 + 1);
+                    w.truncate(len);
+                    let replacements = noise(others, seed);
+                    for (i, replacement) in replacements.into_iter().enumerate() {
+                        let at = if scattered { (i * 7919) % len } else { i };
+                        w[at] = replacement;
+                    }
+                    let case = format!("len {len}, {others} others, scattered {scattered}");
+                    assert_eq!(is_byte_fill(&w), is_byte_fill_by_histogram(&w), "{case}");
+                    for width in FILL_WORD_WIDTHS {
+                        assert_eq!(
+                            is_word_fill(&w, width),
+                            is_word_fill_by_count(&w, width),
+                            "{case}, width {width}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn window_costs_are_the_sums_of_each_class_table() {
+        // The costliest table (255 everywhere) and a window longer than
+        // several 16-bit blocks check that no block sum wraps.
+        let model_bytes = Model::serialize(
+            &[
+                ("x86".into(), vec![255; model::TABLE_LEN]),
+                ("arm".into(), noise(model::TABLE_LEN, 1)),
+                ("neg_rodata".into(), noise(model::TABLE_LEN, 2)),
+            ],
+            model::COST_SCALE,
+        );
+        let model = Model::parse(&model_bytes).expect("valid model");
+        let data = noise(3000, 3);
+        let mut costs = Vec::new();
+        for len in [0, 1, 2, 3, 257, 258, 259, 514, 515, 1024, 3000] {
+            let w = &data[..len];
+            window_costs(&model, w, &mut costs);
+            let expected: Vec<u64> = (0..model.len())
+                .map(|class| {
+                    let table = model.table(class);
+                    w.windows(2)
+                        .map(|p| u64::from(table[usize::from(p[0]) << 8 | usize::from(p[1])]))
+                        .sum()
+                })
+                .collect();
+            assert_eq!(costs, expected, "window of {len} B");
+        }
     }
 
     /// A model with the Z80 family's plain, eZ80 and 8080/8085 classes.

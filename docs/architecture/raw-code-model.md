@@ -93,6 +93,57 @@ compressed/encrypted data is never code.
    of one ISA (MIPS32/64, both endiannesses, microMIPS) so sibling variants never
    erode confidence in the ISA itself.
 
+### Scan cost
+
+The scan decides the ISA of headerless input and also finds the code regions
+that extension detection decodes (`heuristics::code_regions`, with a 4 MiB
+budget, `extensions::SCAN_BUDGET`), so its cost per window sets the cost of
+both stages.
+
+* **Scoring.** A window's cost under every class is the sum of one table entry
+  per byte pair and class. The model file stores one 64 KiB table per class;
+  read that way, a window takes one access per pair and class, scattered over
+  106 tables (7 MiB in all).
+  `Model::pair_costs` regroups the tables by pair, one row of class costs per
+  byte pair, so a window reads one contiguous row per pair and adds it to all
+  classes at a time (`window_costs`). Rows are padded to a multiple of 16
+  bytes; the costs are summed in 16-bit blocks of 257 pairs (257 × 255 fits in
+  16 bits) and then widened. The sums are exact integers, so the scores are
+  the same as with the per-class tables.
+  The regrouped copy is built on first use: 7.0 MiB of memory and 14 ms on
+  the machine below, once per process (also in the WASM build).
+* **Padding.** Padding is looked for in every window of the input, whatever
+  the budget. A window with one fill value that covers a fraction `f` of its
+  `n` values has at most `n - ceil(f·n)` other values, and so at most twice
+  that many places where a value differs from the next one. Counting those
+  places first rejects most windows without the histogram and the word
+  counts (`is_byte_fill`, `is_word_fill`); windows that pass are counted as
+  before.
+
+Both changes keep every result. Verified on 2026-11-10 (macOS 27.3, Apple
+silicon, 16 cores, rustc 1.99.1) with a differential snapshot against commit
+`7c6b82f`: 76,696 records, identical. The inputs were the 585 files under
+`tests/fixtures` and `test_binaries` plus seven local files of 1.7 to 16 MiB
+(three system Mach-O binaries, a WASM module, and three concatenations of the
+test binaries); each record is a hash of the `detect_payload` JSON (default,
+no extensions, thorough), of the window verdicts, decision and class evidence
+at four budgets, or of `code_regions` for five ISAs; files up to 16 KiB were
+also truncated and mutated at 24 positions each, and 171 noise buffers were
+scanned. `cargo test --all-features --locked`: 3,019 passed, 7 ignored;
+browser tests: 402 passed, 4 skipped (D10/RX113 firmware not in the
+repository).
+
+Measured on the seven local files, single thread, release build:
+
+| Stage | Before | After |
+| --- | ---: | ---: |
+| `detect_payload`, default options | 1.142 s | 0.249 s |
+| `detect_payload`, extensions off | 0.139 s | 0.057 s |
+| `heuristics::scan`, 4 MiB budget | 1.122 s | 0.217 s |
+
+x86 hosts were not measured, so the ratio there is not known from these
+numbers.
+
 ## Decision and confidence
 
 * **Primary family** = the family with the most window weight (strong and
