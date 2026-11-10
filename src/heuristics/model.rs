@@ -139,6 +139,8 @@ pub const CLASSES: &[ClassInfo] = &[
     code!("mips64el", "mips", Mips64, Little, 64),
     code!("micromips", "mips", Mips, Big, 32, "micromips"),
     code!("micromipsel", "mips", Mips, Little, 32, "micromips"),
+    // Its own family: nanoMIPS shares no instruction encoding with MIPS32.
+    code!("nanomips", "nanomips", Nanomips, Little, 32),
     code!("ppc", "ppc", Ppc, Big, 32),
     code!("ppc64", "ppc", Ppc64, Big, 64),
     code!("ppc64le", "ppc", Ppc64, Little, 64),

@@ -33,6 +33,12 @@ interleaved image.
 - Never in fast mode (`ClassifierOptions::fast`, `try_transforms: false`), and
   never for nested components, so the cost stays bounded at one input.
 
+A raw input that stays refused as sparse code (`HeuristicSparseCode`) after
+these readings gets one wider scan of its stored bytes, which is not a
+transform: see [A second look must agree](architecture/raw-code-model.md). It
+runs last, so it only reaches inputs with no other answer, and a note records
+that it decided. If it does not decide, the first scan's error stands.
+
 The applied reading is recorded in the `transform_applied` metadata entry,
 along with the number of readings tried (`transform_trials`) and a note that
 the stored bytes are not in execution order. Extensions are detected on the
@@ -148,6 +154,14 @@ it missed.
 | Bad-block remapping and ECC correction | Not performed; spare areas are only removed |
 
 ## Verification
+
+On 2026-11-06 (macOS AArch64, rustc 1.99.1), `tests/transforms.rs` (18 tests)
+passed, including the second look:
+`code_the_default_budget_samples_past_is_decided_by_a_wider_scan`,
+`a_wider_scan_does_not_lower_the_bar_for_sparse_code`,
+`a_wider_scan_does_not_answer_when_its_code_windows_disagree` and
+`sparse_rescan_runs_only_when_a_larger_budget_shows_more`. The disagreement
+test fails when the agreement check is removed from `rescan_sparse_code`.
 
 On 2026-11-04 (macOS AArch64), `tests/transforms.rs` (13 tests) passed,
 including the code-share rule, the single-window rule for large inputs

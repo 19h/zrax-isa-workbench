@@ -177,6 +177,125 @@ fn sparse_code_with_strong_evidence_classifies_a_large_image() {
     assert!(p.primary.confidence >= 0.9);
 }
 
+/// Tile size of the code model's scan, and tiles in the images below.
+const SCAN_TILE: usize = 1024;
+const IMAGE_TILES: usize = 2048;
+
+/// Overwrite each of `tiles` in `image` with 1 KiB of the named code fixture.
+fn write_code_tiles(image: &mut [u8], fixture_name: &str, tiles: &[usize]) {
+    let code = fixture(fixture_name);
+    for &tile in tiles {
+        image[tile * SCAN_TILE..(tile + 1) * SCAN_TILE].copy_from_slice(&code[..SCAN_TILE]);
+    }
+}
+
+/// 2 MiB of table rows with 1 KiB of AArch64 code at each of `code_tiles`.
+fn image_with_code_tiles(code_tiles: &[usize]) -> Vec<u8> {
+    let mut image = table_rows(IMAGE_TILES * SCAN_TILE);
+    write_code_tiles(&mut image, "aarch64.text.bin", code_tiles);
+    image
+}
+
+/// A default scan of 1 MiB reads about every second tile of 2 MiB: even tiles
+/// in this part of the image, so code on odd tiles stays unseen.
+const SEEN_TILE: usize = 10;
+const UNSEEN_TILES: std::ops::Range<usize> = 100..140;
+
+#[test]
+fn code_the_default_budget_samples_past_is_decided_by_a_wider_scan() {
+    let unseen: Vec<usize> = UNSEEN_TILES.filter(|tile| tile % 2 == 1).collect();
+    let image = image_with_code_tiles(&[&[SEEN_TILE], &unseen[..]].concat());
+
+    // The default budget shows one window of the code: too little to decide.
+    let reading = heuristics::analyze_reading(&image, &ClassifierOptions::new(), 1);
+    assert!(matches!(
+        reading.result,
+        Err(ClassifierError::HeuristicSparseCode {
+            code_windows: 1,
+            ..
+        })
+    ));
+
+    let p = detect_payload(&image, &ClassifierOptions::new()).unwrap();
+    assert_eq!(p.primary.isa, Isa::AArch64);
+    assert!(p.primary.confidence >= 0.9);
+    assert!(
+        p.notes
+            .iter()
+            .any(|note| note.message.contains("too sparse for a 1 MiB scan")),
+        "{:?}",
+        p.notes
+    );
+}
+
+#[test]
+fn a_wider_scan_does_not_lower_the_bar_for_sparse_code() {
+    // One window in the whole image stays too little, and the error is the
+    // first scan's.
+    let image = image_with_code_tiles(&[SEEN_TILE]);
+    assert!(matches!(
+        detect_payload(&image, &ClassifierOptions::new()),
+        Err(ClassifierError::HeuristicSparseCode {
+            code_windows: 1,
+            informative_windows: 1024
+        })
+    ));
+}
+
+/// Odd tiles the default scan does not read: full AArch64 tiles in the first
+/// range, and in the second range tiles that hold only [`WEAK_TILE_CODE_BYTES`]
+/// of RISC-V code.
+const STRONG_TILES: std::ops::Range<usize> = 51..81;
+const WEAK_TILES: std::ops::Range<usize> = 101..181;
+
+/// With table rows filling the rest of the tile, this much RISC-V code wins the
+/// window at a small margin: it counts as a code window but weighs little.
+const WEAK_TILE_CODE_BYTES: usize = 488;
+
+#[test]
+fn a_wider_scan_does_not_answer_when_its_code_windows_disagree() {
+    // Strong windows of one family among many more weak windows of another. The
+    // false-alarm allowance cancels the weak windows, so the wider scan decides
+    // at high confidence although most code windows disagree: the shape of an LG
+    // phone media archive read as 6502 at 0.98 (fw1, 2026-11-06).
+    let strong: Vec<usize> = STRONG_TILES.step_by(2).collect();
+    let mut image = image_with_code_tiles(&[&[SEEN_TILE], &strong[..]].concat());
+    let riscv64 = fixture("riscv64.text.bin");
+    for tile in WEAK_TILES.step_by(2) {
+        let start = tile * SCAN_TILE;
+        image[start..start + WEAK_TILE_CODE_BYTES]
+            .copy_from_slice(&riscv64[..WEAK_TILE_CODE_BYTES]);
+    }
+
+    let wider = heuristics::sparse_rescan_options(image.len(), &ClassifierOptions::new()).unwrap();
+    let reading = heuristics::analyze_reading(&image, &wider, 1);
+    assert!(!reading.code_windows_agree());
+    let decided = reading.result.unwrap();
+    assert_eq!(decided.isa, Isa::AArch64);
+    assert!(decided.confidence >= 0.9);
+
+    // The classifier therefore keeps the first scan's refusal.
+    assert!(matches!(
+        detect_payload(&image, &ClassifierOptions::new()),
+        Err(ClassifierError::HeuristicSparseCode {
+            code_windows: 1,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn sparse_rescan_runs_only_when_a_larger_budget_shows_more() {
+    let large = IMAGE_TILES * SCAN_TILE;
+    let wider = heuristics::sparse_rescan_options(large, &ClassifierOptions::new()).unwrap();
+    assert!(wider.max_scan_bytes > large);
+    // The default scan covered a small input, and the thorough one any input.
+    assert!(heuristics::sparse_rescan_options(SCAN_TILE, &ClassifierOptions::new()).is_none());
+    assert!(heuristics::sparse_rescan_options(large, &ClassifierOptions::thorough()).is_none());
+    // Fast mode trades accuracy for time.
+    assert!(heuristics::sparse_rescan_options(large, &ClassifierOptions::fast()).is_none());
+}
+
 #[test]
 fn recovered_code_is_code_throughout() {
     let code = fixture("riscv64.text.bin");

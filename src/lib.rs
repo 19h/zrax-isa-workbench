@@ -582,6 +582,54 @@ fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transfo
     best
 }
 
+/// A raw input classified by a second, wider scan of its stored bytes.
+struct SparseRescan {
+    result: ClassificationResult,
+    candidates: Vec<IsaCandidate>,
+    first_budget: usize,
+    budget: usize,
+}
+
+impl SparseRescan {
+    fn note(&self) -> String {
+        format!(
+            "Code is too sparse for a {} MiB scan to decide; decided by a scan of up to {} MiB",
+            self.first_budget >> 20,
+            self.budget >> 20
+        )
+    }
+}
+
+/// Read a raw input again at a larger scan budget when `error` says its code
+/// was too sparse to decide. This runs after the transform search, so it only
+/// reaches inputs that have no other answer. The wider scan passes the same
+/// sparse-code rule as the first: it can show more of the code, not lower the
+/// bar. Since it also meets more chance windows, its code windows must agree
+/// on the family as well.
+fn rescan_sparse_code(
+    data: &[u8],
+    error: &ClassifierError,
+    options: &ClassifierOptions,
+) -> Option<SparseRescan> {
+    if !matches!(error, ClassifierError::HeuristicSparseCode { .. }) {
+        return None;
+    }
+    let wider = ClassifierOptions {
+        detect_extensions: false,
+        ..heuristics::sparse_rescan_options(data.len(), options)?
+    };
+    let reading = heuristics::analyze_reading(data, &wider, 1);
+    if !reading.code_windows_agree() {
+        return None;
+    }
+    Some(SparseRescan {
+        result: reading.result.ok()?,
+        candidates: ranked(reading.scores),
+        first_budget: options.max_scan_bytes,
+        budget: wider.max_scan_bytes,
+    })
+}
+
 /// Metadata recording which transform produced the analyzed bytes.
 fn transform_metadata(transform: transform::Transform, trials: usize) -> Vec<MetadataEntry> {
     vec![
@@ -1349,14 +1397,19 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                     r
                 }
                 Err(e) if depth == 0 && options.try_transforms => {
-                    let Some(found) = search_transforms(data, options) else {
+                    if let Some(found) = search_transforms(data, options) {
+                        notes.push(Note::info(found.note()));
+                        metadata.extend(transform_metadata(found.transform, found.trials));
+                        candidates = found.candidates;
+                        code_payload = Some(std::borrow::Cow::Owned(found.data));
+                        found.result
+                    } else if let Some(rescan) = rescan_sparse_code(data, &e, options) {
+                        notes.push(Note::info(rescan.note()));
+                        candidates = rescan.candidates;
+                        rescan.result
+                    } else {
                         return Err(e);
-                    };
-                    notes.push(Note::info(found.note()));
-                    metadata.extend(transform_metadata(found.transform, found.trials));
-                    candidates = found.candidates;
-                    code_payload = Some(std::borrow::Cow::Owned(found.data));
-                    found.result
+                    }
                 }
                 Err(e) => return Err(e),
             }

@@ -135,7 +135,7 @@ rejections by the window-count rules below are `HeuristicSparseCode`, whose
 message gives the decided family's code windows and the informative windows
 (earlier the same rejections reported a false "confidence below threshold").
 
-Three rules bound what the evidence may claim:
+Four rules bound what the evidence may claim:
 
 * **One window is not an image.** In an input with at least 8 informative
   (non-padding) windows, the decided family needs at least two code windows
@@ -158,6 +158,23 @@ Three rules bound what the evidence may claim:
   read as 68000 at 0.85 from 2 or 3 windows, four of which the byte-swap
   reading then recovers at 0.99 (the fifth has an odd length, which no swap
   applies to).
+* **A second look must agree.** A top-level raw input that is refused as
+  sparse and that no transform explains is scanned once more, at up to 64 MiB
+  (`SPARSE_RESCAN_BYTES`, `sparse_rescan_options`), because the default 1 MiB
+  budget samples a large image: an Epson firmware update of 39.9 MB shows 5
+  code windows at 1 MiB (under 0.9, so refused) and 81 in all (0.99). Fast mode
+  skips this, as does a scan that already covered the input. The wider scan
+  answers under the two rules above, and the decided family must also hold at
+  least 75% of all code windows (`RESCAN_MIN_AGREEMENT_PERCENT`), since a whole
+  read meets more chance windows: the false-alarm allowance cancels the weak
+  windows of the family's rivals, so two strong ones can decide. In the fw1 set (2026-11-06)
+  the wider scan answered 5 files. Four have 97% or more of their code windows
+  in the decided family (three Arm images whose strings name Arm kernel paths
+  or U-Boot, and a file named for the Alpha 21264); an LG phone media archive,
+  read as 6502 at 0.98, has 21%, with 67 windows spread over C-SKY, 6502, HC08,
+  ST20 and others, and is refused. The Epson update has at least 96%. The rule
+  applies to the second look only: first-scan decisions are unchanged, including
+  any that share this weakness.
 * **Superset variants need clearly more evidence.** Z80 code is also valid
   eZ80 code, so a Z80 image fits both classes. The eZ80 variant is reported
   only when its evidence over the family's windows is at least 1.75 times the
@@ -285,6 +302,7 @@ of the code bytes is reported.
 | MCS-251 code (`corpus_extra/mcs251-objects`, corpus `corpus-mcs251x`) | the armgen programs (186 that compile) and 556 library modules built with the SDCC MCS-251 downstream port (`gevico/sdcc-c251` at a pinned commit, `scripts/sdcc_matrix/variants-mcs251.txt`; Source-mode code), 3.1 MB | `mcs251` by target config |
 | MCS-251 vendor-compiled code (`fw1-ihex2fw` in `scripts/fw1/fw1_corpus.py`) | the Linux ihex2fw records of the Edgeport `down2.fw` that load in the MCS-251 code segment `FF:` (16 KiB of Source-mode code unlike SDCC's; Linux `io_edgeport.c` loads the file only on 80251 boards); the only such code found, so its own answer is fit | `mcs251` by load address and driver |
 | UniPhier IPP code (corpus `corpus-ippx`) | the executable sections of the 212 FreeBSD ELF files with `e_machine` 0x1040 of the submitted IPP samples ([UniPhier IPP](../ipp.md)), one group per file, 23.1 MB | `ipp` by `e_machine` and the toolchain's own `ipp` names |
+| nanoMIPS code (corpus `corpus-nanomipsx`) | the sized function symbols of one MediaTek MT6833 modem ELF with `e_machine` 0xF9 ([nanoMIPS](../nanomips.md); `scripts/fw1/elf_symbol_corpus.py`), split by blocks of 1 MiB of address space, 25.7 MB | `nanomips` by `e_machine`, the toolchain's `elf32-littlenanomips` and the symbol table |
 | FR firmware (`fw1-realos` in `scripts/fw1/fw1_corpus.py`) | fw1 raw images that link Fujitsu's REALOS/FR (its banner): 7 camera firmware images, the 4 KiB blocks holding an FR `RET`; FR30's other samples are GCC output | `fr30` by the RTOS banner |
 | µ'nSP code (`fw1-mame-unsp` in `scripts/fw1/fw1_corpus.py`) | the instruction words of 8 fw1 ROMs that MAME maps flat into a µ'nSP SoC's program space (V.Smile and V.Smile Baby system ROMs, SPG2xx and GPL162xx game ROMs; 5 ROM families), found by recursive descent from the interrupt vectors, through `call` targets, and from untraced `push` words (`scripts/fw1/unsp_trace.py`, decoding after MAME's µ'nSP disassembler). A ROM is traced only if the words at the vectors form a vector table (the handler vectors within 0x400 words; 0x14-0x194 in these ROMs): MAME's `pokermor` ROM has 16-bit pixel data there, and its trace through pixel data was labelled code until 2026-11-04. Traced functions of 64 words or more that are mostly one repeated word are fill, not code; 64 KiB blocks of the same ROMs without one traced instruction as `neg_media` (as `neg_rodata` they shifted that class: an ARM relocation table read as PIC24) | MAME's CPU for the ROM region; the trace |
 | byte lanes (`scripts/fw1/lane_negatives.py`) | the 2 and 4 byte lanes of 68000 code samples, 2.3 MB: one file per lane of a wide bus holds no whole instruction | `neg_lanes` by construction |
@@ -370,12 +388,13 @@ non-code, for whole samples and for 128 B / 512 B / 2 KB snippets.
 
 ### Results (held-out test split, model trained on the train split)
 
-Measured on 2026-11-04 (macOS AArch64) with `ship23-train`, the shipped recipe
-trained on the train split only: 100 classes (94 code classes plus 6 data
-classes); the shipped all-splits model `ship23-all` has 105 (99 code
+Measured on 2026-11-06 (macOS AArch64) with `ship24-train`, the shipped recipe
+trained on the train split only: 101 classes (95 code classes plus 6 data
+classes); the shipped all-splits model `ship24-all` has 106 (100 code
 classes), since five small classes reach the 48 KiB minimum only with their
-test samples. Every summary line below is identical to `ship22-train`, the
-model before the `ipp` class and the `down2.fw` sample.
+test samples. Every summary line below is identical to `ship23-train`, the
+model before the `nanomips` class, except the base corpus at 128 B (93.8%
+correct, 6.2% rejected).
 
 Base corpus (`corpus-base7`: the compiled and raw corpora, the Hexagon
 collection, MN10300, hand-written PIC14, 8080/8085 and the synthetic
@@ -386,7 +405,7 @@ negatives): 14,526 held-out code samples, 464 non-code samples.
 | whole sample | 99.3% | 0.0% | 0.7% | 0.2% |
 | 2 KB snippet | 98.6% | 0.0% | 1.4% | 0.0% |
 | 512 B snippet | 98.5% | 0.0% | 1.5% | 0.0% |
-| 128 B snippet | 93.8% | 0.0% | 6.2% | 0.0% |
+| 128 B snippet | 93.7% | 0.0% | 6.3% | 0.0% |
 
 Macro average over classes (whole samples): 97.2%. Exact variant (bitwidth and
 endianness right as well): 98.9% (98.9% with `ship19-train` on `corpus-base6`;
@@ -409,6 +428,7 @@ the class's hand-written training samples).
 | Z8 and eZ8 (`corpus-z8x`, the submitted Z8 archive) | 13 | 100.0% | 100.0% | 0.0% | 0.0% | 0 | - |
 | ISAdetect files 400-549 (`corpus-ds2h`) | 3,438 | 100.0% | 100.0% | 0.0% | 0.0% | 0 | - |
 | UniPhier IPP (`corpus-ippx`, 0x1040 ELF code) | 33 | 100.0% | 100.0% | 0.0% | 0.0% | 0 | - |
+| nanoMIPS (`corpus-nanomipsx`, MT6833 modem functions) | 82 | 100.0% | 100.0% | 0.0% | 0.0% | 0 | - |
 
 The fw1 false accepts are 5 of 300 held-out `.rodata`/`.data` samples (3
 little-endian and 1 big-endian ARM, 1 CR16; iteration 12: 4). The fw1 µ'nSP
@@ -416,7 +436,7 @@ test samples (4 in each word order) are right; the traced bytes of
 `29dl640e.u3`, pixel data, are no longer labelled code.
 
 Through the CLI, file by file, on the 940 fw1 golden test files: 940 correct,
-0 wrong, 0 rejected (`ship23-train`). With `ship23-all`, on 1,150 ISAdetect files
+0 wrong, 0 rejected (`ship24-train`). With `ship24-all`, on 1,150 ISAdetect files
 no corpus uses (files 550-599 of each of the 23 architectures), the largest executable
 section alone, as raw bytes, gives 1,149 right answers, 0 wrong and 1
 rejection (a 556-byte section; `scripts/fw1/elf_check.py`); with the ARM
@@ -441,7 +461,9 @@ family), below the 1.0 strong-window threshold. Re-check this
 (`examples/calibrate.rs`) whenever a class is added. With the `ipp` class
 (2026-11-04): on the 19,680 held-out non-code windows of `corpus-base7`,
 `ship23-train` gives 24 code verdicts (`ship22-train` 23) with the same
-largest margin, 0.96; the one new verdict is an `ipp` window at 0.60.
+largest margin, 0.96; the one new verdict is an `ipp` window at 0.60. With the
+`nanomips` class (2026-11-06), `ship24-train` gives the same 24 and 0.96, none
+of them `nanomips`.
 
 Old engine on the held-out samples of the earlier base corpus (it covers fewer ISAs): 79.0% correct
 / 11.1% wrong / 9.8% rejected for whole samples, 54.6% / 29.4% / 16.0% for

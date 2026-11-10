@@ -595,14 +595,8 @@ pub fn e_machine_to_isa(e_machine: u16, ei_class: u8) -> (Isa, u8) {
         // Graphcore IPU
         0xF8 => (Isa::Unknown(0xF8), 32),
 
-        // nanoMIPS (EM_NANOMIPS)
-        0xF9 => {
-            if is_64 {
-                (Isa::Mips64, 64)
-            } else {
-                (Isa::Mips, 32)
-            }
-        }
+        // nanoMIPS (EM_NANOMIPS): its own instruction encoding, not MIPS32's
+        0xF9 => (Isa::Nanomips, if is_64 { 64 } else { 32 }),
 
         // Netronome NFP
         0xFA => (Isa::Unknown(0xFA), 32),
@@ -1742,7 +1736,7 @@ mod tests {
         assert_eq!(e_machine_to_isa(0xA4, 1).0, Isa::Hexagon);
         assert_eq!(e_machine_to_isa(0xF4, 1).0, Isa::Lanai);
         assert_eq!(e_machine_to_isa(0x27, 1).0, Isa::Csky);
-        assert_eq!(e_machine_to_isa(0xF9, 1).0, Isa::Mips);
+        assert_eq!(e_machine_to_isa(0xF9, 1), (Isa::Nanomips, 32));
         assert_eq!(e_machine_to_isa(0x102, 2).0, Isa::LoongArch64);
         assert_eq!(e_machine_to_isa(0x31, 1).0, Isa::H8500);
         assert_eq!(e_machine_to_isa(0x47, 1).0, Isa::Hc08);

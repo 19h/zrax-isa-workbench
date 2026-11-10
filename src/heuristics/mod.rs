@@ -104,6 +104,28 @@ const LARGE_INPUT_WINDOWS: usize = 8;
 const SPARSE_CODE_RATIO: usize = 64;
 const SPARSE_MIN_CONFIDENCE: f64 = 0.9;
 
+/// Scan budget of the second look at an input whose code was too sparse for
+/// the first scan to decide ([`sparse_rescan_options`]). The default 1 MiB
+/// budget samples a large image: an Epson firmware update of 39.9 MB holds
+/// about 81 KiB of Arm code among compressed data, and 1 MiB of it shows 5
+/// of those windows (0.87), while the whole file shows 22 strong ones
+/// (0.99). A whole read of that file takes about 3 s on a loaded machine;
+/// the bound keeps the second look proportional on far larger inputs.
+const SPARSE_RESCAN_BYTES: usize = 64 * 1024 * 1024;
+
+/// Least share of a second look's code windows that the decided family must
+/// hold ([`Reading::code_windows_agree`]). A whole read of a large input meets
+/// enough chance windows for a family to pass the sparse-code rule on two
+/// strong windows, because the false-alarm allowance cancels the weak windows
+/// of its rivals. Real code agrees and chance does not: in the fw1 set
+/// (2026-11-06) the second look answered 5 files, and an Epson firmware update
+/// besides. Three Arm images whose strings name Arm kernel paths or U-Boot, a
+/// file named for the Alpha 21264 and the Epson update have 96% or more of
+/// their code windows in the decided family, while an LG phone media archive
+/// (`chunk_0112.0112`) read as 6502 at 0.98 has 21%, with 67 windows spread
+/// over C-SKY, 6502, HC08, ST20 and others.
+const RESCAN_MIN_AGREEMENT_PERCENT: usize = 75;
+
 /// A window whose most common byte covers this fraction is padding.
 const PADDING_FRACTION: f64 = 0.90;
 /// A window whose most common aligned 16- or 32-bit word covers this
@@ -771,6 +793,24 @@ fn scan_budget(data_len: usize, options: &ClassifierOptions) -> usize {
     }
 }
 
+/// The options for a second look at an input of `data_len` bytes whose code
+/// was too sparse for `options` to decide, or `None` when a larger budget
+/// would show nothing new: fast mode trades accuracy for time by design, and
+/// a scan that covered the input or spent the larger budget has seen it all.
+pub fn sparse_rescan_options(
+    data_len: usize,
+    options: &ClassifierOptions,
+) -> Option<ClassifierOptions> {
+    let covered = scan_budget(data_len, options) >= data_len.min(SPARSE_RESCAN_BYTES);
+    if options.fast_mode || covered {
+        return None;
+    }
+    Some(ClassifierOptions {
+        max_scan_bytes: SPARSE_RESCAN_BYTES,
+        ..options.clone()
+    })
+}
+
 fn result_for(info: &ClassInfo, confidence: f64) -> Option<ClassificationResult> {
     let ClassKind::Code { isa, endianness, bitwidth, variant } = info.kind else {
         return None;
@@ -851,6 +891,16 @@ pub struct Reading {
     pub code_windows: usize,
     /// Windows scanned that were not padding.
     pub informative_windows: usize,
+    /// Code windows won by any family.
+    pub all_code_windows: usize,
+}
+
+impl Reading {
+    /// Whether the decided family holds enough of the code windows for a
+    /// second look at the input to answer ([`RESCAN_MIN_AGREEMENT_PERCENT`]).
+    pub fn code_windows_agree(&self) -> bool {
+        self.code_windows * 100 >= self.all_code_windows * RESCAN_MIN_AGREEMENT_PERCENT
+    }
 }
 
 /// Classify `data` like [`analyze_detailed_with_trials`] and also report how
@@ -876,6 +926,7 @@ fn analyze_reading_with_model(
             code_share: 0.0,
             code_windows: 0,
             informative_windows: 0,
+            all_code_windows: 0,
         };
     }
     let budget = scan_budget(data.len(), options);
@@ -920,6 +971,7 @@ fn analyze_reading_with_model(
         code_share,
         code_windows,
         informative_windows,
+        all_code_windows: scan.code_windows().count(),
     }
 }
 

@@ -186,6 +186,10 @@ def elf_class(machine, is_le, is_64, flags):
         # `ipp` (`rtld-elf/ipp`, `R_IPP_*` relocations, `ipp-unknown-freebsd`):
         # Panasonic UniPhier IPP, big-endian 16-bit parcels.
         return "ipp" if not is_le else None
+    if m == 249:
+        # EM_NANOMIPS: its own instruction encoding, not MIPS32's. Every
+        # nanoMIPS image seen so far is little-endian.
+        return "nanomips" if is_le else None
     return None
 
 

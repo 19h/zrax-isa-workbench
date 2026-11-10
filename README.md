@@ -367,12 +367,13 @@ classified. Parser results and notes retain those distinctions.
 [Format coverage gaps](docs/format-gaps.md) lists known kernel-image defects
 and unsupported codecs, containers and dump transforms.
 
-The shipped `ISAM` version-1 model contains **105 classes**: 99 code variants and
+The shipped `ISAM` version-1 model contains **106 classes**: 100 code variants and
 six non-code classes (`neg_lanes`, `neg_media`, `neg_pixels`, `neg_rodata`,
 `neg_table`, `neg_text`). Code
 variants include mainstream x86/ARM/MIPS/PowerPC/RISC-V, legacy architectures,
-microcontrollers, DSPs, virtual machines and Panasonic's UniPhier IPP (ELF
-`e_machine` 0x1040, whose toolchain names it `ipp`; [UniPhier IPP](docs/ipp.md)). Its exact names and interpretation
+microcontrollers, DSPs, virtual machines, Panasonic's UniPhier IPP (ELF
+`e_machine` 0x1040, whose toolchain names it `ipp`; [UniPhier IPP](docs/ipp.md)) and nanoMIPS
+(ELF `e_machine` 0xF9; [nanoMIPS](docs/nanomips.md)). Its exact names and interpretation
 are defined by [model.rs](src/heuristics/model.rs) and the embedded
 [model.bin](src/heuristics/model.bin).
 
@@ -409,7 +410,9 @@ one 16- or 32-bit word (70% of the words), or fewer than 16 distinct byte pairs 
 family with the most window weight decides; the false-alarm allowance for weak windows only sets
 the confidence. In an input of 8 or more informative windows, one code window does not decide an
 ISA; with fewer than one code window per 64 informative windows, the decision needs 0.9
-confidence (both rejections are `HeuristicSparseCode`). A superset variant needs at least 1.75
+confidence (both rejections are `HeuristicSparseCode`). A top-level raw input refused this way that
+no transform explains is scanned once more, at up to 64 MiB, under the same rules, and at least 75%
+of its code windows must then fall in the decided family. A superset variant needs at least 1.75
 times its base variant's evidence (eZ80 over Z80, Z80 over 8080/8085); an 8080/8085 answer becomes
 Z80 when a Z80 decode of its code finds more than 0.2% prefix-group instructions, and a 6502 answer
 becomes 65816 when its code switches to native mode (`REP`/`SEP`, `XCE`). A transformed reading

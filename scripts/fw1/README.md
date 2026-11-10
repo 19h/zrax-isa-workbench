@@ -22,15 +22,20 @@ Most scripts read and write tables in the current directory. Run them from
 
 ## Rebuild the shipped model
 
-`src/heuristics/model.bin` is `ship23-all` (2026-11-04): the base corpus
+`src/heuristics/model.bin` is `ship24-all` (2026-11-06): the base corpus
 (`corpus-base7`), the fw1 golden set (`corpus-fw1v23`), transform-augmented
 fw1 negatives (`corpus-aug14`), mined hard negatives (`corpus-hardU6`),
 68HC11 code (`corpus-hc11x`), byte lanes of 68000 code (`corpus-lanes`),
 hand-written 68000 code (`corpus-m68kx`), Z8 and eZ8 code from the submitted
-Z8 archive (`corpus-z8x`), SDCC MCS-251 output (`corpus-mcs251x`) and
+Z8 archive (`corpus-z8x`), SDCC MCS-251 output (`corpus-mcs251x`),
 Panasonic UniPhier IPP code from the 0x1040 ELF files of the submitted IPP
-samples (`corpus-ippx`), all splits.
+samples (`corpus-ippx`) and nanoMIPS code from the submitted MT6833 modem ELF
+(`corpus-nanomipsx`), all splits.
 
+- `corpus-nanomipsx` holds the sized function symbols of that ELF
+  (`elf_symbol_corpus.py`, `docs/nanomips.md`): 322 train and 82 test samples,
+  split by blocks of 1 MiB of address space. `ship23` is the same recipe
+  without it.
 - `corpus-fw1v23` is `corpus-fw1v22` with one sample more: the MCS-251
   records of the Edgeport `down2.fw` (`ihex2fw-mcs251`, train split).
 
@@ -244,14 +249,17 @@ for cls in os.listdir(f"{C}/samples"):
     if cls != "ipp":
         shutil.rmtree(f"{C}/samples/{cls}")
 EOF
-python3 -I scripts/fw1/merge.py "$C/corpus-ship23" "$C/corpus-base7" "$C/corpus-fw1v23" "$C/corpus-aug14" \
+#    nanoMIPS code: the function symbols of the submitted MT6833 modem ELF (e_machine 0xF9;
+#    third-party firmware, read in place, never copied into the repo)
+python3 -I scripts/fw1/elf_symbol_corpus.py /path/to/TK_MD_PCB01_MT6833_S00.elf "$C/corpus-nanomipsx" --class nanomips
+python3 -I scripts/fw1/merge.py "$C/corpus-ship24" "$C/corpus-base7" "$C/corpus-fw1v23" "$C/corpus-aug14" \
   "$C/corpus-hardU6" "$C/corpus-hc11x" "$C/corpus-lanes" "$C/corpus-m68kx" "$C/corpus-z8x" "$C/corpus-mcs251x" \
-  "$C/corpus-ippx"
+  "$C/corpus-ippx" "$C/corpus-nanomipsx"
 
 # 6. Held-out model and sample-level evaluation
-$T/train_model --corpus "$C/corpus-ship23" --split train --out $M/ship23-train.bin
-for c in base7 fw1v23 ds2h m68kx z8x mcs251x ippx; do
-  $T/eval --corpus "$C/corpus-$c" --model $M/ship23-train.bin > reports/fw1/eval-ship23-train-$c.txt
+$T/train_model --corpus "$C/corpus-ship24" --split train --out $M/ship24-train.bin
+for c in base7 fw1v23 ds2h m68kx z8x mcs251x ippx nanomipsx; do
+  $T/eval --corpus "$C/corpus-$c" --model $M/ship24-train.bin > reports/fw1/eval-ship24-train-$c.txt
 done
 
 # 7. File-level evaluation through the CLI with the held-out model
@@ -262,16 +270,18 @@ done
   awk -F'\t' 'NR>1 && $2=="test"{print $1}' golden23.tsv > golden23-test.txt)
 [ -d reports/wt-verify ] || git worktree add --detach reports/wt-verify HEAD
 git ls-files -z --cached --others --exclude-standard | rsync -a --from0 --files-from=- ./ reports/wt-verify/
-cp $M/ship23-train.bin reports/wt-verify/src/heuristics/model.bin
+cp $M/ship24-train.bin reports/wt-verify/src/heuristics/model.bin
 (cd reports/wt-verify && cargo build --release --locked --features cli --bin zrax) &&
-  cp reports/wt-verify/target/release/zrax reports/fw1/bin/zrax-ship23-train
+  cp reports/wt-verify/target/release/zrax reports/fw1/bin/zrax-ship24-train
 (cd reports/fw1 &&
-  "$R/scripts/fw1/runlist.sh" "$PWD/bin/zrax-ship23-train" "$FW" "$PWD/golden23-test.txt" "$PWD/gold-ship23t.jsonl" &&
-  python3 -I "$R/scripts/fw1/score.py" --golden golden23.tsv test gold-ship23t.jsonl)
+  "$R/scripts/fw1/runlist.sh" "$PWD/bin/zrax-ship24-train" "$FW" "$PWD/golden23-test.txt" "$PWD/gold-ship24t.jsonl" &&
+  python3 -I "$R/scripts/fw1/score.py" --golden golden23.tsv test gold-ship24t.jsonl)
 
 # 8. Leave-one-group-out cross-validation of the µ'nSP families and the MAME data
 #    sets: each fold is trained without the group's samples (and the windows mined
 #    from them), and the group's fw1 files are classified with a CLI built on it.
+#    Last run on 2026-11-04 with corpus-ship23 (step 5's merge without corpus-nanomipsx);
+#    not repeated for ship24.
 #    crossval/unsp-files.tsv and crossval/mame21-files.tsv list `group<TAB>sha256` of
 #    the files each group labels (UNSP_SETS ROMs; MAME graphics and sound ROMs).
 #    Fold models go to their own directory: crossval_run.sh reuses a model of the
@@ -291,22 +301,24 @@ scripts/fw1/crossval_run.sh reports/fw1/crossval/mame23-folds.tsv reports/fw1/cr
 
 # 9. Ship model (all splits), the full-corpus run against the findings, and the
 #    file-level ELF check on held-out ISAdetect files and the Hexagon libraries
-$T/train_model --corpus "$C/corpus-ship23" --out $M/ship23-all.bin
-cp $M/ship23-all.bin src/heuristics/model.bin
-cargo build --release --locked --features cli --bin zrax && cp target/release/zrax reports/fw1/bin/zrax-ship23
+$T/train_model --corpus "$C/corpus-ship24" --out $M/ship24-all.bin
+cp $M/ship24-all.bin src/heuristics/model.bin
+cargo build --release --locked --features cli --bin zrax && cp target/release/zrax reports/fw1/bin/zrax-ship24
 (cd reports/fw1 &&
   ls "$FW" | grep -v '\.json$' > all-shas.txt &&
-  "$R/scripts/fw1/runlist.sh" "$PWD/bin/zrax-ship23" "$FW" "$PWD/all-shas.txt" "$PWD/run-ship23.jsonl" &&
-  python3 -I "$R/scripts/fw1/verify_findings.py" run-ship23.jsonl --fw "$FW" --show 20)
-mkdir -p reports/fw1/elfcheck23
-python3 -I scripts/fw1/elf_check.py reports/fw1/bin/zrax-ship23 reports/fw1/elfcheck23 \
+  "$R/scripts/fw1/runlist.sh" "$PWD/bin/zrax-ship24" "$FW" "$PWD/all-shas.txt" "$PWD/run-ship24.jsonl" &&
+  python3 -I "$R/scripts/fw1/verify_findings.py" run-ship24.jsonl --fw "$FW" --show 20)
+mkdir -p reports/fw1/elfcheck24
+python3 -I scripts/fw1/elf_check.py reports/fw1/bin/zrax-ship24 reports/fw1/elfcheck24 \
   --ds2 /path/to/ds2 --elf "$H"
 ```
 
 `runlist.sh` changes into `FW`, so the list and output paths must be
 absolute. `--exclude-ids` uses `corpus-base2`, the base corpus without the
 MN10300, PIC14, 8080/8085 and synthetic additions; none of those can equal an
-fw1 sample. Training is deterministic. On 2026-11-04 the shipped model was
+fw1 sample. Training is deterministic. `ship24` (2026-11-06) adds
+`corpus-nanomipsx` to the corpora of `ship23`, which were not rebuilt, and does
+not repeat step 8. On 2026-11-04 the `ship23` model was
 built with step 2 (`corpus-base7`) and steps 4 to 9 as listed, except that
 the hard negatives of step 5 are those mined for `ship14` from
 `corpus-fw1v13` (named `corpus-hardA6`, `corpus-hardB6`, `corpus-hardU6` and
@@ -346,7 +358,7 @@ register (`0x1F801010`).
 Groups are firmware families (MAME sets for MAME labels), split 4:1 into
 train and test by group hash.
 
-## Results (2026-11-04, macOS AArch64)
+## Results (2026-11-06, macOS AArch64)
 
 Held-out, file level, through the CLI, on the 940 golden test files of
 `corpus-fw1v23` (the same files as `corpus-fw1v22`'s):
@@ -357,21 +369,23 @@ Held-out, file level, through the CLI, on the 940 golden test files of
 | Iteration 12 (`m12-train`, 924 files of `corpus-fw1v13`) | 99.0% | 8 | 1 |
 | Shipped recipe, train split (`ship22-train`) | 100.0% | 0 | 0 |
 | Shipped recipe, train split (`ship23-train`) | 100.0% | 0 | 0 |
+| Shipped recipe, train split (`ship24-train`) | 100.0% | 0 | 0 |
 
-Per label for `ship23-train` (and `ship22-train`), all at 100%: 8051
+Per label for `ship24-train` (and `ship23-train`), all at 100%: 8051
 vectors (48), AMD GPU microcode (3), calibration maps (38), Cortex-M (195), ECU96 dumps (9), MAME
 8085 program ROMs (3), MAME graphics (6) and sound (1), MAME µ'nSP ROMs
 (4), option ROMs (115), PCM (182), Qualcomm code segments (276), Qualcomm
 data segments (18), data segments with another core's code (4), REALOS/FR
 images (2), DISCiPLE ROMs (6), 16-bit tables (6), XT-IDE (22) and Z8 HEX
-(2). On the 3,158 training-split files, `ship23-all` gets 3,158 right
+(2). On the 3,158 training-split files, `ship24-all` gets 3,158 right
 (`down2.fw`, the one file more than for `ship22-all`, among them). The
 NAOMI BIOS label accepts SH-4 or SuperH (`golden_files.py` `LABEL_ISA`):
 the NAOMI BIOS runs on an SH-4.
 
-Sample level, `ship23-train` on held-out samples (whole samples); every
-summary line equals `ship22-train`'s, the model without the `ipp` class and
-the `down2.fw` sample:
+Sample level, `ship24-train` on held-out samples (whole samples); every
+summary line equals `ship23-train`'s, the model without the `nanomips` class,
+except `corpus-base7` at 128 B, outside this table (correct 93.8% to 93.7%,
+exact 92.4% to 92.3%, rejected 6.2% to 6.3%):
 
 | Corpus | Code samples | Correct | Exact | Wrong | Non-code | False accepts |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -382,19 +396,23 @@ the `down2.fw` sample:
 | `corpus-z8x` | 13 | 100.0% | 100.0% | 0.0% | 0 | - |
 | `corpus-mcs251x` | 114 | 100.0% | 100.0% | 0.0% | 0 | - |
 | `corpus-ippx` | 33 | 100.0% | 100.0% | 0.0% | 0 | - |
+| `corpus-nanomipsx` | 82 | 100.0% | 100.0% | 0.0% | 0 | - |
 
 The fw1 false accepts are 5 of 300 held-out `.rodata`/`.data` samples (3
 little-endian and 1 big-endian ARM, 1 CR16; iteration 12: 4). The three
 rejected hand-written 68000 samples are under 1 KiB of code each. In
 `corpus-base7`, one SuperH sample of 300 reads as SH-4, which counts as not
-exact. With `ship23-train`, the MAME data ROM `5.u5` reads as WebAssembly at
-0.73 from six weak windows; with `ship23-all` it gives no ISA. The 33
+exact. With `ship24-train`, the MAME data ROM `5.u5` reads as WebAssembly at
+0.73 (six weak windows when measured with `ship23-train`); with `ship24-all` it
+gives no ISA. The 33
 held-out IPP files share C library code with training files (143 of the 212
 are static executables), so the `corpus-ippx` row is an upper bound for
-other IPP code.
+other IPP code. The 82 held-out nanoMIPS samples are blocks of the image the
+training samples come from, so the `corpus-nanomipsx` row is an upper bound
+for other nanoMIPS code too.
 
-File level on the other two corpora (`elf_check.py`, `ship23-all`, as with
-`ship22-all`): the
+File level on the other two corpora (`elf_check.py`, `ship24-all`, as with
+`ship23-all`): the
 ISAdetect files 550-599 of each architecture (1,150, used by no corpus)
 classify whole 1,150 right, and their largest executable section alone,
 as raw bytes, 1,149 right, 0 wrong and 1 rejected (556 B, 42% of it a jump
@@ -402,7 +420,9 @@ table); one of the 50 Debian `sh4` sections reads as SH-4, which the
 `sh4` label accepts. The 1,063 Hexagon libraries: 1,063 and 1,063 (they
 are training data of the base corpus).
 
-MAME ground truth beyond the golden labels (`mame_cpus.py`; `ship23-all`):
+MAME ground truth beyond the golden labels (`mame_cpus.py`; `ship24-all`; the
+two cross-validations last ran on `ship23` folds and were not repeated for
+`ship24`):
 
 - Program ROMs whose MAME CPU maps to a zrax ISA (302 files, with the ROMs
   MAME declares inside macros; byte-lane dumps must give no ISA, word-lane
@@ -435,10 +455,12 @@ MAME ground truth beyond the golden labels (`mame_cpus.py`; `ship23-all`):
   for it; a fold without both groups also leaves it inconclusive. On
   `ship19` folds: 51 of 51 ROMs of 16 sets.
 
-Full corpus with `ship23-all` (`run-ship23.jsonl`), by
+Full corpus with `ship24-all` (`run-ship24.jsonl`), by
 `verify_findings.py --fw`: every category is resolved, with no exception
 list; where MAME names the file's CPU (`mame_cpus.tsv`), the answer must be
-that CPU's ISA.
+that CPU's ISA. The full run predates the second-look agreement rule, which can
+only remove second-look answers, so the 5 files the second look answered were
+run again with the rule and their answers replaced.
 
 | Category | Fixed |
 | --- | --- |
@@ -479,11 +501,16 @@ assumption was wrong:
 
 Against the iteration-12 ship model, 206 files changed answer under
 `ship14`; each is reviewed with the evidence checked on its bytes in
-`reports/fw1/review-206.md` (`review206.py`): with `ship23-all`, 204 right,
+`reports/fw1/review-206.md` (`review206.py`): with `ship24-all`, 204 right,
 0 wrong, 0 misses and 2 without a claim where the bytes do not establish
 the ISA. `down2.fw` reads as MCS-251 (Linux `io_edgeport.c` loads it only on
 80251-based Edgeports); its records are `mcs251` training data, so that is
-fit; `vs-bios.rom` reads as 68000 after a 16-bit swap. The 45 files that
+fit; `vs-bios.rom` reads as 68000 after a 16-bit swap. The 4 of 18,014 files
+that change from `ship23-all` to `ship24-all` are all refusals the second look
+answers (`docs/architecture/raw-code-model.md`), none of them from the new
+class: 3 as Arm (`loki-v3.3.2.plf`, `lnvgy_fw_bmc_ambt46h-6.67…hpm`,
+`lnvgy_fw_bmc_ambt46m-6.72…hpm`, whose strings name `arch/arm`, U-Boot and
+`aspeed_scu`) and `dmcc21264_v1_7.sys` as Alpha at 0.98. The 45 files that
 change from `ship22-all` to `ship23-all` (ISA or format): 19 SuperH ELF files
 whose `e_flags` name an SH-4 machine to SH-4, 18 EZ-USB 8051 images to the
 `ihex2fw` format (still 8051), the 6 ELF files of machine 0x1040 to the IPP,
@@ -502,13 +529,14 @@ Arm).
 The submitted `failures` and `z8` folders are reviewed file by file in
 `reports/failures/README.md`.
 
-`cargo test --all-features --locked` passes with `ship23-all` and the
-external fixtures set (`D10_FIXTURE`, `TI_C55X_FIXTURE`): 3,007 passed, 0
-failed, 7 ignored; of the ignored, the D10 reference test passes when run with
-`D10_REFERENCE_DIR` (records written by the supplied extractor), one needs a
-`UARP_FIXTURE` that is not on this machine, and five are diagnostic tools.
-`npm test` after `./build-web.sh` with the same fixtures: 406 tests, 406
-passed, 0 skipped, 0 failed.
+`cargo test --all-features --locked --no-fail-fast` passes with `ship24-all`
+and the external fixtures set (`D10_FIXTURE`, `TI_C55X_FIXTURE`), rustc 1.99.1:
+3,012 passed, 0 failed, 7 ignored; of the ignored, the D10 reference test
+passed when last run with `D10_REFERENCE_DIR` (records written by the supplied
+extractor, on `ship23-all`, not repeated), one needs a `UARP_FIXTURE` that is
+not on this machine, and five are diagnostic tools. `npm test` after
+`./build-web.sh` with the same fixtures: 406 tests, 406 passed, 0 skipped, 0
+failed.
 
 ## Known limits
 
@@ -521,15 +549,27 @@ passed, 0 skipped, 0 failed.
   words of byte-swapped IPP images is not established (`docs/ipp.md`).
 - Hand-written 68000 training code is 359 KB: most 68000 sources on GitHub
   are for asm68k, vasm or Devpac, which AS does not assemble.
-- StuffIt archives are not parsed.
+- Only StuffIt 5 archives are parsed, and only their stored members are read
+  (`docs/archives.md`).
 - Single byte lanes of 68000 code give no ISA since `neg_lanes`; the lanes
   interleaved with `--interleave` do (`cpu30*` 0.99, `wuerfel_fix*` 0.99).
+- nanoMIPS: the training code comes from one modem image and no instruction is
+  decoded (`docs/nanomips.md`).
+- The agreement rule covers only the second look. In a submitted ECU collection,
+  outside fw1 (2026-11-06), 7 Mercedes EDC16 1 MiB dumps read as `riscv64` at
+  0.98 to 0.99 on the first scan; the 3 inspected hold no PowerPC `blr`, and
+  their code windows split among Dalvik, RISC-V, x86-64, eZ8 and PIC14. What
+  the rule would do on the first scan has not been measured.
+- `--interleave` can give an answer nothing else supports: 2 Mercedes 300TD
+  dumps of that collection read as `s390` at 0.99. Whether they are a lane pair
+  at all is not established (one holds ASCII text in consecutive bytes).
 
 ## Files
 
 | Script | Purpose |
 | --- | --- |
 | `fw1_corpus.py` | golden corpus builder (uses `scripts/build_corpus.py`) |
+| `elf_symbol_corpus.py` | code samples of one large ELF image, from its sized function symbols, split by blocks of address space |
 | `golden_files.py` | file-level labels with split, for CLI scoring |
 | `holdout.py` | reduce a corpus to one source's rows not in the training corpus, as test |
 | `mame_regions.py`, `mame_match.py` | MAME ROM regions by SHA-1 (ROM macros of the driver and its local headers expanded), and the fw1 files MAME lists |

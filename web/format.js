@@ -31,7 +31,7 @@ const ISA_NAMES = {
   i860: 'i860', i960: 'i960', vax: 'VAX', pdp11: 'PDP-11',
   z80: 'Z80', mcs6502: '6502',
   wasm: 'WebAssembly', jvm: 'JVM', dalvik: 'Dalvik',
-  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU', mn10300: 'MN10300', ipp: 'Panasonic UniPhier IPP', i8085: 'Intel 8080/8085', mcs251: 'Intel MCS-251',
+  ppc_vle: 'PowerPC VLE', cell_spu: 'Cell SPU', mn10300: 'MN10300', ipp: 'Panasonic UniPhier IPP', nanomips: 'nanoMIPS', i8085: 'Intel 8080/8085', mcs251: 'Intel MCS-251',
   unsp: 'unSP', w65816: '65816',
 };
 

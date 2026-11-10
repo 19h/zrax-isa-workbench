@@ -12,6 +12,7 @@ const MODEL_ISAS = {
   w65816: '65816',
   mcs251: 'Intel MCS-251',
   ipp: 'Panasonic UniPhier IPP',
+  nanomips: 'nanoMIPS',
 };
 
 test('raw-code model ISAs have display names', () => {

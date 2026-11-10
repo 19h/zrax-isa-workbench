@@ -31,6 +31,10 @@ pub enum Isa {
     // MIPS family
     Mips,
     Mips64,
+    /// `nanoMIPS` (ELF `e_machine` 0xF9): MIPS's successor, with its own
+    /// encoding of 16-, 32- and 48-bit instructions that MIPS32 code does not
+    /// share
+    Nanomips,
 
     // PowerPC family
     Ppc,
@@ -300,6 +304,7 @@ impl Isa {
             Isa::RiscV128 => "RISC-V (128-bit)",
             Isa::Mips => "MIPS (32-bit)",
             Isa::Mips64 => "MIPS (64-bit)",
+            Isa::Nanomips => "nanoMIPS",
             Isa::Ppc => "PowerPC (32-bit)",
             Isa::Ppc64 => "PowerPC (64-bit)",
             Isa::S390 => "IBM S/390",
@@ -426,6 +431,7 @@ impl Isa {
             | Isa::Arm
             | Isa::RiscV32
             | Isa::Mips
+            | Isa::Nanomips
             | Isa::Ppc
             | Isa::S390
             | Isa::Sparc
