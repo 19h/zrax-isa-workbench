@@ -1,5 +1,6 @@
 # Build products; Cargo.lock is committed for reproducible application builds.
 /target/
+/crates/target/
 /pkg/
 /dist/
 node_modules/

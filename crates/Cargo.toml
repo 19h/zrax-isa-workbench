@@ -1,0 +1,25 @@
+# Applications built on the zrax classifier (the package in the repository
+# root). They form their own workspace with their own lockfile, so that
+# adding a GUI toolkit's dependency tree never changes the versions the
+# classifier, its WASM build and the donation server are built and tested
+# with. `zrax-desktop/tests/lockfiles.rs` checks that both lockfiles agree
+# on the classifier's own dependencies.
+[workspace]
+resolver = "2"
+members = ["apeiron-core", "zrax-donate", "zrax-desktop"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+
+[profile.dev]
+opt-level = 1
+
+# The classifier and the entropy kernels are very slow without optimization.
+[profile.dev.package.zrax]
+opt-level = 3
+
+# Apeiron's kernels are hot loops over file bytes.
+[profile.dev.package.apeiron-core]
+opt-level = 3

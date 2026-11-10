@@ -1,0 +1,29 @@
+[package]
+name = "zrax-donate"
+version = "0.1.0"
+edition = "2021"
+description = "Client for the fwdonor firmware donation service: accept rule, proof of work and resumable uploads"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/19h/zrax-isa-workbench"
+publish = false
+
+[dependencies]
+# The accept rule is applied to zrax's own payload type, so the client and
+# the server must link the same zrax revision (see docs/desktop.md).
+zrax = { path = "../..", default-features = false }
+
+base64 = "0.22"
+bytes = "1"
+hex = "0.4"
+reqwest = { version = "0.13", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11.0"
+thiserror = "1.0"
+tokio = { version = "1", features = ["rt", "sync", "time", "fs", "io-util", "macros"] }
+tokio-util = "0.7"
+
+[dev-dependencies]
+axum = "0.8"
+tempfile = "3.10"
+tokio = { version = "1", features = ["rt-multi-thread", "net"] }

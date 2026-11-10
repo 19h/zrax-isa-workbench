@@ -1,0 +1,50 @@
+[package]
+name = "zrax-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Native zrax workbench: classification, entropy maps, hex, strings and certificates, with firmware donation"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/19h/zrax-isa-workbench"
+publish = false
+
+[[bin]]
+name = "zrax-desktop"
+path = "src/main.rs"
+
+[dependencies]
+zrax = { path = "../..", default-features = false, features = ["workbench"] }
+zrax-donate = { path = "../zrax-donate" }
+# Apeiron's analysis kernels, pixel generators and compute renderer, behind
+# the entropy tab (crates/apeiron-core/README.md). The library is named
+# `apeiron`.
+apeiron-core = { path = "../apeiron-core" }
+
+# gpui has no current release on crates.io under its own name. `gpui-pre`
+# is a weekly snapshot of zed main, and gpui-component pins one snapshot
+# exactly, so all three versions move together (docs/desktop.md).
+gpui = { package = "gpui-pre", version = "=0.3.12" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12", features = ["font-kit", "wayland", "x11"] }
+gpui-component = "=0.9.1"
+
+anyhow = "1.0"
+# The donation client is tokio-based; it runs on a small runtime of its own
+# next to gpui's executors (src/donate.rs).
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Map rasters are handed to gpui as `image` frames, so this must be the
+# version gpui itself uses. PNG encoding serves the `screenshots` feature.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[features]
+# Compile Metal shaders at startup instead of at build time. Use this on a
+# Mac whose Xcode lacks the Metal Toolchain component; release builds use
+# precompiled shaders (the default).
+runtime-shaders = ["gpui_platform/runtime_shaders"]
+
+# Development only: `ZRAX_SCREENSHOT=<file.png>` renders the window to an
+# image once analysis has finished, then exits. This is how views are
+# compared with the browser workbench where the screen cannot be captured.
+# It builds gpui with its test support, so it is never part of a release.
+screenshots = ["gpui_platform/test-support"]

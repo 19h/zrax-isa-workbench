@@ -1,0 +1,29 @@
+[package]
+name = "apeiron-core"
+version = "0.1.0"
+edition = "2021"
+description = "Apeiron's binary entropy and complexity analysis and visualization core, vendored without its egui application"
+license = "MIT"
+repository = "https://github.com/19h/apeiron"
+publish = false
+
+# Upstream's library name, so its doc examples and paths stay as published.
+[lib]
+name = "apeiron"
+
+[dependencies]
+# Versions as in apeiron's own manifest at the vendored commit.
+rayon = "1.10"
+wide = "0.7"
+# Tiered compression for the Kolmogorov complexity approximation.
+xz2 = "0.1"
+zstd = { version = "0.13", default-features = false, features = ["zstdmt"] }
+
+# The compute-shader renderer owns its own device and reads pixels back.
+wgpu = { version = "23", optional = true }
+pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1.14", features = ["derive"], optional = true }
+
+[features]
+default = ["gpu"]
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
