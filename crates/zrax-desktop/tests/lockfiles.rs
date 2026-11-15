@@ -11,9 +11,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-/// The classifier feature the desktop enables on top of the defaults-off
-/// build; its optional dependency is compiled in.
-const ENABLED_OPTIONAL_DEPENDENCIES: &[&str] = &["wide"];
+/// The classifier features the desktop enables on top of the defaults-off
+/// build (`workbench`, which implies `certificates` and `image4-aes`); their
+/// optional dependencies are compiled in.
+const ENABLED_OPTIONAL_DEPENDENCIES: &[&str] =
+    &["wide", "x509-parser", "base64", "aes", "cbc", "ctr"];
 
 /// Every version of every package in a lockfile.
 fn locked_versions(lockfile: &Path) -> BTreeMap<String, BTreeSet<String>> {

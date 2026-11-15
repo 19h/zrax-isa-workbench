@@ -636,3 +636,76 @@ called code.
 
 ISAs without enough ground truth are left out of the model rather than
 guessed at. Container formats still identify them from their headers.
+
+## Model card
+
+`src/heuristics/model_card.json` ships beside `model.bin` and is read through
+`heuristics::ModelCard::embedded()`. It lets a consumer say what was measured
+about the class behind an answer instead of repeating the confidence value,
+which is a capped score and not a probability.
+
+| Field | Content |
+|---|---|
+| `model`, `model_sha256` | The embedded model and the SHA-256 of its `model.bin` |
+| `measured_model`, `measured_model_sha256` | The model the held-out results were measured with: the same recipe trained on the train split only |
+| `measured_on`, `corpora` | Date of the evaluation and the corpora whose test splits it covered |
+| `classes.<class>.training` | Samples, distinct groups and distinct sources of the class in the corpus the embedded model is trained on |
+| `classes.<class>.held_out.<input>` | `n`, `correct`, `exact`, `wrong`, `rejected` as counts, for whole samples (`file`) and snippets (`128`, `512`, `2048`) |
+
+"Correct" is the right family; "exact" also has the right ISA, byte order and
+bit width. The variant (A32 against Thumb, microMIPS) is not scored, so the
+card says nothing about it. A non-code class counts a sample read as code as
+`wrong`. `ModelCard::family_held_out` and `ModelCard::answer_held_out` sum the
+classes of a family or of one ISA, byte order and bit width.
+
+The card of `ship24-all` (2026-11-15, macOS AArch64; the evaluation reproduced
+the eight `eval-ship24-train-*.txt` reports of 2026-11-06 byte for byte):
+
+- Whole samples, code classes: 19,207 samples, 19,098 right family, 19,041
+  exact, 0 wrong, 109 rejected. Non-code: 1,000 samples, 6 read as code.
+- 21 code classes have fewer than 10 held-out whole samples (`cskyv1` 1,
+  `f2mc16` 1, `hc16` 1, `mn10200` 1, `oakdsp` 1, `r32c` 1, `cskyv1eb` 2,
+  `dalvik` 2, `st20` 2, `tic28x` 2, `tic3x` 2, `tic3xeb` 2, `pic24` 3,
+  `tlcs900` 3, `ez80` 5, `unsp` 5, `unspeb` 5, `x86_16` 7, `ez8` 8, `jvm` 8,
+  `z8` 8). Their records are fit to a few pieces of one or two programs.
+- Six code classes of the embedded model have training data and no held-out
+  whole-sample record: `adsp21xx`, `c166`, `dsp56k`, `dsp56keb`, `hc11` and
+  `m6800`. The measured model lacks them or the test splits hold no sample
+  of them; nothing was measured about their answers.
+- The card also lists 22 classes of the corpus manifest that are not in the
+  model (too little code, or left out on purpose); they never answer.
+
+`scripts/fw1/model_card.py` builds the card (`scripts/fw1/README.md`, step 6).
+`tests/model_card.rs` checks that it names the embedded `model.bin`, has a
+record for every class of the model, and that its tallies add up. The card is
+not evidence beyond its corpora: assumption A7 of the README applies to it.
+
+## Detection report
+
+`zrax::detect_report` answers for a consumer that must decide how to load the
+bytes. It runs the decision path of `detect_payload` and returns
+`report::DetectionReport`:
+
+| Field | Content |
+|---|---|
+| `outcome` | `Decided` with the payload `detect_payload` returns, or `Abstained` with the reason (`too_small`, `inconclusive`, `sparse_code`, `format`), the error text and, for raw input, the ranked candidates of the stored bytes' reading |
+| `reading` | For input the code model read as a whole: the family it favours, informative windows, code windows of that family and of any family, the share of informative bytes in the family's code windows, the scan budget, the transform, the readings tried, and whether the wider sparse scan decided. Present for a refusal too. `None` when a recognized format answered |
+| `boot_marker` | The Cortex-M vector table, x86 reset vector or STM8 vector table of a raw image, whether or not it changed the answer |
+| `layout` | For a container that parses: format, variant, declared target, entry point, and every child and load section with its file offset, stored size, decoded size, codec, opaque flag and, for a section, its destination address |
+
+`report::member_bytes(data, index)` returns the decoded bytes of a listed
+member, at most 64 MiB. The member list is `inspection::subfiles` extended to
+the kernel, bFLT and EPOC formats, which that function does not enumerate.
+
+Boundaries:
+
+- A reading counts windows of the bytes the model read. For a transformed
+  reading those are the transformed bytes; the payload's `transform_applied`
+  metadata and `stored_range` map them back.
+- A container whose answer comes from the code model run on its contents has
+  no `reading`: the report of a member's own bytes has it.
+- Section addresses and the entry point are in the units the container's
+  notes state. Nothing infers a base address for a raw image.
+- `tests/report.rs` covers the equality with `detect_payload`, the refusal
+  reasons, the readings, the markers, a child and a load section, and
+  truncation and mutation sweeps.

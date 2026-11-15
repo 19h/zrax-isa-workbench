@@ -187,6 +187,7 @@ pub enum Kind {
     /// A UDF volume or UDF bridge disc.
     Udf(super::udf::Layout),
     /// A standalone X.509 certificate file.
+    #[cfg(feature = "certificates")]
     X509(super::x509::Layout),
     /// A data file with its own magic: binary property list or QCA board data.
     DataFile(super::datafile::Layout),
@@ -261,6 +262,7 @@ impl Kind {
             Self::Ntfs(layout) => layout.format(),
             Self::Wim(layout) => layout.format(),
             Self::Udf(layout) => layout.format(),
+            #[cfg(feature = "certificates")]
             Self::X509(layout) => layout.format(),
             Self::DataFile(layout) => layout.format(),
             Self::Cfb(layout) => layout.format(),
@@ -333,6 +335,7 @@ impl Kind {
             Self::Ntfs(layout) => layout.label(),
             Self::Wim(layout) => layout.label(),
             Self::Udf(layout) => layout.label(),
+            #[cfg(feature = "certificates")]
             Self::X509(layout) => layout.label(),
             Self::DataFile(layout) => layout.label(),
             Self::Cfb(layout) => layout.label(),
@@ -405,6 +408,7 @@ impl Kind {
             Self::Ntfs(layout) => layout.is_weak(),
             Self::Wim(layout) => layout.is_weak(),
             Self::Udf(layout) => layout.is_weak(),
+            #[cfg(feature = "certificates")]
             Self::X509(layout) => layout.is_weak(),
             Self::DataFile(layout) => layout.is_weak(),
             Self::Cfb(layout) => layout.is_weak(),
@@ -482,6 +486,7 @@ pub fn parse(data: &[u8], kind: Kind) -> Result<Container<'_>> {
         Kind::Ntfs(layout) => super::ntfs::parse_container(data, layout),
         Kind::Wim(layout) => super::wim::parse_container(data, layout),
         Kind::Udf(layout) => super::udf::parse_container(data, layout),
+        #[cfg(feature = "certificates")]
         Kind::X509(layout) => super::x509::parse_container(data, layout),
         Kind::DataFile(layout) => super::datafile::parse_container(data, layout),
         Kind::Cfb(layout) => super::cfb::parse_container(data, layout),

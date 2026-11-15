@@ -9572,11 +9572,9 @@ name = "zrax"
 version = "0.1.0"
 dependencies = [
  "aes",
- "anyhow",
  "base64 0.22.1",
  "bitflags 2.13.2",
  "brotli-decompressor",
- "byteorder",
  "bzip2",
  "cbc",
  "ctr",
@@ -9590,7 +9588,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "wide",
  "x509-parser",
 ]

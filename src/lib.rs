@@ -43,6 +43,7 @@
 #![allow(clippy::too_many_lines)]
 
 /// X.509 certificates found anywhere in a byte buffer.
+#[cfg(feature = "certificates")]
 pub mod certificates;
 pub mod error;
 pub mod extensions;
@@ -51,6 +52,7 @@ pub mod formatter;
 pub mod heuristics;
 pub mod image4;
 pub mod inspection;
+pub mod report;
 /// Printable strings in ASCII, UTF-8 and UTF-16.
 pub mod strings;
 pub mod transform;
@@ -70,6 +72,7 @@ pub use formatter::{
     CandidatesFormatter, HumanFormatter, JsonFormatter, PayloadFormatter, ShortFormatter,
 };
 pub use heuristics::DetectedIsa;
+pub use report::DetectionReport;
 pub use types::{
     ClassificationMetadata, ClassificationResult, ClassificationSource, ClassifierOptions,
     ContainedArch, DecodedRange, DetectionPayload, Endianness, Extension, ExtensionCategory,
@@ -135,7 +138,50 @@ pub fn detect_bytes(data: &[u8]) -> Result<DetectionPayload> {
 /// This goes through exactly the same decision path as
 /// [`classify_bytes_with_options`].
 pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<DetectionPayload> {
-    let c = classify(data, options)?;
+    classify(data, options).map(payload_of)
+}
+
+/// Detect and analyze binary data like [`detect_payload`], and report what a
+/// consumer that loads the bytes needs besides: the reason and candidates
+/// of a refusal, how much of the input the code model's reading explains,
+/// the boot marker of a raw image, and a container's members and load
+/// sections as structured ranges and addresses (see [`report`]).
+///
+/// A decided outcome is the payload [`detect_payload`] returns for the same
+/// input and options.
+pub fn detect_report(data: &[u8], options: &ClassifierOptions) -> report::DetectionReport {
+    let raw = matches!(formats::detect_format(data), formats::DetectedFormat::Raw);
+    let (outcome, reading) = match classify(data, options) {
+        Ok(classified) => {
+            let reading = classified.reading.clone();
+            let payload = Box::new(payload_of(classified));
+            (report::Outcome::Decided(payload), reading)
+        }
+        Err(error) => {
+            // The stored bytes' reading is the first one the raw path made
+            // and refused; a recognized format was never read as raw code.
+            let first = raw.then(|| read_code(data, options));
+            let reading = first
+                .as_ref()
+                .map(|first| report::CodeReading::of(first, 1));
+            let abstention = report::Abstention {
+                reason: report::AbstainReason::of(&error),
+                message: error.to_string(),
+                candidates: first.map_or_else(Vec::new, |first| ranked(first.scores)),
+            };
+            (report::Outcome::Abstained(abstention), reading)
+        }
+    };
+    report::DetectionReport {
+        outcome,
+        reading,
+        boot_marker: if raw { boot_marker(data) } else { None },
+        layout: report::layout(data),
+    }
+}
+
+/// The public payload of one classification.
+fn payload_of(c: Classified) -> DetectionPayload {
     let r = &c.result;
     let primary = IsaClassification {
         isa: r.isa,
@@ -152,7 +198,7 @@ pub fn detect_payload(data: &[u8], options: &ClassifierOptions) -> Result<Detect
     payload.extensions = c.extensions;
     payload.notes = r.metadata.notes.iter().cloned().map(Note::info).collect();
     payload.notes.extend(c.notes);
-    Ok(payload)
+    payload
 }
 
 /// Detect and analyze an image dumped as separate byte lanes, lane 0 first:
@@ -191,6 +237,18 @@ struct Classified {
     extensions: Vec<ExtensionDetection>,
     notes: Vec<Note>,
     metadata: Vec<MetadataEntry>,
+    /// The code-model reading of the input as a whole, when its answer or
+    /// refusal is what the raw path reported.
+    reading: Option<report::CodeReading>,
+}
+
+/// One code-model reading of `data`, without extension detection.
+fn read_code(data: &[u8], options: &ClassifierOptions) -> heuristics::Reading {
+    let quiet = ClassifierOptions {
+        detect_extensions: false,
+        ..options.clone()
+    };
+    heuristics::analyze_reading(data, &quiet, 1)
 }
 
 /// Run the code model and return the result plus the ranked candidates.
@@ -198,12 +256,8 @@ fn heuristic(
     data: &[u8],
     options: &ClassifierOptions,
 ) -> (Result<ClassificationResult>, Vec<IsaCandidate>) {
-    let quiet = ClassifierOptions {
-        detect_extensions: false,
-        ..options.clone()
-    };
-    let (result, candidates) = heuristics::analyze_detailed(data, &quiet);
-    (result, ranked(candidates))
+    let reading = read_code(data, options);
+    (reading.result, ranked(reading.scores))
 }
 
 /// The ten best positive-evidence candidates of a code-model scan.
@@ -278,6 +332,7 @@ fn has_x86_reset_vector(data: &[u8]) -> bool {
 /// A structure the architecture defines for the core that starts an image,
 /// and the ISA it names.
 struct BootMarker {
+    kind: report::BootMarkerKind,
     isa: Isa,
     present: fn(&[u8]) -> bool,
     description: &'static str,
@@ -285,17 +340,34 @@ struct BootMarker {
 
 const BOOT_MARKERS: [BootMarker; 2] = [
     BootMarker {
+        kind: report::BootMarkerKind::CortexMVectorTable,
         isa: Isa::Arm,
         present: has_cortex_m_vector_table,
         description: "Cortex-M vector table at offset 0 names an Arm Thumb boot core",
     },
     BootMarker {
+        kind: report::BootMarkerKind::X86ResetVector,
         isa: Isa::X86,
         present: has_x86_reset_vector,
         description:
             "x86 reset vector (far jump into segment F000 at the image end) names an x86 boot core",
     },
 ];
+
+/// The boot marker a raw image carries, whether or not it changes the
+/// classification.
+fn boot_marker(data: &[u8]) -> Option<report::BootMarker> {
+    if let Some(marker) = BOOT_MARKERS.iter().find(|marker| (marker.present)(data)) {
+        return Some(report::BootMarker {
+            kind: marker.kind,
+            isa: marker.isa,
+        });
+    }
+    has_stm8_vector_table(data).then_some(report::BootMarker {
+        kind: report::BootMarkerKind::Stm8VectorTable,
+        isa: Isa::Stm8,
+    })
+}
 
 /// The boot core of a raw image that carries a boot marker and holds code
 /// of the marker's ISA, when the code model answered otherwise: the marker
@@ -420,6 +492,7 @@ struct Transformed {
     data: Vec<u8>,
     result: ClassificationResult,
     candidates: Vec<IsaCandidate>,
+    reading: report::CodeReading,
 }
 
 impl Transformed {
@@ -551,6 +624,7 @@ fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transfo
             continue;
         };
         let reading = heuristics::analyze_reading(&transformed, &quiet, trials);
+        let account = report::CodeReading::of(&reading, trials).after(t.name());
         let Ok(result) = reading.result else {
             continue;
         };
@@ -577,6 +651,7 @@ fn search_transforms(data: &[u8], options: &ClassifierOptions) -> Option<Transfo
             data: transformed,
             result,
             candidates: ranked(reading.scores),
+            reading: account,
         });
     }
     best
@@ -588,6 +663,7 @@ struct SparseRescan {
     candidates: Vec<IsaCandidate>,
     first_budget: usize,
     budget: usize,
+    reading: report::CodeReading,
 }
 
 impl SparseRescan {
@@ -622,11 +698,13 @@ fn rescan_sparse_code(
     if !reading.code_windows_agree() {
         return None;
     }
+    let account = report::CodeReading::of(&reading, 1).rescanned();
     Some(SparseRescan {
         result: reading.result.ok()?,
         candidates: ranked(reading.scores),
         first_budget: options.max_scan_bytes,
         budget: wider.max_scan_bytes,
+        reading: account,
     })
 }
 
@@ -850,6 +928,7 @@ fn classify_ti_payload(
         extensions: Vec::new(),
         notes: Vec::new(),
         metadata: Vec::new(),
+        reading: None,
     })
 }
 
@@ -997,6 +1076,7 @@ fn classify_code(code: &[u8], options: &ClassifierOptions) -> Result<Classified>
         extensions: Vec::new(),
         notes: Vec::new(),
         metadata: Vec::new(),
+        reading: None,
     })
 }
 
@@ -1363,6 +1443,7 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
     let mut metadata = Vec::new();
     let mut code_payload = None;
     let mut contained_extensions = None;
+    let mut reading = None;
 
     // Executables can carry an application bundle: a PyInstaller archive
     // after its bootloader, or a .NET single-file bundle in its apphost.
@@ -1376,7 +1457,9 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
 
     let result = match detected {
         formats::DetectedFormat::Raw => {
-            let (r, c) = heuristic(data, options);
+            let first = read_code(data, options);
+            reading = Some(report::CodeReading::of(&first, 1));
+            let (r, c) = (first.result, ranked(first.scores));
             let r = match boot_core(data, &r, options) {
                 Some((boot, note)) => {
                     notes.push(note);
@@ -1402,10 +1485,12 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                         metadata.extend(transform_metadata(found.transform, found.trials));
                         candidates = found.candidates;
                         code_payload = Some(std::borrow::Cow::Owned(found.data));
+                        reading = Some(found.reading);
                         found.result
                     } else if let Some(rescan) = rescan_sparse_code(data, &e, options) {
                         notes.push(Note::info(rescan.note()));
                         candidates = rescan.candidates;
+                        reading = Some(rescan.reading);
                         rescan.result
                     } else {
                         return Err(e);
@@ -1719,6 +1804,7 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
                                     extensions: inner.extensions,
                                     notes,
                                     metadata,
+                                    reading: None,
                                 });
                             }
                         }
@@ -1851,6 +1937,7 @@ fn classify_depth(data: &[u8], options: &ClassifierOptions, depth: usize) -> Res
         extensions,
         notes,
         metadata,
+        reading,
     })
 }
 
@@ -2493,6 +2580,7 @@ mod tests {
     #[test]
     fn transforms_that_tie_with_the_chosen_one_are_named_in_its_note() {
         let result = ClassificationResult::from_heuristics(Isa::Ipp, 32, Endianness::Big, 0.99);
+        let no_bytes = heuristics::analyze_reading(&[], &ClassifierOptions::new(), 8);
         let mut found = Transformed {
             transform: transform::Transform::Swap16,
             ties: Vec::new(),
@@ -2500,6 +2588,7 @@ mod tests {
             data: Vec::new(),
             result: result.clone(),
             candidates: Vec::new(),
+            reading: report::CodeReading::of(&no_bytes, 8),
         };
         assert_eq!(
             found.note(),

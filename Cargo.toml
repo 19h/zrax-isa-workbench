@@ -25,8 +25,7 @@ required-features = ["cli"]
 
 [dependencies]
 # Error handling
-thiserror = "1.0"
-anyhow = "1.0"
+thiserror = "2.0"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -40,7 +39,6 @@ tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # Binary parsing utilities
-byteorder = "1.5"
 memchr = "2.7"
 
 # Bit manipulation
@@ -56,19 +54,21 @@ bzip2 = "0.6"
 lzfse_rust = "0.2"
 brotli-decompressor = "5"
 
-# Image4 AES payload trials (pure Rust, native and WASM)
-aes = "0.8"
-cbc = "0.1"
-ctr = "0.9"
+# Image4 AES payload trials (pure Rust, native and WASM), behind the
+# "image4-aes" feature
+aes = { version = "0.8", optional = true }
+cbc = { version = "0.1", optional = true }
+ctr = { version = "0.9", optional = true }
 
 # Hex display
 hex = "0.4"
 
 # X.509 certificate scanning, ported from cert-dump (pure Rust, native and
-# WASM). Never call `Validity::is_valid`: it reads the clock, which panics on
-# wasm32-unknown-unknown and would make results time-dependent.
-x509-parser = "0.16"
-base64 = "0.22"
+# WASM), behind the "certificates" feature. Never call `Validity::is_valid`:
+# it reads the clock, which panics on wasm32-unknown-unknown and would make
+# results time-dependent.
+x509-parser = { version = "0.16", optional = true }
+base64 = { version = "0.22", optional = true }
 
 # WASM support
 wasm-bindgen = { version = "0.2", optional = true }
@@ -91,7 +91,20 @@ criterion = "0.5"
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "dep:tracing", "dep:tracing-subscriber"]
+cli = [
+    "certificates",
+    "image4-aes",
+    "dep:clap",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+]
+# X.509 certificate scanning (src/certificates) and standalone certificate
+# files as a format (src/formats/x509.rs). Without it a certificate file is
+# not a recognized format: a PEM file is text and a DER file is raw input.
+certificates = ["dep:x509-parser", "dep:base64"]
+# AES-CBC and AES-CTR trials on Image4 payloads whose keybag holds a key and
+# IV (src/image4.rs). Without it such a payload stays opaque.
+image4-aes = ["dep:aes", "dep:cbc", "dep:ctr"]
 batch = [
     "cli",
     "dep:rayon",
@@ -105,7 +118,7 @@ batch = [
 ]
 # Entropy, map and inspection engine shared by the browser and desktop
 # workbenches (src/workbench).
-workbench = ["dep:wide"]
+workbench = ["certificates", "image4-aes", "dep:wide"]
 wasm = ["workbench", "dep:wasm-bindgen"]
 full-heuristics = []
 

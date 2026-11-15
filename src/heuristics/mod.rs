@@ -20,6 +20,7 @@
 //! lives in the trained model, which is rebuilt from ground-truth code with
 //! `scripts/build_corpus.py` + `examples/train_model.rs`.
 
+mod card;
 pub mod model;
 mod sh4;
 mod w65816;
@@ -27,6 +28,7 @@ mod z80;
 
 use std::collections::HashMap;
 
+pub use card::{ClassCard, ModelCard, Tally, Training, WHOLE_SAMPLE};
 pub use model::{class_info, ClassInfo, ClassKind, Model, ModelBuilder, ModelError, CLASSES};
 
 use crate::error::{ClassifierError, Result};
@@ -960,6 +962,12 @@ pub struct Reading {
     pub informative_windows: usize,
     /// Code windows won by any family.
     pub all_code_windows: usize,
+    /// Family the scan favours, whether or not the decision rules accept
+    /// it; `None` when no family leads.
+    pub family: Option<&'static str>,
+    /// Most bytes the scan scored, spread over the non-padding windows; 0
+    /// for an input too small to scan.
+    pub budget: usize,
 }
 
 impl Reading {
@@ -994,6 +1002,8 @@ fn analyze_reading_with_model(
             code_windows: 0,
             informative_windows: 0,
             all_code_windows: 0,
+            family: None,
+            budget: 0,
         };
     }
     let budget = scan_budget(data.len(), options);
@@ -1039,6 +1049,8 @@ fn analyze_reading_with_model(
         code_windows,
         informative_windows,
         all_code_windows: scan.code_windows().count(),
+        family: decision.map(|d| d.info.family),
+        budget,
     }
 }
 

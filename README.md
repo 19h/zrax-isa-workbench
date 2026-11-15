@@ -237,6 +237,11 @@ For an adjacent checkout:
 zrax = { path = "../zrax-isa-workbench", default-features = false }
 ```
 
+Without default features the library has no certificate or AES code and
+depends only on the pure-Rust decoders, `serde`, `sha2`, `hex`, `memchr`,
+`bitflags` and `thiserror`; add `features = ["certificates", "image4-aes"]`
+for the formats the CLI has.
+
 ```rust
 use zrax::{detect_payload, ClassifierOptions};
 
@@ -260,6 +265,9 @@ configuration.
 | `classify_file`, `classify_bytes` | Primary `ClassificationResult` |
 | `classify_bytes_with_options` | Primary result with explicit options |
 | `detect_file`, `detect_bytes`, `detect_payload` | Full `DetectionPayload` |
+| `detect_report` | The payload or the refusal with its reason and candidates, the code-model reading's window counts, the boot marker of a raw image, and a container's members and load sections as ranges and addresses; see [detection report](docs/architecture/raw-code-model.md#detection-report) |
+| `report::member_bytes` | The decoded bytes of one member the report lists |
+| `heuristics::ModelCard::embedded` | Per-class held-out results and training data of the embedded model; see [model card](docs/architecture/raw-code-model.md#model-card) |
 | `detect_multi_isa` | Families occupying sufficiently supported code windows |
 | `supported_isas` | ISA identifiers present in the embedded raw-code model |
 | `quick_check` | Budgeted raw-code family comparison |
@@ -275,8 +283,11 @@ distinguishes header-derived, code-derived and combined results.
 
 | Cargo feature | Purpose |
 | --- | --- |
-| `cli` | Native CLI and logging; enabled by default |
+| `cli` | Native CLI and logging; enabled by default; implies `certificates` and `image4-aes` |
+| `certificates` | X.509 certificate scanning (`certificates`) and certificate files as a format. Without it a PEM file is text and a DER file is raw input; the six certificate fixtures are then refused, not read as code (`tests/optional_features.rs`) |
+| `image4-aes` | AES-CBC and AES-CTR trials on Image4 payloads. Without it `image4::decrypt` fails and such a payload stays opaque |
 | `batch` | CLI ingestion pipeline, content hashing, ledgers and terminal progress |
+| `workbench` | Entropy, map and inspection engine of the browser and desktop workbenches; implies `certificates` and `image4-aes` |
 | `wasm` | Browser exports, workbench engine, Apeiron kernels and DEFLATE inspection |
 | `full-heuristics` | Retained compatibility feature; currently adds no behavior |
 
@@ -669,10 +680,10 @@ checkout. Historical commits retain their original names and authorship.
 
 ## Provenance and licenses
 
-First-party package metadata declares `MIT OR Apache-2.0`; this migration
-retains that declaration and original authorship metadata. The repository's
-historical root contained no first-party license text; the declaration is
-reported as metadata rather than a claim that separate license files exist.
+First-party code is licensed `MIT OR Apache-2.0`, as the package metadata
+declares; the texts are [LICENSE-MIT](LICENSE-MIT) and
+[LICENSE-APACHE](LICENSE-APACHE). The license files were added on 2026-11-15;
+the repository's history before that carried the declaration without them.
 
 Vendored Apeiron code retains its [MIT license](src/workbench/apeiron/LICENSE).
 Its [snapshot record](src/workbench/apeiron/README.md) identifies the source
@@ -703,7 +714,7 @@ coverage broader than implemented raw-model classes.
 | A6 | D10 component conventions match observed revisions and the supplied extractor | CRC/length/ID/encoding tests and independent CPU/DSP classification; unobserved revision conventions remain unknown |
 | A7 | Model confidence transfers only within demonstrated input distributions | Held-out evaluation with a separate model; examine rejected/non-code/novel-compiler cases rather than treating confidence as a universal accuracy guarantee |
 | A8 | Local staging remains compatible with existing key namespaces | Retain default prefix; inspect an explicit `zrax/v1` run and verify all generated paths |
-| A9 | License and attribution metadata survive migration | Compare preserved authorship, vendored notices and source hashes; first-party standalone license text remains absent |
+| A9 | License and attribution metadata survive migration | Compare preserved authorship, vendored notices and source hashes; the first-party license texts are `LICENSE-MIT` and `LICENSE-APACHE` |
 
 | Impact | Finding / scope consequence |
 | --- | --- |

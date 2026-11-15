@@ -9,8 +9,9 @@ publish = false
 
 [dependencies]
 # The accept rule is applied to zrax's own payload type, so the client and
-# the server must link the same zrax revision (see docs/desktop.md).
-zrax = { path = "../..", default-features = false }
+# the server must link the same zrax revision (see docs/desktop.md), with
+# the same formats: certificate files and Image4 AES trials are features.
+zrax = { path = "../..", default-features = false, features = ["certificates", "image4-aes"] }
 
 base64 = "0.22"
 bytes = "1"

@@ -365,4 +365,53 @@ fn main() {
     if let Some(path) = arg("--csv") {
         std::fs::write(path, csv).unwrap();
     }
+    if let Some(path) = arg("--card") {
+        let model_bytes = model_bytes
+            .as_deref()
+            .expect("--card needs --model: the embedded model has seen the test split");
+        std::fs::write(path, card_json(&corpus, model_bytes, &by_class)).unwrap();
+    }
+}
+
+/// The input kind of a tally as the model card names it: `file` for whole
+/// samples, the size in bytes for snippets.
+fn card_input(kind: &str) -> &str {
+    let kind = kind.trim();
+    kind.strip_suffix('B').unwrap_or(kind)
+}
+
+/// The per-class tallies of one corpus as `scripts/fw1/model_card.py` reads
+/// them: the corpus directory's name, the SHA-256 of the evaluated model,
+/// and counts (never percentages) by class and input kind.
+fn card_json(
+    corpus: &str,
+    model_bytes: &[u8],
+    by_class: &BTreeMap<(String, String), Tally>,
+) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut classes: BTreeMap<&str, BTreeMap<&str, serde_json::Value>> = BTreeMap::new();
+    for ((class, kind), tally) in by_class {
+        let counts = serde_json::json!({
+            "n": tally.n,
+            "correct": tally.correct,
+            "exact": tally.exact,
+            "wrong": tally.wrong,
+            "rejected": tally.rejected,
+        });
+        classes
+            .entry(class.as_str())
+            .or_default()
+            .insert(card_input(kind), counts);
+    }
+    let name = std::path::Path::new(corpus).file_name().map_or_else(
+        || corpus.to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let card = serde_json::json!({
+        "corpus": name,
+        "model_sha256": hex::encode(Sha256::digest(model_bytes)),
+        "classes": classes,
+    });
+    serde_json::to_string_pretty(&card).expect("the card serializes") + "\n"
 }

@@ -42,7 +42,7 @@ fn error(message: impl Into<String>) -> ClassifierError {
     }
 }
 
-fn container(data: &[u8]) -> Result<Option<Container<'_>>> {
+pub(crate) fn container(data: &[u8]) -> Result<Option<Container<'_>>> {
     match formats::detect_format(data) {
         DetectedFormat::Container {
             kind: formats::container::Kind::Archive(layout),

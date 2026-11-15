@@ -259,8 +259,16 @@ python3 -I scripts/fw1/merge.py "$C/corpus-ship24" "$C/corpus-base7" "$C/corpus-
 # 6. Held-out model and sample-level evaluation
 $T/train_model --corpus "$C/corpus-ship24" --split train --out $M/ship24-train.bin
 for c in base7 fw1v23 ds2h m68kx z8x mcs251x ippx nanomipsx; do
-  $T/eval --corpus "$C/corpus-$c" --model $M/ship24-train.bin > reports/fw1/eval-ship24-train-$c.txt
+  $T/eval --corpus "$C/corpus-$c" --model $M/ship24-train.bin \
+    --card reports/fw1/card-ship24-train-$c.json > reports/fw1/eval-ship24-train-$c.txt
 done
+#    The model card that ships beside model.bin: the counts above, per class, and
+#    what the shipped model is trained on. Rebuild it whenever model.bin changes;
+#    tests/model_card.rs fails when the card names another model.
+python3 -I scripts/fw1/model_card.py --model src/heuristics/model.bin --name ship24-all \
+  --measured $M/ship24-train.bin --measured-name ship24-train \
+  --manifest "$C/corpus-ship24/manifest.jsonl" --date 2026-11-15 \
+  --out src/heuristics/model_card.json reports/fw1/card-ship24-train-*.json
 
 # 7. File-level evaluation through the CLI with the held-out model
 #    The held-out CLI is built in a worktree (a copy of the working tree), so the
@@ -584,6 +592,7 @@ failed.
 | `diffrun.py` | diff two full runs and count changed files per findings category |
 | `verify_findings.py` | check a full run against what each findings category needs |
 | `cmpeval.py` | compare two `examples/eval.rs` reports per class |
+| `model_card.py` | join the `eval --card` files of the held-out model and the training manifest into `src/heuristics/model_card.json` |
 | `merge.py` | merge corpora by symlink (`merge.sh` is the slow original) |
 | `hardlist.py` + `examples/mine_hard.rs` | hard-negative mining |
 | `aug_neg.py` | transform-augmented negatives |

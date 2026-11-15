@@ -272,12 +272,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
-name = "byteorder"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
-
-[[package]]
 name = "bzip2"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2722,11 +2716,9 @@ name = "zrax"
 version = "0.1.0"
 dependencies = [
  "aes",
- "anyhow",
  "base64",
  "bitflags 2.13.2",
  "brotli-decompressor",
- "byteorder",
  "bzip2",
  "cbc",
  "chrono",
@@ -2750,7 +2742,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
  "walkdir",

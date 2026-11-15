@@ -1,15 +1,20 @@
 //! Text renderings of certificate and string reports for the `certs` and
 //! `strings` CLI subcommands.
 
+#[cfg(feature = "certificates")]
 use std::collections::HashSet;
 use std::fmt::Write as _;
+#[cfg(feature = "certificates")]
 use std::path::Path;
 
+#[cfg(feature = "certificates")]
 use crate::certificates::{Certificate, Report};
+#[cfg(feature = "certificates")]
 use crate::inspection::{enclosing, Region};
 use crate::strings::FoundString;
 
 /// Separator between the outer and inner regions of a path.
+#[cfg(feature = "certificates")]
 const REGION_SEPARATOR: &str = " > ";
 
 /// How the `strings` text output prints offsets, as in GNU `strings -t`.
@@ -25,6 +30,7 @@ pub enum OffsetRadix {
 
 /// The regions that contain a certificate, outermost first, joined with
 /// `" > "`.
+#[cfg(feature = "certificates")]
 pub fn certificate_location(regions: &[Region], certificate: &Certificate) -> Option<String> {
     let path = enclosing(regions, certificate.offset, certificate.stored_size);
     if path.is_empty() {
@@ -34,11 +40,13 @@ pub fn certificate_location(regions: &[Region], certificate: &Certificate) -> Op
     Some(labels.join(REGION_SEPARATOR))
 }
 
+#[cfg(feature = "certificates")]
 fn push_field(out: &mut String, label: &str, value: &str) {
     // `write!` to a `String` cannot fail.
     let _ = writeln!(out, "      {:<11} {value}", format!("{label}:"));
 }
 
+#[cfg(feature = "certificates")]
 fn push_certificate(out: &mut String, certificate: &Certificate, regions: &[Region]) {
     let encoding = match certificate.encoding {
         crate::certificates::Encoding::Der => "DER",
@@ -88,6 +96,7 @@ fn push_certificate(out: &mut String, certificate: &Certificate, regions: &[Regi
 }
 
 /// The human-readable certificate listing of one file.
+#[cfg(feature = "certificates")]
 pub fn certificates_human(path: &Path, report: &Report, regions: &[Region]) -> String {
     let mut out = format!("File: {}\n", path.display());
     let _ = writeln!(out, "  Certificates: {}", report.certificates.len());
@@ -101,6 +110,7 @@ pub fn certificates_human(path: &Path, report: &Report, regions: &[Region]) -> S
     out
 }
 
+#[cfg(feature = "certificates")]
 fn tree_name(certificate: &Certificate) -> String {
     let name = certificate.summary.as_ref().map_or("(unparsed)", |s| {
         s.subject_cn.as_deref().unwrap_or(s.subject.as_str())
@@ -113,6 +123,7 @@ fn tree_name(certificate: &Certificate) -> String {
     format!("{name} [{}]{suffix}", certificate.index)
 }
 
+#[cfg(feature = "certificates")]
 fn push_subtree(
     out: &mut String,
     certificates: &[Certificate],
@@ -149,6 +160,7 @@ fn push_subtree(
 /// The issuer links of one file as a tree. Roots are certificates without
 /// an issuer link; certificates only reachable through a cycle are listed
 /// as unlinked, and duplicates by their first occurrence.
+#[cfg(feature = "certificates")]
 pub fn certificates_tree(path: &Path, report: &Report) -> String {
     let certificates = &report.certificates;
     let mut out = format!("File: {}\n", path.display());

@@ -11,8 +11,11 @@ use crate::formats::{
     container::Kind,
     DetectedFormat, MAX_PAYLOAD,
 };
+#[cfg(feature = "image4-aes")]
 use aes::{Aes128, Aes192, Aes256};
+#[cfg(feature = "image4-aes")]
 use cbc::cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit};
+#[cfg(feature = "image4-aes")]
 use ctr::cipher::StreamCipher;
 
 const AES_BLOCK_SIZE: usize = 16;
@@ -65,7 +68,8 @@ fn error(message: impl Into<String>) -> ClassifierError {
 /// # Errors
 ///
 /// [`ClassifierError::AppleParseError`] for unsupported key/IV sizes or
-/// empty/unaligned ciphertext; [`ClassifierError::PayloadLimit`] beyond 64 MiB.
+/// empty/unaligned ciphertext, and for every input in a build without the
+/// `image4-aes` feature; [`ClassifierError::PayloadLimit`] beyond 64 MiB.
 pub fn decrypt(data: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<Vec<u8>> {
     if data.len() > MAX_PAYLOAD {
         return Err(ClassifierError::PayloadLimit { limit: MAX_PAYLOAD });
@@ -85,18 +89,34 @@ pub fn decrypt(data: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<Vec<u8>
         ));
     }
     let mut output = data.to_vec();
-    match (mode, key.len()) {
-        (Mode::Cbc, 16) => cbc::<Aes128>(&mut output, key, iv)?,
-        (Mode::Cbc, 24) => cbc::<Aes192>(&mut output, key, iv)?,
-        (Mode::Cbc, 32) => cbc::<Aes256>(&mut output, key, iv)?,
-        (Mode::Ctr, 16) => ctr::<Aes128>(&mut output, key, iv)?,
-        (Mode::Ctr, 24) => ctr::<Aes192>(&mut output, key, iv)?,
-        (Mode::Ctr, 32) => ctr::<Aes256>(&mut output, key, iv)?,
-        _ => return Err(error("Unsupported AES mode or key size")),
-    }
+    apply_aes(&mut output, key, iv, mode)?;
     Ok(output)
 }
 
+/// AES in `mode` over `data` in place, for a validated key and IV.
+#[cfg(feature = "image4-aes")]
+fn apply_aes(data: &mut [u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<()> {
+    match (mode, key.len()) {
+        (Mode::Cbc, 16) => cbc::<Aes128>(data, key, iv),
+        (Mode::Cbc, 24) => cbc::<Aes192>(data, key, iv),
+        (Mode::Cbc, 32) => cbc::<Aes256>(data, key, iv),
+        (Mode::Ctr, 16) => ctr::<Aes128>(data, key, iv),
+        (Mode::Ctr, 24) => ctr::<Aes192>(data, key, iv),
+        (Mode::Ctr, 32) => ctr::<Aes256>(data, key, iv),
+        _ => Err(error("Unsupported AES mode or key size")),
+    }
+}
+
+/// A build without AES decrypts nothing: every trial fails, so an encrypted
+/// payload stays opaque.
+#[cfg(not(feature = "image4-aes"))]
+fn apply_aes(_data: &mut [u8], _key: &[u8], _iv: &[u8], _mode: Mode) -> Result<()> {
+    Err(error(
+        "Unsupported AES decryption; this build has no image4-aes feature",
+    ))
+}
+
+#[cfg(feature = "image4-aes")]
 fn cbc<C>(data: &mut [u8], key: &[u8], iv: &[u8]) -> Result<()>
 where
     C: cbc::cipher::BlockCipher + cbc::cipher::BlockDecryptMut + cbc::cipher::KeyInit,
@@ -108,6 +128,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "image4-aes")]
 fn ctr<C>(data: &mut [u8], key: &[u8], iv: &[u8]) -> Result<()>
 where
     C: ctr::cipher::BlockEncryptMut

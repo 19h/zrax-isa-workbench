@@ -11,10 +11,9 @@ use std::path::Path;
 
 mod inspection;
 
-pub use inspection::{
-    certificate_location, certificates_human, certificates_tree, strings_csv, strings_text,
-    OffsetRadix,
-};
+#[cfg(feature = "certificates")]
+pub use inspection::{certificate_location, certificates_human, certificates_tree};
+pub use inspection::{strings_csv, strings_text, OffsetRadix};
 
 /// Trait for formatting detection payloads.
 ///
