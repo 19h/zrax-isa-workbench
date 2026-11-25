@@ -74,17 +74,47 @@ pub(super) fn der_candidate(window: &[u8], at: usize) -> Option<&[u8]> {
     }
 }
 
-/// DER certificates starting in `window[..report_len]`, at most `limit`.
+pub(super) struct Candidates {
+    pub(super) items: Vec<Found>,
+    pub(super) first_discarded: Option<u64>,
+    remaining_bytes: usize,
+}
+
+impl Candidates {
+    fn new(remaining_bytes: usize) -> Self {
+        Self {
+            items: Vec::new(),
+            first_discarded: None,
+            remaining_bytes,
+        }
+    }
+
+    fn reserve(&mut self, limit: usize, offset: usize, der_size: usize) -> bool {
+        if self.items.len() == limit || der_size > self.remaining_bytes {
+            self.first_discarded = Some(offset as u64);
+            return false;
+        }
+        self.remaining_bytes -= der_size;
+        true
+    }
+}
+
+/// DER certificates starting in `window[..report_len]` within both limits.
 /// Every `SEQUENCE` tag is a candidate, including tags inside certificates
 /// already found, so the result does not depend on window boundaries.
-pub(super) fn der_certificates(window: &[u8], report_len: usize, limit: usize) -> Vec<Found> {
-    let mut found = Vec::new();
+pub(super) fn der_certificates(
+    window: &[u8],
+    report_len: usize,
+    limit: usize,
+    bytes: usize,
+) -> Candidates {
+    let mut found = Candidates::new(bytes);
     for at in memchr_iter(SEQUENCE, &window[..report_len]) {
-        if found.len() == limit {
-            break;
-        }
         if let Some(der) = der_candidate(window, at) {
-            found.push(Found {
+            if !found.reserve(limit, at, der.len()) {
+                break;
+            }
+            found.items.push(Found {
                 offset: at as u64,
                 stored_size: der.len() as u64,
                 encoding: Encoding::Der,
@@ -108,15 +138,20 @@ fn decode_pem_body(body: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// PEM blocks whose `BEGIN` marker starts in `window[..report_len]`, at most
-/// `limit`. An `END` marker closes the nearest `BEGIN` before it; earlier
+/// both limits. An `END` marker closes the nearest `BEGIN` before it; earlier
 /// unterminated `BEGIN` markers are ignored. Each byte is searched a bounded
 /// number of times, so marker floods take linear time.
-pub(super) fn pem_certificates(window: &[u8], report_len: usize, limit: usize) -> Vec<Found> {
+pub(super) fn pem_certificates(
+    window: &[u8],
+    report_len: usize,
+    limit: usize,
+    bytes: usize,
+) -> Candidates {
     let begin_finder = memmem::Finder::new(PEM_BEGIN);
     let end_finder = memmem::Finder::new(PEM_END);
-    let mut found = Vec::new();
+    let mut found = Candidates::new(bytes);
     let mut pos = 0;
-    while found.len() < limit && pos < report_len {
+    while pos < report_len {
         let Some(begin) = begin_finder.find(&window[pos..]).map(|rel| pos + rel) else {
             break;
         };
@@ -142,7 +177,10 @@ pub(super) fn pem_certificates(window: &[u8], report_len: usize, limit: usize) -
         let Some(der) = decode_pem_body(&window[begin + PEM_BEGIN.len()..end]) else {
             continue;
         };
-        found.push(Found {
+        if !found.reserve(limit, begin, der.len()) {
+            break;
+        }
+        found.items.push(Found {
             offset: begin as u64,
             stored_size: (footer_end - begin) as u64,
             encoding: Encoding::Pem,
@@ -174,6 +212,10 @@ mod tests {
     #[test]
     fn pem_flood_without_end_markers_stops_at_the_first_unterminated_begin() {
         let flood = PEM_BEGIN.repeat(100_000);
-        assert!(pem_certificates(&flood, flood.len(), usize::MAX).is_empty());
+        assert!(
+            pem_certificates(&flood, flood.len(), usize::MAX, usize::MAX)
+                .items
+                .is_empty()
+        );
     }
 }

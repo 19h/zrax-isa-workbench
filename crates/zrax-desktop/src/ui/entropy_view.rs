@@ -27,7 +27,7 @@ use gpui::{
 use zrax::workbench::{Curve, Engine, Inspection, Patch};
 
 use super::strip::profile_strip;
-use super::widgets::{self, badge, key_cap, meter, small, spacer};
+use super::widgets::{self, badge, key_cap, meter, small, spacer, text_button};
 use crate::entropy::frame::{self, Frame, FrameSpec, Gpu, MapSpace, MAX_TEXTURE_SIDE};
 use crate::entropy::raster;
 use crate::entropy::scene::{MapMode, Scene};
@@ -37,7 +37,7 @@ use crate::model::session::{Session, SessionEvent};
 use crate::{format, palette, theme};
 
 /// Padding around the map frame.
-const STAGE_PADDING_REMS: f32 = 1.0;
+const STAGE_PADDING_REMS: f32 = 0.375;
 
 /// Frame side assumed before the stage has been measured, in device pixels.
 const DEFAULT_FRAME_PIXELS: usize = 1024;
@@ -105,6 +105,18 @@ struct Readouts {
     multi_scale: f32,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Framing {
+    Fill,
+    Fit,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Inspector {
+    Visible,
+    Hidden,
+}
+
 /// The entropy tab of the selected file.
 pub struct EntropyView {
     session: Entity<Session>,
@@ -112,6 +124,8 @@ pub struct EntropyView {
     mode: MapMode,
     layout: ByteLayout,
     camera: Viewport,
+    framing: Framing,
+    inspector: Inspector,
     /// The selected file as apeiron sees it.
     scene: Option<(EntryId, Arc<Scene>)>,
     gpu: Arc<Gpu>,
@@ -152,10 +166,16 @@ fn rgba(color: palette::Rgb) -> Rgba {
     }
 }
 
-/// The largest square that fits `bounds`, at its top-left corner.
-fn square_in(bounds: Bounds<Pixels>) -> Bounds<Pixels> {
-    let side = bounds.size.width.min(bounds.size.height).max(px(0.0));
-    Bounds::new(bounds.origin, size(side, side))
+/// Fraction of the square world visible at 1× along each axis.
+fn frame_span(bounds: Bounds<Pixels>) -> (f64, f64) {
+    let side = bounds.size.width.max(bounds.size.height);
+    if side <= px(0.0) {
+        return (1.0, 1.0);
+    }
+    (
+        f64::from(bounds.size.width / side),
+        f64::from(bounds.size.height / side),
+    )
 }
 
 /// Turn a rendered frame into an image for the window. A texture smaller
@@ -193,6 +213,8 @@ impl EntropyView {
             mode: MapMode::Entropy,
             layout: ByteLayout::Hilbert,
             camera: Viewport::default(),
+            framing: Framing::Fill,
+            inspector: Inspector::Visible,
             scene: None,
             gpu: Arc::default(),
             shown: None,
@@ -216,7 +238,7 @@ impl EntropyView {
     pub fn show(&mut self, mode: MapMode, zoom: f64, cx: &mut Context<Self>) {
         self.mode = mode;
         self.camera = Viewport::default();
-        self.camera.zoom_at(zoom, 0.25, 0.25, zoom.max(1.0));
+        self.camera.zoom_at(zoom, 0.25, 0.25, zoom.max(1.0), (1.0, 1.0));
         cx.notify();
     }
 
@@ -263,7 +285,8 @@ impl EntropyView {
             self.camera.y as f32,
             self.camera.zoom as f32,
         );
-        let frame_points = f32::from(self.frame_bounds.get().size.width);
+        let bounds = self.frame_bounds.get();
+        let frame_points = f32::from(bounds.size.width.max(bounds.size.height));
         // A frame is at most a few thousand device pixels.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let frame_pixels = match (frame_points * window.scale_factor()) as usize {
@@ -277,11 +300,13 @@ impl EntropyView {
                 self.mode.min_texture_size().min(MAX_TEXTURE_SIDE),
             )
         } else {
-            let span = world_side / zoom;
+            let span = frame_span(bounds);
+            #[allow(clippy::cast_possible_truncation)]
+            let (width, height) = (span.0 as f32 * world_side / zoom, span.1 as f32 * world_side / zoom);
             let (left, top) = (camera_x * world_side, camera_y * world_side);
             (
                 (left, top),
-                ((left + span).min(world_side), (top + span).min(world_side)),
+                ((left + width).min(world_side), (top + height).min(world_side)),
                 frame_pixels.clamp(self.mode.min_texture_size(), MAX_TEXTURE_SIDE),
             )
         };
@@ -312,7 +337,8 @@ impl EntropyView {
         self.is_drawing = true;
         let gpu = self.gpu.clone();
         let time_seconds = self.started.elapsed().as_secs_f64();
-        let frame_points = f32::from(self.frame_bounds.get().size.width);
+        let bounds = self.frame_bounds.get();
+        let frame_points = f32::from(bounds.size.width.max(bounds.size.height));
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let frame_pixels = ((frame_points * window.scale_factor()) as usize).max(1);
         cx.spawn(async move |view, cx| {
@@ -363,21 +389,24 @@ impl EntropyView {
         .detach();
     }
 
-    /// A window position as a fraction of the map frame.
+    /// A window position in projected square-world units at 1×, inside the
+    /// frame. Both axes use the same scale even when the frame clips the map.
     fn frame_fraction(&self, position: Point<Pixels>) -> Option<(f64, f64)> {
         let frame = self.frame_bounds.get();
-        if frame.size.width <= px(0.0) || !frame.contains(&position) {
+        let side = frame.size.width.max(frame.size.height);
+        if side <= px(0.0) || !frame.contains(&position) {
             return None;
         }
-        let x = (position.x - frame.origin.x) / frame.size.width;
-        let y = (position.y - frame.origin.y) / frame.size.height;
+        let x = (position.x - frame.origin.x) / side;
+        let y = (position.y - frame.origin.y) / side;
         Some((f64::from(x), f64::from(y)))
     }
 
     fn zoom(&mut self, factor: f64, anchor: (f64, f64), cx: &mut Context<Self>) {
         if let Some(dimension) = self.dimension() {
             let max_zoom = viewport::max_zoom(dimension);
-            self.camera.zoom_at(factor, anchor.0, anchor.1, max_zoom);
+            let span = frame_span(self.frame_bounds.get());
+            self.camera.zoom_at(factor, anchor.0, anchor.1, max_zoom, span);
             cx.notify();
         }
     }
@@ -415,9 +444,14 @@ impl EntropyView {
         }
         self.is_panning = true;
         let frame = self.frame_bounds.get();
+        let side = frame.size.width.max(frame.size.height);
+        if side <= px(0.0) {
+            return;
+        }
         self.camera.pan(
-            f64::from(delta.x / frame.size.width),
-            f64::from(delta.y / frame.size.height),
+            f64::from(delta.x / side),
+            f64::from(delta.y / side),
+            frame_span(frame),
         );
         self.press = Some(event.position);
         cx.notify();
@@ -583,9 +617,30 @@ impl EntropyView {
                 .py(rems(0.125))
                 .cursor_pointer()
                 .hover(|style| style.bg(theme::SURFACE_HOVER))
-                .on_click(cx.listener(move |this, _, _, cx| this.zoom(factor, (0.5, 0.5), cx)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let (width, height) = frame_span(this.frame_bounds.get());
+                    this.zoom(factor, (width * 0.5, height * 0.5), cx);
+                }))
                 .child(name)
         };
+        let framing = segments()
+            .child(segment("fill", self.framing == Framing::Fill)
+                .tooltip(widgets::text_tooltip("Fill the pane. Drag to see the rest of the map."))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.framing = Framing::Fill;
+                    this.camera = Viewport::default();
+                    this.followed_cursor = None;
+                    cx.notify();
+                })))
+            .child(segment("fit", self.framing == Framing::Fit)
+                .border_l_1()
+                .border_color(theme::LINE_DEFAULT)
+                .tooltip(widgets::text_tooltip("Fit the whole map in the pane"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.framing = Framing::Fit;
+                    this.camera = Viewport::default();
+                    cx.notify();
+                })));
         div()
             .flex()
             .flex_none()
@@ -602,36 +657,45 @@ impl EntropyView {
             .children(layouts)
             .child(
                 small()
-                    .flex_1()
-                    .truncate()
+                    .flex_none()
                     .text_color(theme::TEXT_MUTED)
                     .child(status),
             )
             .child(zoom_button("− out", 1.0 / ZOOM_STEP))
             .child(zoom_button("+ in", ZOOM_STEP))
-            .child(
-                small()
-                    .id("fit")
-                    .px(rems(0.5))
-                    .py(rems(0.125))
-                    .cursor_pointer()
-                    .hover(|style| style.bg(theme::SURFACE_HOVER))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.camera = Viewport::default();
-                        cx.notify();
-                    }))
-                    .child("fit"),
-            )
+            .child(framing)
+            .child(text_button("map-inspector", "inspector")
+                .text_size(rems(theme::TEXT_SMALL_REMS))
+                .when(self.inspector == Inspector::Visible, |button| {
+                    button.text_color(theme::ACCENT)
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.inspector = match this.inspector {
+                        Inspector::Visible => Inspector::Hidden,
+                        Inspector::Hidden => Inspector::Visible,
+                    };
+                    cx.notify();
+                })))
     }
 
     /// The map frame: the frame on screen placed by the camera, with the
     /// cursor's byte outlined. `marker` is the cursor's world cell.
-    fn render_map(&self, dimension: u64, marker: Option<(u64, u64)>) -> impl IntoElement {
+    fn render_map(
+        &self,
+        entry: EntryId,
+        dimension: u64,
+        marker: Option<(u64, u64)>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let frame_bounds = self.frame_bounds.clone();
-        let camera = self.camera;
+        let mut camera = self.camera;
+        let framing = self.framing;
+        let entity = cx.entity_id();
         let shown = self
             .shown
             .as_ref()
+            .filter(|shown| shown.entry == entry && shown.spec.mode == self.mode
+                && shown.spec.layout == self.layout)
             .map(|shown| (shown.image.clone(), shown.world_min, shown.world_max));
         canvas(
             move |bounds, window, _| {
@@ -639,15 +703,25 @@ impl EntropyView {
                 let inner = Bounds::new(
                     point(bounds.origin.x + padding, bounds.origin.y + padding),
                     size(
-                        bounds.size.width - padding * 2.0,
-                        bounds.size.height - padding * 2.0,
+                        (bounds.size.width - padding * 2.0).max(px(0.0)),
+                        (bounds.size.height - padding * 2.0).max(px(0.0)),
                     ),
                 );
-                let frame = square_in(inner);
-                frame_bounds.set(frame);
+                let frame = match framing {
+                    Framing::Fill => inner,
+                    Framing::Fit => {
+                        let side = inner.size.width.min(inner.size.height);
+                        Bounds::centered_at(inner.center(), size(side, side))
+                    }
+                };
+                if frame_bounds.replace(frame).size != frame.size {
+                    window.on_next_frame(move |_, cx| cx.notify(entity));
+                }
                 frame
             },
             move |_, frame, window, _| {
+                let span = frame_span(frame);
+                camera.clamp(span);
                 window.paint_quad(fill(frame, theme::SURFACE_INSET));
                 // World units to window positions. Sides are at most 2^15
                 // and camera values fractions: f32 suffices on screen.
@@ -658,12 +732,13 @@ impl EntropyView {
                     camera.y as f32,
                     camera.zoom as f32,
                 );
+                let side = frame.size.width.max(frame.size.height);
                 let place = |world: (f32, f32)| {
                     point(
                         frame.origin.x
-                            + frame.size.width * ((world.0 / world_side - camera_x) * zoom),
+                            + side * ((world.0 / world_side - camera_x) * zoom),
                         frame.origin.y
-                            + frame.size.height * ((world.1 / world_side - camera_y) * zoom),
+                            + side * ((world.1 / world_side - camera_y) * zoom),
                     )
                 };
                 window.with_content_mask(Some(ContentMask { bounds: frame }), |window| {
@@ -971,6 +1046,8 @@ impl Render for EntropyView {
         };
         let maps_offsets = self.mode.maps_file_offsets();
         let marker = (maps_offsets && size_bytes > 0).then(|| space.position_of(cursor));
+        let span = frame_span(self.frame_bounds.get());
+        self.camera.clamp(span);
 
         // When the cursor moved (from the hex tab, the overview, a click)
         // to a place the camera does not show, center the camera on it.
@@ -982,8 +1059,8 @@ impl Render for EntropyView {
                     (x as f64 + 0.5) / dimension as f64,
                     (y as f64 + 0.5) / dimension as f64,
                 );
-                if !self.camera.contains(world_x, world_y) {
-                    self.camera.center(world_x, world_y);
+                if !self.camera.contains(world_x, world_y, span) {
+                    self.camera.center(world_x, world_y, span);
                 }
             }
         }
@@ -1003,7 +1080,7 @@ impl Render for EntropyView {
         // Toolbar status: what is on screen and how it was drawn.
         // A world side of at most 2^15.
         #[allow(clippy::cast_precision_loss)]
-        let visible_span = dimension as f64 / self.camera.zoom;
+        let visible_span = span.0 * dimension as f64 / self.camera.zoom;
         let renderer = match self.shown.as_ref().filter(|shown| shown.entry == entry_id) {
             Some(shown) if shown.used_gpu => "gpu",
             Some(_) => "cpu",
@@ -1243,13 +1320,13 @@ impl Render for EntropyView {
         let stage = div()
             .id("entropy-stage")
             .flex_1()
-            .min_h(rems(12.0))
+            .min_h(rems(4.0))
             .min_w_0()
             .overflow_hidden()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll(cx.listener(Self::on_scroll))
-            .child(self.render_map(dimension, marker));
+            .child(self.render_map(entry_id, dimension, marker, cx));
 
         div()
             .id("entropy-view")
@@ -1269,7 +1346,9 @@ impl Render for EntropyView {
                     .child(legend)
                     .child(overview),
             )
-            .child(inspector)
+            .when(self.inspector == Inspector::Visible, |view| {
+                view.child(inspector)
+            })
             .into_any_element()
     }
 }

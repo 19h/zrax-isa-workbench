@@ -19,6 +19,12 @@ fonts and code from the same static directory.
 
 ## Start the workbench
 
+On macOS, run `./build-macos.sh`, open the disk image in `crates/target/macos/`,
+and drag **Zrax Workbench** to **Applications**. The same directory also
+contains the standalone app. See [desktop build and installation](docs/desktop.md#macos-app).
+
+### Browser workbench
+
 Install a current Rust toolchain, Python 3 and `wasm-pack`, then run these commands
 from the repository root:
 

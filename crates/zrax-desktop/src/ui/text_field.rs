@@ -1,4 +1,4 @@
-//! A one-line text field for short ASCII input: a donor name, an offset.
+//! A one-line text field for short input: a donor name, an offset, a search.
 //!
 //! gpui provides the plumbing for text input but no widget. The fields of
 //! this application take a few characters from a restricted alphabet, so
@@ -48,8 +48,10 @@ pub struct TextField {
     placeholder: SharedString,
     /// Longest text accepted, in characters.
     max_chars: usize,
+    min_width_rems: f32,
     /// Which characters may be typed or pasted.
     accepts: fn(char) -> bool,
+    replace_all: bool,
 }
 
 impl EventEmitter<TextFieldEvent> for TextField {}
@@ -75,7 +77,9 @@ impl TextField {
             text: text.into(),
             placeholder: placeholder.into(),
             max_chars,
+            min_width_rems: 8.0,
             accepts,
+            replace_all: false,
         }
     }
 
@@ -84,7 +88,19 @@ impl TextField {
         &self.text
     }
 
+    /// Set a narrower minimum width for short numeric controls.
+    pub fn with_min_width(mut self, rems: f32) -> Self {
+        self.min_width_rems = rems;
+        self
+    }
+
     fn insert(&mut self, input: &str) -> bool {
+        if self.replace_all {
+            self.replace_all = false;
+            if input.chars().any(self.accepts) {
+                self.text.clear();
+            }
+        }
         append_accepted(&mut self.text, input, self.max_chars, self.accepts)
     }
 
@@ -99,6 +115,16 @@ impl TextField {
             "escape" => {
                 cx.emit(TextFieldEvent::Cancelled);
                 false
+            }
+            "a" if has_command => {
+                self.replace_all = !self.text.is_empty();
+                cx.notify();
+                false
+            }
+            "backspace" if std::mem::take(&mut self.replace_all) => {
+                let had_text = !self.text.is_empty();
+                self.text.clear();
+                had_text
             }
             "backspace" => self.text.pop().is_some(),
             "v" if has_command => {
@@ -129,7 +155,8 @@ impl Render for TextField {
                 .text_color(theme::TEXT_DISABLED)
                 .child(self.placeholder.clone())
         } else {
-            div().child(self.text.clone())
+            div().when(is_focused && self.replace_all, |text| text.bg(theme::ACCENT_WASH))
+                .child(self.text.clone())
         };
         div()
             .id("text-field")
@@ -137,7 +164,9 @@ impl Render for TextField {
             .track_focus(&self.focus)
             .flex()
             .items_center()
-            .min_w(rems(8.0))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .min_w(rems(self.min_width_rems))
             .px(rems(0.375))
             .py(rems(0.1875))
             .bg(theme::SURFACE_INSET)

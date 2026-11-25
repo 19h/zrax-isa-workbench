@@ -95,7 +95,7 @@ impl Grid {
 }
 
 /// The part of the map a frame shows: its top-left corner in world
-/// coordinates and the magnification (1.0 shows the whole map).
+/// coordinates and the magnification (1.0 shows the base viewport).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
     /// Left edge.
@@ -117,35 +117,42 @@ impl Default for Viewport {
 }
 
 impl Viewport {
-    fn clamp(&mut self) {
-        let end = 1.0 - 1.0 / self.zoom;
-        self.x = self.x.clamp(0.0, end);
-        self.y = self.y.clamp(0.0, end);
+    /// Keep both edges of the visible region inside the world after a resize.
+    pub fn clamp(&mut self, span: (f64, f64)) {
+        self.x = self.x.clamp(0.0, 1.0 - span.0 / self.zoom);
+        self.y = self.y.clamp(0.0, 1.0 - span.1 / self.zoom);
     }
 
     /// Multiply the zoom by `factor`, keeping the world point under the
     /// frame position (`anchor_x`, `anchor_y`, each 0.0..=1.0) in place.
-    pub fn zoom_at(&mut self, factor: f64, anchor_x: f64, anchor_y: f64, max_zoom: f64) {
+    pub fn zoom_at(
+        &mut self,
+        factor: f64,
+        anchor_x: f64,
+        anchor_y: f64,
+        max_zoom: f64,
+        span: (f64, f64),
+    ) {
         let world_x = self.x + anchor_x / self.zoom;
         let world_y = self.y + anchor_y / self.zoom;
         self.zoom = (self.zoom * factor).clamp(1.0, max_zoom.max(1.0));
         self.x = world_x - anchor_x / self.zoom;
         self.y = world_y - anchor_y / self.zoom;
-        self.clamp();
+        self.clamp(span);
     }
 
     /// Move the map by a fraction of the frame, as a drag does.
-    pub fn pan(&mut self, frame_dx: f64, frame_dy: f64) {
+    pub fn pan(&mut self, frame_dx: f64, frame_dy: f64, span: (f64, f64)) {
         self.x -= frame_dx / self.zoom;
         self.y -= frame_dy / self.zoom;
-        self.clamp();
+        self.clamp(span);
     }
 
     /// Center the frame on a world position.
-    pub fn center(&mut self, world_x: f64, world_y: f64) {
-        self.x = world_x - 0.5 / self.zoom;
-        self.y = world_y - 0.5 / self.zoom;
-        self.clamp();
+    pub fn center(&mut self, world_x: f64, world_y: f64, span: (f64, f64)) {
+        self.x = world_x - span.0 * 0.5 / self.zoom;
+        self.y = world_y - span.1 * 0.5 / self.zoom;
+        self.clamp(span);
     }
 
     /// The world position under a frame position (each 0.0..=1.0).
@@ -154,9 +161,9 @@ impl Viewport {
     }
 
     /// Whether a world position is inside the frame.
-    pub fn contains(&self, world_x: f64, world_y: f64) -> bool {
-        let span = 1.0 / self.zoom;
-        (self.x..=self.x + span).contains(&world_x) && (self.y..=self.y + span).contains(&world_y)
+    pub fn contains(&self, world_x: f64, world_y: f64, span: (f64, f64)) -> bool {
+        (self.x..=self.x + span.0 / self.zoom).contains(&world_x)
+            && (self.y..=self.y + span.1 / self.zoom).contains(&world_y)
     }
 }
 
@@ -210,12 +217,12 @@ mod tests {
     #[test]
     fn zooming_keeps_the_anchor_in_place_and_stays_on_the_map() {
         let mut view = Viewport::default();
-        view.zoom_at(2.0, 0.75, 0.25, 64.0);
+        view.zoom_at(2.0, 0.75, 0.25, 64.0, (1.0, 1.0));
         assert_eq!(view.zoom, 2.0);
         assert_eq!(view.world_at(0.75, 0.25), (0.75, 0.25));
-        view.zoom_at(1000.0, 0.5, 0.5, 64.0);
+        view.zoom_at(1000.0, 0.5, 0.5, 64.0, (1.0, 1.0));
         assert_eq!(view.zoom, 64.0);
-        view.zoom_at(0.0001, 0.5, 0.5, 64.0);
+        view.zoom_at(0.0001, 0.5, 0.5, 64.0, (1.0, 1.0));
         assert_eq!(view, Viewport::default());
     }
 
@@ -226,12 +233,23 @@ mod tests {
             y: 0.0,
             zoom: 4.0,
         };
-        view.pan(-0.4, -0.4);
+        view.pan(-0.4, -0.4, (1.0, 1.0));
         assert_eq!((view.x, view.y), (0.1, 0.1));
-        view.pan(10.0, 10.0);
+        view.pan(10.0, 10.0, (1.0, 1.0));
         assert_eq!((view.x, view.y), (0.0, 0.0));
-        view.center(1.0, 1.0);
+        view.center(1.0, 1.0, (1.0, 1.0));
         assert_eq!((view.x, view.y), (0.75, 0.75));
-        assert!(view.contains(0.9, 0.9) && !view.contains(0.5, 0.9));
+        assert!(view.contains(0.9, 0.9, (1.0, 1.0)) && !view.contains(0.5, 0.9, (1.0, 1.0)));
+    }
+
+    #[test]
+    fn a_wide_view_can_pan_to_the_bottom_at_default_zoom() {
+        let mut view = Viewport::default();
+        let span = (1.0, 0.5);
+        assert!(!view.contains(0.5, 0.75, span));
+        view.pan(-1.0, -1.0, span);
+        assert_eq!(view.world_at(1.0, 0.5), (1.0, 1.0));
+        view.clamp((1.0, 1.0));
+        assert_eq!(view, Viewport::default());
     }
 }

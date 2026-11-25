@@ -427,6 +427,7 @@ pub struct HexView {
     top_row: u64,
     /// Whole rows that fit the viewport, measured while painting.
     visible_rows: Rc<Cell<usize>>,
+    reveal_after_measurement: bool,
     /// Where the grid and the track were last painted, for hit testing.
     grid_bounds: Rc<Cell<Bounds<Pixels>>>,
     track_bounds: Rc<Cell<Bounds<Pixels>>>,
@@ -481,6 +482,7 @@ impl HexView {
             anchor: None,
             top_row: 0,
             visible_rows: Rc::new(Cell::new(DEFAULT_VISIBLE_ROWS)),
+            reveal_after_measurement: false,
             grid_bounds: Rc::new(Cell::new(Bounds::default())),
             track_bounds: Rc::new(Cell::new(Bounds::default())),
             is_little_endian: None,
@@ -553,6 +555,13 @@ impl HexView {
             );
         }
         cx.notify();
+    }
+
+    /// Reveal the byte selected by another inspection tab.
+    pub(super) fn jump_to_cursor(&mut self, cx: &mut Context<Self>) {
+        self.anchor = None;
+        self.reveal_after_measurement = true;
+        self.reveal_cursor(cx);
     }
 
     /// Put the cursor on `offset` (clamped to the file). `extend` keeps or
@@ -1060,9 +1069,10 @@ impl Render for HexView {
         };
         let grid_bounds = self.grid_bounds.clone();
         let visible_rows = self.visible_rows.clone();
+        let reveal = std::mem::take(&mut self.reveal_after_measurement);
         let view = cx.entity();
         let grid = canvas(
-            move |bounds, window, cx| {
+            move |bounds, window, _| {
                 grid_bounds.set(bounds);
                 let rem = window.rem_size();
                 let rows_height = bounds.size.height - rem * layout::HEAD_REMS;
@@ -1071,7 +1081,15 @@ impl Render for HexView {
                 let rows = (rows_height / (rem * layout::ROW_REMS)).floor().max(1.0) as usize;
                 if visible_rows.replace(rows) != rows {
                     // The scroll limits depend on the measured height.
-                    cx.defer(move |cx| view.update(cx, |_, cx| cx.notify()));
+                    window.on_next_frame(move |_, cx| {
+                        view.update(cx, |view, cx| {
+                            if reveal {
+                                view.reveal_cursor(cx);
+                            } else {
+                                cx.notify();
+                            }
+                        });
+                    });
                 }
             },
             move |bounds, (), window, cx| frame.paint(bounds, window, cx),

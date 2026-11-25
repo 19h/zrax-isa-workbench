@@ -414,11 +414,8 @@ impl Workbench {
             Tab::Entropy => self.entropy_view.clone().into_any_element(),
             Tab::Hex => self.hex_view.clone().into_any_element(),
             Tab::Json => self.render_json(cx).into_any_element(),
-            other => div()
-                .p(rems(1.5))
-                .text_color(theme::TEXT_MUTED)
-                .child(format!("The {} view is not built yet.", other.label()))
-                .into_any_element(),
+            Tab::Strings => self.strings_view.clone().into_any_element(),
+            Tab::Certificates => self.certificates_view.clone().into_any_element(),
         };
 
         let offer = self.render_donation_offer(cx);

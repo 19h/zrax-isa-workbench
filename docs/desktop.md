@@ -1,10 +1,10 @@
 # Desktop workbench
 
 The native workbench (`crates/zrax-desktop`) shows what the browser workbench
-(`web/`) shows, without a browser: classification, entropy map, hex and JSON
-for files that are read and classified on the machine. It can also donate an
-analyzed firmware image to the zrax firmware collection through the client
-library `crates/zrax-donate`.
+(`web/`) shows, without a browser: classification, entropy map, hex, JSON,
+strings and X.509 certificates for files analyzed on the machine. It can
+also donate an analyzed firmware image to the zrax firmware collection
+through the client library `crates/zrax-donate`.
 
 This document records the design, the bounds, what is and is not built, and
 what was verified.
@@ -58,6 +58,71 @@ cargo test --workspace --features zrax-desktop/runtime-shaders
 
 Files and folders given on the command line open at start.
 
+### macOS app
+
+From the repository root on a Mac with Rust and Xcode Command Line Tools:
+
+```sh
+./build-macos.sh
+```
+
+Open the `zrax-workbench-<version>-macos-<arch>.dmg` in `crates/target/macos/`
+and drag **Zrax Workbench** to **Applications**. You can also copy the
+standalone `Zrax Workbench.app` from the same build directory. The bundle
+contains the native executable, the Retina app icon, and license notices.
+The build targets the Mac's current architecture. It links Apeiron's
+`liblzma` statically and checks that the executable links only to macOS
+system libraries. The packaged executable compiles its Metal shaders at
+launch using macOS's Metal runtime.
+
+| Action | Where |
+| --- | --- |
+| Open files or folders | **File > Open Files or Folders** (Command-O), Finder **Open With > Other**, or drag onto the Dock icon or workbench window |
+| Reopen an item | **File > Open Recent** holds up to 10 paths from Finder, the dialog and window drops. **Clear Menu** removes the stored list. |
+| Find or copy the selected file's path | **File > Reveal in Finder** (Shift-Command-R) or **Copy File Path** (Option-Command-C) |
+| Export the selected entry's classification | **File > Export Classification JSON** (Shift-Command-E) opens the save dialog from any tab |
+| Close and return to the workbench | Command-W closes the window. Click the Dock icon or choose **Window > Show Workbench** to reopen the session. |
+| Manage the window | **Window > Minimize** (Command-M), **Window > Zoom**, or **View > Toggle Full Screen** (Control-Command-F) |
+
+Finder opens use AppKit's file URL events. The bundle declares an alternate
+viewer role for files and folders. Recent paths are stored in local macOS
+preferences. Closing the window keeps the open files and their analysis in
+memory until the app quits.
+
+The default ad hoc signature is for local installation. For builds that
+use your Developer ID, set `ZRAX_MACOS_SIGN_IDENTITY` to a signing identity.
+That adds a timestamp and hardened runtime to the bundle and signs the disk
+image. Notarization is a separate distribution step. [Apple's distribution guide](https://developer.apple.com/documentation/xcode/preparing-your-app-for-distribution)
+
+| Assumption | Verification or falsification |
+| --- | --- |
+| AppKit delivers Finder opens as file URLs, including those sent before the main window exists. | Start with a file whose name contains spaces and URL escape characters, then send a second file to the running app. Export JSON to confirm which file was selected. |
+| The package is relocatable. | Check the Mach-O imports, mount the disk image, copy the bundle, verify its signature and open the copy outside the repository. |
+| The bundle works on the build host's architecture. | Compare the Mach-O architecture with the host and exercise the packaged executable. Older macOS and Intel require their own runtime checks. |
+
+#### Package verification
+
+On 2026-11-18 (macOS 27.3, arm64, Xcode 27.2, rustc 1.99.1), the
+classifier suite passed 3,040 tests with 7 ignored. Five are diagnostic
+tests and two require external firmware. The application workspace passed
+156 tests with two GPU-adapter tests ignored. Clippy reported no warnings
+in the desktop crate.
+
+The disk image mounted read-only and contained an `Applications` link and
+the app. A copy outside the checkout passed strict signature verification
+and the Mach-O import check, opened a folder, and exported its ELF's JSON.
+Launch Services also opened an arm64 Mach-O with spaces, punctuation and a
+non-ASCII character in its name, a MIPS ELF sent to the running app, and a
+folder containing an ELF. The two formats were validated against their
+exported JSON. The native About panel showed version `0.1.0`. Closing and
+reopening the window retained the analysis session, and Open Recent retained
+the item list across application launches.
+
+| Scope boundary | Impact |
+| --- | --- |
+| The app in the supplied image is ad hoc signed for local installation. Developer ID signing and notarization were not exercised. | High for distribution to other Macs |
+| The bundle declares macOS 14 as its minimum. Runtime verification covered macOS 27.3 on Apple silicon. | Medium for other host configurations |
+
 ### Screenshots without screen capture
 
 The `screenshots` feature builds gpui with its test support and adds a
@@ -69,6 +134,45 @@ once analysis has finished and exits. `ZRAX_SCREENSHOT_TAB` selects a tab,
 hidden and is drawn by hand, so a run neither takes the focus nor receives
 input. It is never part of a
 release build.
+
+### File inspection
+
+| Tab | Controls |
+| --- | --- |
+| Strings | Search by text or regular expression, choose encodings and tags, change the minimum length, and sort by offset, character count or text. Select a row for the decoded text and byte range. Jump to its offset in Hex, copy the text, or export the filtered rows as TXT, CSV or JSON. |
+| Certificates | Inspect DER and PEM X.509 certificates with stored offsets, enclosing regions, names, validity dates, algorithms, key identifiers and fingerprints. Follow reported issuer and duplicate links, jump to Hex, open the decoded DER in a child entry, copy PEM, or save DER, PEM or the JSON report. Issuer links are based on encoded names. Certificate signatures and trust are unverified. |
+| Entropy | **Fill** uses the available width and height with square cells. Drag to pan across the cropped portion. **Fit** shows the complete map and resets zoom. Scroll to zoom at the pointer. Toggle **Inspector** to give the map more room. |
+
+Strings and certificates scan the selected file's resident bytes on demand.
+Switching files cancels the active scan. String defaults match the shared
+scanner: at least four characters, in ASCII, UTF-8 and UTF-16LE. UTF-16BE
+is an additional toggle. Both tabs identify partial results when a scan
+limit is reached.
+
+#### Inspection verification
+
+On 2026-11-18 (macOS 27.3, arm64, Xcode 27.2, rustc 1.99.1), the
+classifier passed 3,041 tests, with five diagnostics and two
+external-fixture tests ignored. The application workspace passed 159 tests
+with two GPU-adapter tests ignored. The WASM build succeeded and Chromium
+passed 402 tests, with four external D10 or RX113 fixture tests skipped.
+Desktop Clippy produced no warnings in the desktop crate.
+
+The disk image mounted read-only and the bundle passed strict signature
+verification. In a relocated copy with an isolated app identifier, a
+case-insensitive search for `CAFÉ` returned one UTF-8 row and the filtered
+JSON contained the expected 14 B at `0x2E`. On the three-certificate PEM
+fixture, following the issuer and jumping to Hex highlighted `0x301`.
+The native DER save dialog exported a leaf certificate identical to
+`tests/fixtures/certificates/leaf.der`. The entropy map rendered a 256 KiB
+synthetic file in Fill and Fit. Dragging at 1× in Fill exposed the clipped
+region. Hiding Inspector widened the drawing area.
+
+| Scope boundary | Impact |
+| --- | --- |
+| The certificate view shows encoded fields and issuer-name links. Signature verification and trust evaluation are outside its scope. | High for authenticity decisions |
+| Fill may crop the square map along its shorter axis. Fit exposes all cells at once. | Medium for whole-file inspection |
+| Interactive checks used small synthetic fixtures. Peak-file performance and the other export formats were not exercised through the packaged UI. | Medium for those workflows |
 
 ## Architecture
 
@@ -121,6 +225,9 @@ release build.
 | Cells per engine call | 65,536 | `workbench::MAX_CELLS_PER_CALL` |
 | Byte window per engine call | 4 MiB | `workbench::MAX_WINDOW_BYTES` |
 | Hex selection copied as text | 1 MiB | `hex_view::MAX_COPY_BYTES` |
+| Strings retained | 100,000 rows and 16 MiB of decoded text | `ui::strings_view` |
+| Completed strings queued behind an open run | Scan stops at 1,024 or more queued rows between 64 KiB chunks | `ui::strings_view` |
+| Certificates retained | 4,096 entries and 16 MiB of DER | `zrax::certificates::MAX_CERTIFICATES`, `ui::certificates_view` |
 | Log lines kept | 400 | `session::MAX_LOG_LINES` |
 | Upload chunk accepted from the server | 64 MiB | `zrax-donate`, `MAX_CHUNK_BYTES` |
 
@@ -169,13 +276,15 @@ shows that answer.
 | D3 | Both lockfiles resolve the classifier's dependencies alike. | `tests/lockfiles.rs`. |
 | D4 | The fwdonor API matches fwdonor commit `0d413ee` plus `own_classifier`. | `crates/zrax-donate/tests/session.rs` runs against a stand-in written from that source; one donation was also made against a real dry-run fwdonor (see Verification). Run fwdonor's `tests/client.e2e.mjs` once `fwdonate` uses this crate. |
 | D5 | The proof of work matches the server's. | The vector shared with fwdonor (`41 × 0x11`, `32 × 0x22`, 12 bits, nonce 449) in `pow.rs`. |
+| D6 | A wider entropy pane can display a larger map while preserving square cells and stored offsets. | Pan the default Fill projection at 1×, zoom at a pointer and select a byte. Compare the cursor in Hex. Switch to Fit to see the entire map. |
+| D7 | Capped certificate scans preserve scan order for mixed DER and PEM. | `the_der_budget_keeps_an_offset_ordered_prefix_of_mixed_encodings` compares the bounded scan with the prefix of the full report. |
 
 ## Known boundaries
 
 Not built yet, compared with the browser workbench:
 
-- the strings and certificates tabs, the all-files certificate view and the
-  batch table with its exports;
+- the all-files certificate view, scoped strings scans and the batch table
+  with its exports;
 - Image4 decryption controls;
 - the entropy map's minimap and view history;
 - persisted settings;
@@ -183,15 +292,13 @@ Not built yet, compared with the browser workbench:
 
 Other boundaries:
 
-- The text field handles ASCII typing, backspace and paste; it has no caret
-  movement and no input-method support. `gpui-component` is the intended
-  replacement where free text is needed (strings search).
+- The text field handles printable input, paste, backspace and select-all
+  for replacement. Caret movement and input-method support are pending.
 - Apeiron's hex inspector, selection outline on the map and wavelet
   analysis are not wired up; its hover readouts appear for the cursor only.
 - The similarity, digraph and phase-space modes do not map a click to a
   file offset.
-- No packaging or CI configuration exists yet. Windows and Linux have not
-  been built.
+- Windows and Linux packaging and desktop CI are pending.
 - `fwdonate` and the fwdonor server do not use `zrax-donate` yet; that is a
   change in the fwdonor repository.
 - The hex toolbar uses segmented controls where the browser uses menus.

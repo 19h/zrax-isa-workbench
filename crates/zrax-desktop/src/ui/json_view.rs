@@ -59,18 +59,26 @@ impl Workbench {
     }
 
     /// Ask where to save the selected entry's JSON and write it there.
-    fn save_json(&mut self, cx: &mut Context<Self>) {
-        let Some(text) = self.json.as_ref().map(|json| json.text.clone()) else {
+    pub(super) fn save_json(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = self.json_text(cx).map(|json| json.text.clone()) else {
             return;
         };
-        let Some(name) = self
-            .session
-            .read(cx)
-            .selected()
-            .map(|entry| entry.name.clone())
-        else {
+        let Some(entry) = self.session.read(cx).selected() else {
             return;
         };
+        let name = entry.name.replace(['/', '\\'], "_");
+        #[cfg(target_os = "macos")]
+        let directory = entry
+            .path()
+            .and_then(std::path::Path::parent)
+            .filter(|path| path.is_absolute())
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|home| std::path::PathBuf::from(home).join("Documents"))
+            })
+            .unwrap_or_default();
+        #[cfg(not(target_os = "macos"))]
         let directory = std::env::current_dir().unwrap_or_default();
         let chosen = cx.prompt_for_new_path(&directory, Some(&format!("{name}.json")));
         let session = self.session.downgrade();
@@ -78,7 +86,11 @@ impl Workbench {
             let Ok(Ok(Some(path))) = chosen.await else {
                 return;
             };
-            let written = std::fs::write(&path, text.as_bytes());
+            let destination = path.clone();
+            let written = cx
+                .background_executor()
+                .spawn(async move { std::fs::write(destination, text.as_bytes()) })
+                .await;
             let _ = session.update(cx, |session, cx| {
                 use crate::model::session::LogTone;
                 match written {

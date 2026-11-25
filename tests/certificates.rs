@@ -64,6 +64,25 @@ fn der_certificates_are_found_at_odd_offsets_in_noise() {
 }
 
 #[test]
+fn the_der_budget_keeps_an_offset_ordered_prefix_of_mixed_encodings() {
+    let pem = to_pem(INTERMEDIATE);
+    let mut data = LEAF.to_vec();
+    data.push(0);
+    data.extend_from_slice(pem.as_bytes());
+    data.push(0);
+    data.extend_from_slice(ROOT);
+    let budget = LEAF.len() + INTERMEDIATE.len() - 1;
+    let mut bounded = Scan::with_der_budget(budget);
+    bounded.push_window(&data, 0, data.len());
+    assert!(bounded.is_truncated());
+    let report = bounded.finish();
+    assert_eq!(report.certificates.len(), 1);
+    assert_eq!(report.certificates[0].der, LEAF);
+    assert!(report.truncated);
+    assert!(report.notes.iter().any(|note| note.contains("DER byte limit")));
+}
+
+#[test]
 fn pem_bundle_links_leaf_intermediate_and_self_issued_root() {
     for bundle in [CHAIN_PEM, CHAIN_CRLF_PEM] {
         let report = scan(bundle);

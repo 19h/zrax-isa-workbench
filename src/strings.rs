@@ -422,6 +422,12 @@ impl Scanner {
         self.position
     }
 
+    /// Completed strings held back to preserve offset order while an
+    /// earlier run is still open.
+    pub fn pending_len(&self) -> usize {
+        self.closed.len()
+    }
+
     /// Consume the next chunk and append every string that can no longer
     /// be preceded by another one to `out`, in `(offset, encoding)` order.
     pub fn push(&mut self, chunk: &[u8], out: &mut Vec<FoundString>) {

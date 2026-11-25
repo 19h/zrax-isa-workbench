@@ -34,6 +34,8 @@ pub enum Origin {
     Added,
     /// Member `index` of the parent's member list.
     Subfile(usize),
+    /// DER bytes of the certificate stored at this byte offset in the parent.
+    Certificate(u64),
 }
 
 /// How far analysis of an entry has come.

@@ -99,7 +99,7 @@ pub struct Certificate {
 pub struct Report {
     /// Certificates in offset order.
     pub certificates: Vec<Certificate>,
-    /// Scanning stopped after [`MAX_CERTIFICATES`] certificates.
+    /// Scanning stopped at the certificate count or optional DER byte limit.
     pub truncated: bool,
     /// Sentence-case remarks on what the report does not establish.
     pub notes: Vec<String>,
@@ -141,12 +141,27 @@ struct Found {
 pub struct Scan {
     found: Vec<Found>,
     truncated: bool,
+    remaining_der_bytes: Option<usize>,
 }
 
 impl Scan {
     /// An empty accumulator.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Stop when the next certificate would exceed this many total DER
+    /// bytes. The report retains the prefix in offset order.
+    pub fn with_der_budget(bytes: usize) -> Self {
+        Self {
+            remaining_der_bytes: Some(bytes),
+            ..Self::default()
+        }
+    }
+
+    /// Whether the scan has stopped at its count or byte limit.
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
     }
 
     /// Scan `window`, whose first byte is at input offset `base`, for
@@ -157,19 +172,29 @@ impl Scan {
         }
         let report_len = report_len.min(window.len());
         let remaining = MAX_CERTIFICATES - self.found.len();
-        // One more than fits shows whether this window overflows the limit.
-        let limit = remaining + 1;
-        let mut found = scan::der_certificates(window, report_len, limit);
-        found.extend(scan::pem_certificates(window, report_len, limit));
+        let byte_budget = self.remaining_der_bytes.unwrap_or(usize::MAX);
+        let mut found = scan::der_certificates(window, report_len, remaining, byte_budget);
+        let pem = scan::pem_certificates(window, report_len, remaining, byte_budget);
+        let first_discarded = found.first_discarded.into_iter().chain(pem.first_discarded).min();
+        found.items.extend(pem.items);
+        let mut found = found.items;
         found.sort_by_key(|f| (f.offset, f.encoding));
-        if found.len() > remaining {
-            found.truncate(remaining);
-            self.truncated = true;
+        for (index, mut item) in found.into_iter().enumerate() {
+            if index == remaining || first_discarded.is_some_and(|offset| item.offset >= offset) {
+                self.truncated = true;
+                break;
+            }
+            if let Some(bytes) = &mut self.remaining_der_bytes {
+                let Some(left) = bytes.checked_sub(item.der.len()) else {
+                    self.truncated = true;
+                    break;
+                };
+                *bytes = left;
+            }
+            item.offset += base;
+            self.found.push(item);
         }
-        for mut f in found {
-            f.offset += base;
-            self.found.push(f);
-        }
+        self.truncated |= first_discarded.is_some();
     }
 
     /// Describe, deduplicate and link the accumulated certificates.
@@ -187,9 +212,11 @@ impl Scan {
             notes.push(NOT_VERIFIED_NOTE.to_string());
         }
         if self.truncated {
-            notes.push(format!(
-                "Scanning stopped after {MAX_CERTIFICATES} certificates"
-            ));
+            if certificates.len() == MAX_CERTIFICATES {
+                notes.push(format!("Scanning stopped after {MAX_CERTIFICATES} certificates"));
+            } else {
+                notes.push("Scanning stopped at the DER byte limit".to_string());
+            }
         }
         Report {
             certificates,

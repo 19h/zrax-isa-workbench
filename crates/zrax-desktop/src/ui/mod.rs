@@ -1,6 +1,7 @@
 //! The workbench window: an icon rail, the files panel, the main area and
 //! a status bar, as in the browser workbench (`web/index.html`).
 
+mod certificates_view;
 mod classification;
 mod donate_panel;
 mod empty;
@@ -8,9 +9,11 @@ mod entropy_view;
 mod file_view;
 mod files_panel;
 mod hex_view;
+mod inspection_scan;
 mod json_view;
 mod rail;
 mod status_bar;
+mod strings_view;
 mod strip;
 mod text_field;
 pub mod widgets;
@@ -38,6 +41,9 @@ const SHORTCUT_CONTEXT: &str = "Workbench && !TextField";
 /// Longest donor name the server keeps, in characters.
 const DONOR_NAME_CHARS: usize = 32;
 
+#[cfg(target_os = "macos")]
+actions!(workbench, [CopyFilePath, ExportJson, RevealInFinder]);
+
 actions!(
     workbench,
     [
@@ -63,6 +69,8 @@ actions!(
         ShowEntropy,
         /// Show the hex tab.
         ShowHex,
+        /// Show the hex tab and scroll the current byte into view.
+        ShowHexAtCursor,
         /// Show the JSON tab.
         ShowJson,
         /// Show the strings tab.
@@ -131,8 +139,6 @@ impl Tab {
 /// Control elsewhere. `KeyBinding::new` takes literal keystrokes and does
 /// not resolve gpui's `secondary-` modifier.
 #[cfg(target_os = "macos")]
-const OPEN_CHORD: &str = "cmd-o";
-#[cfg(target_os = "macos")]
 const QUIT_CHORD: &str = "cmd-q";
 #[cfg(not(target_os = "macos"))]
 const OPEN_CHORD: &str = "ctrl-o";
@@ -146,6 +152,7 @@ pub fn bind_keys(cx: &mut App) {
     hex_view::bind_keys(cx);
     cx.bind_keys([
         KeyBinding::new("o", AddFiles, context),
+        #[cfg(not(target_os = "macos"))]
         KeyBinding::new(OPEN_CHORD, AddFiles, context),
         KeyBinding::new("f", ToggleFilesPanel, context),
         KeyBinding::new("`", ToggleLog, context),
@@ -180,6 +187,8 @@ pub struct Workbench {
     is_donations_open: bool,
     entropy_view: Entity<entropy_view::EntropyView>,
     hex_view: Entity<hex_view::HexView>,
+    certificates_view: Entity<certificates_view::CertificatesView>,
+    strings_view: Entity<strings_view::StringsView>,
     /// The JSON tab's text for the entry it was last shown for.
     json: Option<json_view::JsonText>,
     /// Set when the tab changed: its view takes focus on the next render.
@@ -213,6 +222,8 @@ impl Workbench {
         ];
         let entropy_view = cx.new(|cx| entropy_view::EntropyView::new(session.clone(), cx));
         let hex_view = cx.new(|cx| hex_view::HexView::new(session.clone(), cx));
+        let certificates_view = cx.new(|cx| certificates_view::CertificatesView::new(session.clone(), cx));
+        let strings_view = cx.new(|cx| strings_view::StringsView::new(session.clone(), cx));
         Self {
             session,
             focus,
@@ -221,6 +232,8 @@ impl Workbench {
             is_donations_open: false,
             entropy_view,
             hex_view,
+            certificates_view,
+            strings_view,
             json: None,
             should_focus_tab: false,
             tab: Tab::Classification,
@@ -310,7 +323,7 @@ impl Workbench {
     }
 
     /// Ask for files or folders and queue what the user picks.
-    fn prompt_for_files(cx: &mut Context<Self>) {
+    pub(crate) fn prompt_for_files(cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: true,
@@ -328,13 +341,17 @@ impl Workbench {
 
     /// Queue dropped or picked paths. Folders are walked off the main
     /// thread; symbolic links inside them are not followed.
-    fn open_paths(&mut self, picked: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub(crate) fn open_paths(&mut self, picked: Vec<PathBuf>, cx: &mut Context<Self>) {
         let session = self.session.downgrade();
+        #[cfg(target_os = "macos")]
+        let recent = crate::macos::recent_candidates(&picked);
         cx.spawn(async move |_, cx| {
             let expanded = cx
                 .background_executor()
                 .spawn(async move { paths::expand(&picked) })
                 .await;
+            #[cfg(target_os = "macos")]
+            crate::macos::remember_paths(recent);
             let _ = session.update(cx, |session, cx| {
                 if expanded.is_truncated {
                     session.log_line(
@@ -345,7 +362,13 @@ impl Workbench {
                         ),
                     );
                 }
-                session.add_files(expanded.files, cx);
+                let added = session.add_files(expanded.files, cx);
+                #[cfg(target_os = "macos")]
+                if let Some(first) = added.first() {
+                    session.select(*first, cx);
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = added;
             });
         })
         .detach();
@@ -420,7 +443,7 @@ impl Render for Workbench {
             window.focus(&target, cx);
         }
         let session = self.session.clone();
-        div()
+        let root = div()
             .id("workbench")
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
@@ -472,6 +495,10 @@ impl Render for Workbench {
             }))
             .on_action(cx.listener(|this, _: &ShowEntropy, _, cx| this.show_tab(Tab::Entropy, cx)))
             .on_action(cx.listener(|this, _: &ShowHex, _, cx| this.show_tab(Tab::Hex, cx)))
+            .on_action(cx.listener(|this, _: &ShowHexAtCursor, _, cx| {
+                this.hex_view.update(cx, hex_view::HexView::jump_to_cursor);
+                this.show_tab(Tab::Hex, cx);
+            }))
             .on_action(cx.listener(|this, _: &ShowJson, _, cx| this.show_tab(Tab::Json, cx)))
             .on_action(cx.listener(|this, _: &ShowStrings, _, cx| this.show_tab(Tab::Strings, cx)))
             .on_action(cx.listener(|this, _: &ShowCertificates, _, cx| {
@@ -479,19 +506,54 @@ impl Render for Workbench {
             }))
             .on_drop(cx.listener(|this, dropped: &ExternalPaths, _, cx| {
                 this.open_paths(dropped.paths().to_vec(), cx);
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .child(self.render_rail(cx))
-                    .when(self.is_files_panel_open, |workspace| {
-                        workspace.child(self.render_files_panel(cx))
-                    })
-                    .child(self.render_main(cx)),
+            }));
+
+        #[cfg(target_os = "macos")]
+        let root = self.with_macos_actions(root, cx);
+
+        root.child(
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .child(self.render_rail(cx))
+                .when(self.is_files_panel_open, |workspace| {
+                    workspace.child(self.render_files_panel(cx))
+                })
+                .child(self.render_main(cx)),
+        )
+        .child(self.render_status_bar(cx))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Workbench {
+    fn with_macos_actions(
+        &self,
+        root: gpui::Stateful<gpui::Div>,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        use crate::macos::{CloseWindow, Minimize, ToggleFullScreen, Zoom};
+
+        let selected = self.session.read(cx).selected();
+        root.on_action(|_: &CloseWindow, window, _| window.remove_window())
+            .on_action(|_: &Minimize, window, _| window.minimize_window())
+            .on_action(|_: &Zoom, window, _| window.zoom_window())
+            .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
+            .when(selected.is_some(), |root| {
+                root.on_action(cx.listener(|this, _: &ExportJson, _, cx| this.save_json(cx)))
+            })
+            .when_some(
+                selected.and_then(crate::model::entry::Entry::path),
+                |root, path| {
+                    let path = path.to_path_buf();
+                    let copy = path.to_string_lossy().into_owned();
+                    root.on_action(move |_: &RevealInFinder, _, cx| cx.reveal_path(&path))
+                        .on_action(move |_: &CopyFilePath, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()));
+                        })
+                },
             )
-            .child(self.render_status_bar(cx))
     }
 }
